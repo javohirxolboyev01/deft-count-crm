@@ -19,6 +19,22 @@ function CloseButton({ onClick, label }: { onClick: () => void; label: string })
   );
 }
 
+// Modal/Drawer ochiqligida orqa sahifa aylanmaydi (telefonda modal bilan birga siljimasin).
+// Hisoblagich: Drawer ustida ConfirmDialog ochilsa ham ichkisi yopilganda qulf ochilib ketmaydi
+let lockCount = 0;
+function useBodyScrollLock(active: boolean) {
+  useEffect(() => {
+    if (!active) return;
+    if (lockCount++ === 0) document.documentElement.style.overflow = 'hidden';
+    return () => {
+      if (--lockCount === 0) document.documentElement.style.overflow = '';
+    };
+  }, [active]);
+}
+
+// Sensorli ekranda inputga avtomatik fokus klaviaturani ochib, sahifani zoom/siljitadi
+const isTouch = () => window.matchMedia('(pointer: coarse)').matches;
+
 /** Modal oyna (WinPro Modal ko'rinishi): Esc bilan yopiladi, fokus ichkarida boshlanadi */
 export function Dialog({
   open,
@@ -46,25 +62,30 @@ export function Dialog({
     const prev = document.activeElement as HTMLElement | null;
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onCloseRef.current();
     document.addEventListener('keydown', onKey);
-    setTimeout(() => ref.current?.querySelector<HTMLElement>('input,select,textarea,button:not([data-close])')?.focus(), 0);
+    setTimeout(() => {
+      if (isTouch()) ref.current?.focus({ preventScroll: true });
+      else ref.current?.querySelector<HTMLElement>('input,select,textarea,button:not([data-close])')?.focus();
+    }, 0);
     return () => {
       document.removeEventListener('keydown', onKey);
       prev?.focus?.();
     };
   }, [open]);
+  useBodyScrollLock(open);
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-[60] flex animate-fade-in items-start justify-center overflow-y-auto bg-black/50 no-scrollbar p-4 sm:items-center" onMouseDown={onClose}>
+    <div className="fixed inset-0 z-[60] flex animate-fade-in items-start justify-center overflow-y-auto overflow-x-hidden overscroll-contain bg-black/50 no-scrollbar p-4 sm:items-center" onMouseDown={onClose}>
       <div
         ref={ref}
         role="dialog"
         aria-modal="true"
-        className={cn('relative w-full max-w-lg animate-pop-in rounded-lg bg-white p-6', className)}
+        tabIndex={-1}
+        className={cn('relative w-full min-w-0 max-w-lg animate-pop-in rounded-lg bg-white p-4 outline-none sm:p-6', className)}
         onMouseDown={(e) => e.stopPropagation()}
       >
         <CloseButton onClick={onClose} label={t('common.close')} />
         <h2 className="mb-4 pr-8 text-lg font-semibold text-foreground">{title}</h2>
-        <div className="no-scrollbar -mx-1 max-h-[70vh] overflow-y-auto px-1">{children}</div>
+        <div className="no-scrollbar -mx-1 max-h-[70vh] max-h-[70dvh] overflow-y-auto overscroll-contain px-1">{children}</div>
         {footer && <div className="mt-6 flex justify-end gap-3">{footer}</div>}
       </div>
     </div>
@@ -120,9 +141,10 @@ export function Drawer({ open, onClose, title, children }: { open: boolean; onCl
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [open, onClose]);
+  useBodyScrollLock(open);
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-[60] flex animate-fade-in justify-end bg-black/50" onMouseDown={onClose}>
+    <div className="fixed inset-0 z-[60] flex animate-fade-in justify-end overflow-hidden bg-black/50" onMouseDown={onClose}>
       <aside
         role="dialog"
         aria-modal="true"
@@ -141,7 +163,7 @@ export function Drawer({ open, onClose, title, children }: { open: boolean; onCl
           </button>
           <h2 className="min-w-0 flex-1 truncate text-lg font-semibold text-foreground">{title}</h2>
         </header>
-        <div className="custom-scrollbar flex-1 overflow-y-auto px-4 py-4">{children}</div>
+        <div className="custom-scrollbar flex-1 overflow-y-auto overscroll-contain px-4 py-4">{children}</div>
       </aside>
     </div>
   );
