@@ -6,6 +6,10 @@
   html {
     font-feature-settings: 'cv11', 'ss01';
     overflow-x: hidden;
+    /* Telefonda: ikki marta bosishda zoom yo'q, yon burilganda matn kattalashmaydi */
+    touch-action: manipulation;
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
     /* Sahifaning o'ng chetidagi vertikal scrollbar ko'rinmaydi, aylantirish ishlaydi */
     scrollbar-width: none;
   }
@@ -14,6 +18,16 @@
   }
   body {
     @apply bg-page font-sans text-ink;
+    /* iOS html'dagi overflow-x'ni e'tiborsiz qoldiradi; clip — sticky'ni buzmaydi */
+    overflow-x: clip;
+  }
+  /* iOS Safari 16px dan kichik maydonga fokusda sahifani zoom qiladi */
+  @media (pointer: coarse) {
+    input,
+    textarea,
+    select {
+      font-size: 16px !important;
+    }
   }
   input[type='checkbox'],
   input[type='radio'] {
