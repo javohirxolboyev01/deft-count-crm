@@ -9,7 +9,7 @@ import { localInputToIso, todayAtLocalInput } from '@/lib/time';
 import type { AccountantOption, Client, Paged, UrgentTemplate } from '@/lib/types';
 import { invalidateTasks } from '@/hooks/tasks';
 import { Button } from './ui/button';
-import { Dialog } from './ui/dialog';
+import { Dialog, isTouch } from './ui/dialog';
 import { DatePicker } from './ui/date-picker';
 import { Field, Input, Textarea } from './ui/input';
 import { Select } from './ui/select';
@@ -96,7 +96,7 @@ export function UrgentDialog({ open, onClose }: { open: boolean; onClose: () => 
           ) : (
             <>
               <Input
-                autoFocus
+                autoFocus={!isTouch()}
                 aria-label={t('urgent.client')}
                 value={search}
                 placeholder={t('urgent.searchClient')}
@@ -152,7 +152,7 @@ export function UrgentDialog({ open, onClose }: { open: boolean; onClose: () => 
         </Field>
         {/* datetime-local o'rniga: WinPro DatePicker + vaqt maydoni; holat avvalgidek 'yyyy-MM-ddTHH:mm' satri */}
         <Field label={t('urgent.due')} group>
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-2">
             <DatePicker value={due.slice(0, 10)} clearable={false} aria-label={t('urgent.due')} onChange={(d) => setDue(`${d}T${due.slice(11, 16) || '18:00'}`)} />
             <Input type="time" value={due.slice(11, 16)} aria-label={t('urgent.due')} onChange={(e) => e.target.value && setDue(`${due.slice(0, 10)}T${e.target.value}`)} />
           </div>

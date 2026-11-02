@@ -29,6 +29,13 @@
       font-size: 16px !important;
     }
   }
+  /* iOS Safari vaqt/sana maydoniga o'z enini beradi va ustundan chiqib, modalni yon tomonga cho'zadi */
+  input[type='time'] {
+    -webkit-appearance: none;
+    appearance: none;
+    min-width: 0;
+    min-height: 2.5rem;
+  }
   input[type='checkbox'],
   input[type='radio'] {
     accent-color: theme('colors.brand.500');

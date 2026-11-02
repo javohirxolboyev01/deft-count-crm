@@ -33,7 +33,7 @@ function useBodyScrollLock(active: boolean) {
 }
 
 // Sensorli ekranda inputga avtomatik fokus klaviaturani ochib, sahifani zoom/siljitadi
-const isTouch = () => window.matchMedia('(pointer: coarse)').matches;
+export const isTouch = () => window.matchMedia('(pointer: coarse)').matches;
 
 /** Modal oyna (WinPro Modal ko'rinishi): Esc bilan yopiladi, fokus ichkarida boshlanadi */
 export function Dialog({
