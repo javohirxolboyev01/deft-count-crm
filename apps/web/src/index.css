@@ -212,13 +212,18 @@
   body > *:not(.print-root) {
     display: none !important;
   }
+  /* Ekran uchun overflow-x (mobil siljish tuzatishi) chop etishda jadvalni kesmasin */
+  html,
+  body {
+    overflow: visible !important;
+  }
   body {
     background: #fff !important;
   }
   .print-root {
     display: block;
     color: #1a344d;
-    font-size: 8pt;
+    font-size: 7pt;
     print-color-adjust: exact;
     -webkit-print-color-adjust: exact;
   }
@@ -281,15 +286,37 @@
     height: 5mm;
     border-bottom: 1px solid #374151;
   }
+  /* fixed: ustunlar sahifa kengligiga bo'linadi, jadval o'ngdan chiqib ketmaydi */
   .print-grid {
     width: 100%;
+    table-layout: fixed;
     border-collapse: collapse;
   }
   .print-grid th,
   .print-grid td {
     border: 1px solid #9ca3af;
-    padding: 2px 4px;
+    padding: 1.5px 2px;
     vertical-align: middle;
+    overflow-wrap: break-word;
+    hyphens: auto;
+  }
+  .print-grid .col-no {
+    width: 6mm;
+  }
+  .print-grid .col-stir {
+    width: 17mm;
+  }
+  .print-grid .nowrap {
+    white-space: nowrap;
+  }
+  .print-grid .col-name {
+    width: 38mm;
+  }
+  .print-grid .col-tax {
+    width: 9mm;
+  }
+  .print-grid .col-note {
+    width: 30mm;
   }
   .print-grid th {
     background: #37a0ad;
@@ -298,7 +325,9 @@
     text-align: center;
   }
   .print-grid th .due {
+    font-size: 6pt;
     font-weight: 400;
+    white-space: nowrap;
   }
   .print-grid thead {
     display: table-header-group; /* har sahifada sarlavha takrorlanadi */
@@ -317,8 +346,5 @@
   }
   .print-grid .na {
     background: #f3f4f6;
-  }
-  .print-grid .note {
-    max-width: 60mm;
   }
 }

@@ -265,26 +265,26 @@ function PrintTable({
       <table className="print-grid">
         <thead>
           <tr>
-            <th>{t('monthly.no')}</th>
-            <th>{t('monthly.stir')}</th>
-            <th>{t('monthly.company')}</th>
-            <th>{t('clients.taxType')}</th>
+            <th className="col-no">{t('monthly.no')}</th>
+            <th className="col-stir">{t('monthly.stir')}</th>
+            <th className="col-name">{t('monthly.company')}</th>
+            <th className="col-tax">{t('clients.taxType')}</th>
             {g.columns.map((c) => (
               <th key={c.reportTypeId}>
                 {colShort(c)}
                 {!NO_DUE_DATE.has(c.code) && c.dueDate && <div className="due">{fmtIsoDate(c.dueDate)}</div>}
               </th>
             ))}
-            <th>{t('monthly.note')}</th>
+            <th className="col-note">{t('monthly.note')}</th>
           </tr>
         </thead>
         <tbody>
           {g.rows.map((r, i) => (
             <tr key={r.clientId}>
               <td className="c">{i + 1}</td>
-              <td>{r.stir}</td>
+              <td className="nowrap">{r.stir}</td>
               <td>{r.name}</td>
-              <td className="c">{r.taxType}</td>
+              <td className="c nowrap">{r.taxType}</td>
               {g.columns.map((c) => {
                 const cell = r.cells[c.reportTypeId];
                 const m = cell ? PRINT_CELL[cell.state] : null;
