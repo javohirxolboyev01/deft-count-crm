@@ -526,7 +526,46 @@ describe("Qo'lda tekshirish: kartada tuzatilsa o'zi yopiladi (V28)", () => {
     expect((await api(tok).patch(`/api/clients/${clientId}`, { taxType: 'AOS', reviewed: true })).status).toBe(200);
     const now = await open();
     expect(now.some((m) => m.includes('Soliq turi'))).toBe(false);
-    // Tur tanlangach fayldagi kataklar qo'llandi: AOS'da topshirilmaydigan katakda 0 — yangi haqiqiy kamchilik
-    expect(now.every((m) => m.includes("X bo'lishi kerak"))).toBe(true);
+    // Tur tanlangach fayldagi kataklar qo'llandi: AOS'da topshirilmaydigan katakda 0 — fayldagidek qo'yiladi, ⚠ bilan
+    expect(now.length).toBeGreaterThan(0);
+    expect(now.every((m) => m.includes("fayldagidek qo'yildi"))).toBe(true);
+  });
+});
+
+describe('Hisobot jadvali fayl boricha: CRM jadvalida fayldagi qiymat', () => {
+  let L: ReturnType<typeof api>;
+  beforeAll(async () => {
+    await resetDb();
+    await seedTeam();
+    L = api(await token('leader'));
+  });
+  // AOS: QQS va FOYDA qoida bo'yicha X, lekin faylda 0 / 1; JSHDS katagida tanilmagan matn
+  const row = (tolov: string) => ['1', '305999999', 'BORICHA MCHJ', 'AOC', 'abc', tolov, '0', '0', '1', '0', '0', ''];
+  const cells = async () => {
+    const g = (await L.get('/api/monthly-grid?month=2026-10')).body;
+    const r = g.rows.find((x: any) => x.stir === '305999999');
+    return Object.fromEntries(g.columns.map((c: any) => [c.code, r.cells[c.reportTypeId]]));
+  };
+
+  it("soliq turiga zid 0/1 fayldagidek, tanilmagan matn katakda boricha", async () => {
+    await tx((db) => importTable(db, [HEADER, row('1')], { actorId: null, dryRun: false }));
+    const c = await cells();
+    expect(['0', '!']).toContain(c.QQS.state); // ochiq (oktyabr o'tgan: muddati o'tgan)
+    expect(c.FOYDA.state).toBe('1');
+    expect(c.JSHDS.raw).toBe('abc');
+    expect(c.TOLOV_MANBAI.state).toBe('1');
+  });
+
+  it('bajarilgan katakda faylda 0 — qayta ochiladi', async () => {
+    await tx((db) => importTable(db, [HEADER, row('0')], { actorId: null, dryRun: false }));
+    expect((await cells()).TOLOV_MANBAI.state).not.toBe('1');
+  });
+
+  it('rahbar tanilmagan katakka 1/0/X tanlasa matn o\'chadi', async () => {
+    const g = (await L.get('/api/monthly-grid?month=2026-10')).body;
+    const r = g.rows.find((x: any) => x.stir === '305999999');
+    const col = g.columns.find((c: any) => c.code === 'JSHDS');
+    expect((await L.put('/api/monthly-grid/cell').send({ clientId: r.clientId, reportTypeId: col.reportTypeId, month: '2026-10', value: '0' })).status).toBe(200);
+    expect((await cells()).JSHDS.raw).toBeUndefined();
   });
 });

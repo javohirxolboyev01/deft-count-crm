@@ -155,7 +155,7 @@ export interface GridRow {
   accountantId: number | null;
   accountantName: string | null;
   /** noEvent: Dividend/Norezident holati belgilanmagan ("0", vazifa yo'q); markable: bosilsa holat belgisi qo'yiladi */
-  /** raw: soliq turi aniqlanmagan mijozda fayldagi qiymat (boricha ko'rsatiladi) */
+  /** raw: fayldagi qiymat boricha — soliq turi aniqlanmagan mijozda hamma katak, aks holda 1/0/X deb tanilmagan matn */
   cells: Record<number, { state: CellState; taskId: number | null; taskStatus: TaskStatus | null; noEvent?: boolean; markable?: boolean; raw?: string }>;
 }
 

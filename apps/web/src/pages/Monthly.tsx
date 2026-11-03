@@ -217,24 +217,29 @@ export default function Monthly() {
                             </td>
                           );
                         }
-                        const label = `${r.name} — ${colName(c)}: ${t(`monthly.legend.${legendKey(cell.state)}`)}`;
+                        // Fayldagi 1/0/X deb tanilmagan matn boricha (rahbar 1/0/X tanlaguncha)
+                        const raw = cell.raw !== undefined;
+                        const label = raw
+                          ? `${r.name} — ${colName(c)}: ${t('monthly.rawUnknown', { raw: cell.raw })}`
+                          : `${r.name} — ${colName(c)}: ${t(`monthly.legend.${legendKey(cell.state)}`)}`;
+                        const rawCls = 'bg-amber-50/60 text-xs font-medium text-amber-800';
                         return (
                           <td key={c.reportTypeId} className="border-b border-r p-0 text-center">
                             {/* Buxgalter faqat ko'radi (server ham yopiq: PUT /monthly-grid/cell requireLeader) */}
                             {isLeader ? (
                               <CellMenu
                                 current={cell.state === '!' ? '0' : cell.state}
-                                className={cn('h-9 rounded-none', CELL[cell.state].cls)}
-                                symbol={CELL[cell.state].sym}
+                                className={cn('h-9 rounded-none', raw ? rawCls : CELL[cell.state].cls)}
+                                symbol={raw ? cell.raw : CELL[cell.state].sym}
                                 labels={{ '1': t('monthly.legend.done'), '0': t('monthly.legend.open'), X: t('monthly.legend.na') }}
-                                title={t('monthly.cellHint')}
+                                title={raw ? t('monthly.rawUnknown', { raw: cell.raw }) : t('monthly.cellHint')}
                                 label={label}
                                 busy={setCell.isPending && setCell.variables?.clientId === r.clientId && setCell.variables.reportTypeId === c.reportTypeId}
                                 onPick={(value) => setCell.mutate({ clientId: r.clientId, reportTypeId: c.reportTypeId, value })}
                                 onOpenTask={cell.taskId ? () => openTask(cell.taskId!) : undefined}
                               />
                             ) : (
-                              <span className={cn('flex h-9 w-full items-center justify-center', CELL[cell.state].cls)} aria-label={label}>{CELL[cell.state].sym}</span>
+                              <span className={cn('flex h-9 w-full items-center justify-center', raw ? rawCls : CELL[cell.state].cls)} aria-label={label} title={raw ? label : undefined}>{raw ? cell.raw : CELL[cell.state].sym}</span>
                             )}
                           </td>
                         );
@@ -479,7 +484,7 @@ function PrintTable({
               <td className="c nowrap">{r.taxType ?? r.taxTypeRaw}</td>
               {g.columns.map((c) => {
                 const cell = r.cells[c.reportTypeId];
-                if (!r.taxType) return <td key={c.reportTypeId} className="c">{cell?.raw}</td>;
+                if (!r.taxType || cell?.raw !== undefined) return <td key={c.reportTypeId} className="c">{cell?.raw}</td>;
                 const m = cell ? PRINT_CELL[cell.state] : null;
                 return <td key={c.reportTypeId} className={cn('c', m?.cls)}>{m?.sym}</td>;
               })}

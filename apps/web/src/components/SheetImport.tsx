@@ -1,10 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Check, CheckCircle2, ChevronRight, ClipboardCheck, DatabaseZap, Download, Eye, RefreshCw, ShieldCheck, Upload } from 'lucide-react';
+import { AlertTriangle, Check, CheckCircle2, DatabaseZap, Download, Eye, RefreshCw, ShieldCheck, Upload } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { type TFunction } from 'i18next';
 import { useTranslation } from 'react-i18next';
-import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import { invalidateTasks } from '@/hooks/tasks';
 import { ApiError, api, qs } from '@/lib/api';
@@ -19,7 +18,6 @@ import { Badge } from './ui/card';
 import { MonthPicker } from './ui/date-picker';
 import { Dialog } from './ui/dialog';
 import { Field } from './ui/input';
-import { Empty } from './ui/states';
 
 // Excel import har sahifaning o'zida (Google Sheets sinxron olib tashlangan):
 // "Hisobot topshirish" — hisobot jadvali (REPORTS), "Buxgalter ishlari" — «Бухгалтер ишлари» fayli (WORKS).
@@ -301,7 +299,7 @@ function ImportDialog({ kind, open, onClose }: { kind: ImportKind; open: boolean
 }
 
 /**
- * "Qo'lda tekshirish" ro'yxati (faqat rahbar; buxgalterga so'rov yuborilmaydi — server ham yopiq).
+ * Import aniqlagan kamchiliklar — jadvaldagi ⚠ belgisi uchun (faqat rahbar; buxgalterga so'rov yuborilmaydi — server ham yopiq).
  * kind — sahifa: faqat shu jadval faylining kamchiliklari (Hisobot topshirish / Buxgalter ishlari, V27).
  */
 export function useReviewItems(kind: ImportKind) {
@@ -317,23 +315,13 @@ export function useReviewByClient(kind: ImportKind) {
   return map;
 }
 
-export function useResolveReview() {
-  const { t } = useTranslation();
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: number) => api.post(`/sheets/errors/${id}/resolve`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['sheets', 'review'] }),
-    onError: (e) => toast.error(errorText(e, t)),
-  });
-}
-
 /** Jadvalda korxona nomi yonida: kamchilik bor (ustiga olib borilsa matni) */
 export function ReviewMark({ items, needs = [] }: { items: ReviewItem[] | undefined; needs?: string[] }) {
   const { t } = useTranslation();
   if (!items?.length && !needs.length) return null;
   const text = [...needs, ...(items ?? []).map((r) => r.message)].join('\n');
   return (
-    <span className="inline-flex shrink-0 items-center text-amber-500" title={`${t('sheets.manualReview')}:\n${text}`} aria-label={`${t('sheets.manualReview')}: ${text}`}>
+    <span className="inline-flex shrink-0 items-center text-amber-500" title={`${t('sheets.warnings')}:\n${text}`} aria-label={`${t('sheets.warnings')}: ${text}`}>
       <AlertTriangle className="h-3.5 w-3.5" />
     </span>
   );
@@ -364,7 +352,7 @@ export function ClientReviewBanner({ kind, clientId, needs }: { kind: ImportKind
           {needs.map((n) => <li key={n}>{n}</li>)}
         </ul>
       )}
-      {items.length > 0 && <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-amber-700">{t('sheets.manualReview')} ({items.length})</div>}
+      {items.length > 0 && <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-amber-700">{t('sheets.warnings')} ({items.length})</div>}
       <ul className="space-y-1">
         {items.map((r) => (
           <li key={r.id}>{r.message} <span className="text-xs text-amber-700">· {r.ref} · {fmtDateTime(r.occurredAt)}</span></li>
@@ -374,70 +362,24 @@ export function ClientReviewBanner({ kind, clientId, needs }: { kind: ImportKind
   );
 }
 
-/** Import natijasida avtomatik ajratib bo'lmagan qatorlar: korxona bosilsa kartasi ochiladi (kamchilik tepada ko'rinadi) */
-function ReviewDialog({ kind, open, onClose, items }: { kind: ImportKind; open: boolean; onClose: () => void; items: ReviewItem[] | undefined }) {
-  const { t } = useTranslation();
-  const resolve = useResolveReview();
-  return (
-    <Dialog open={open} onClose={onClose} title={`${t('sheets.manualReview')} (${items?.length ?? 0})`} className="max-w-2xl">
-      {!items?.length ? <Empty /> : (
-        <ul className="divide-y text-sm">
-          {items.map((r) => {
-            const body = (
-              <>
-                <div>{r.message}</div>
-                <div className="text-xs text-gray-500">{r.ref} · {r.stir ?? '—'} · {fmtDateTime(r.occurredAt)}</div>
-              </>
-            );
-            return (
-              <li key={r.id} className="flex items-center gap-3 py-1">
-                {r.clientId ? (
-                  <Link className="group flex min-w-0 flex-1 items-center gap-2 rounded px-1 py-1 hover:bg-gray-100" to={kind === 'REPORTS' ? `/monthly${qs({ search: r.stir ?? r.message.split(': ')[0] })}` : `/clients/${r.clientId}`} onClick={onClose} title={t(kind === 'REPORTS' ? 'sheets.fixInTable' : 'sheets.fixInCard')}>
-                    <div className="min-w-0 flex-1">{body}</div>
-                    <ChevronRight className="h-4 w-4 shrink-0 text-gray-400 group-hover:text-brand-500" aria-hidden />
-                  </Link>
-                ) : (
-                  // Korxona CRM'da yo'q (STIR yo'q yoki noto'g'ri): faylda tuzatib qayta yuklanadi
-                  <div className="min-w-0 flex-1 px-1 py-1" title={t('sheets.notInCrm')}>{body}</div>
-                )}
-                <Button size="sm" variant="outline" disabled={resolve.isPending} onClick={() => resolve.mutate(r.id)}>{t('sheets.resolve')}</Button>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-    </Dialog>
-  );
-}
-
 /**
- * Sahifa sarlavhasidagi tugmalar (faqat rahbar): "Qo'lda tekshirish (N)" — ro'yxatda narsa bo'lsa, va "Excel yuklash".
+ * Sahifa sarlavhasidagi "Excel yuklash" (faqat rahbar). Kamchiliklar alohida ro'yxatda emas — jadvalda
+ * korxona nomi yonidagi ⚠ belgisida (rahbar qarori).
  * Buxgalter ishlari va Hisobot topshirish sahifalari bir xil komponentni o'z fayl turi bilan ishlatadi.
  */
 /** beforeImport — "Excel yuklash"dan oldin turadigan tugma ("Yangi mijoz") */
 export function SheetImportActions({ kind, beforeImport }: { kind: ImportKind; beforeImport?: React.ReactNode }) {
   const { t } = useTranslation();
   const [importOpen, setImportOpen] = useState(false);
-  const [reviewOpen, setReviewOpen] = useState(false);
-  const review = useReviewItems(kind);
-  const n = review.data?.length ?? 0;
   return (
     <>
-      {n > 0 && (
-        <Button variant="outline" onClick={() => setReviewOpen(true)} title={t('sheets.manualReview')}>
-          <ClipboardCheck className="h-4 w-4 text-amber-500" /> {t('sheets.reviewBtn', { n })}
-        </Button>
-      )}
       {beforeImport}
       <Button variant="outline" onClick={() => setImportOpen(true)}>
         <Upload className="h-4 w-4" /> {t('sheets.importBtn')}
       </Button>
       {/* Tugmalar PageHeader ichida (sticky z-30 — o'z qatlami): oynalar body'ga chiqariladi, aks holda sidebar ostida qoladi */}
       {createPortal(
-        <>
-          <ImportDialog kind={kind} open={importOpen} onClose={() => setImportOpen(false)} />
-          <ReviewDialog kind={kind} open={reviewOpen} onClose={() => setReviewOpen(false)} items={review.data} />
-        </>,
+        <ImportDialog kind={kind} open={importOpen} onClose={() => setImportOpen(false)} />,
         document.body,
       )}
     </>

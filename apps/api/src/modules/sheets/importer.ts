@@ -5,7 +5,7 @@ import { addMonthsIso, currentPeriod } from '../../common/time';
 import { type Db, one, q } from '../../db';
 import { createClient, recordTaxType } from '../clients';
 import { type ReportTypeLite, cellText, detectColumns, hasSecret, parseCell, parseNote, sameCompany } from './parse';
-import { applyPendingReportCells, applyReportCells, reconcileThroughNow, saveRawReportCells } from './reportCells';
+import { applyPendingReportCells, applyReportCells, reconcileThroughNow, saveRawReportCells, saveUnknownReportCells } from './reportCells';
 import { insertReview } from './review';
 
 export interface ImportRowResult {
@@ -243,6 +243,7 @@ export async function importTable(
     if (taxBecameKnown) cellsDone += (await applyPendingReportCells(db, clientId, opts.actorId)).cellsDone;
     const applied = await applyReportCells(db, { clientId, period, taxType: known.t, actorId: opts.actorId }, values);
     await db.query('DELETE FROM client_report_raw WHERE client_id = $1 AND period = $2', [clientId, period]);
+    await saveUnknownReportCells(db, clientId, period, values, opts.actorId);
     cellsDone += applied.cellsDone;
     res.changes.push(...applied.changes);
     res.review.push(...applied.review);

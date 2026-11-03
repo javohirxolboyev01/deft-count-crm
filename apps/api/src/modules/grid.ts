@@ -10,7 +10,7 @@ import { type Db, one, pool, q, tx } from '../db';
 import { CLIENT_STATUSES } from './clients';
 import { getDueTime } from './generator';
 import { cancelPendingForTask } from './notifications';
-import { markDone, stopTimersForTask } from './taskService';
+import { type MarkDoneOptions, markDone, stopTimersForTask } from './taskService';
 
 export type CellState = '1' | '0' | '!' | 'X';
 
@@ -78,8 +78,9 @@ export async function loadGrid(
     r.cells[c.reportTypeId] = { state: c.state, taskId: c.taskId, taskStatus: c.taskStatus };
   }
 
-  // Soliq turi aniqlanmagan mijoz (V24): vazifa yo'q, katakda fayldagi qiymat (client_report_raw) boricha
-  const pendingIds = [...rows.values()].filter((r) => !r.taxType).map((r) => r.clientId);
+  // Fayldagi qiymat (client_report_raw) boricha: soliq turi aniqlanmagan mijozda hamma katak (V24, vazifa yo'q),
+  // turi ma'lum mijozda — 1/0/X deb tanib bo'lmagan matn (rahbar 1/0/X tanlaguncha)
+  const pendingIds = [...rows.keys()];
   if (pendingIds.length) {
     const raws = await q<{ clientId: number; reportTypeId: number; raw: string }>(
       db,
@@ -189,7 +190,7 @@ gridRouter.get('/export.xlsx', async (req, res) => {
       r.taxType ?? r.taxTypeRaw ?? '',
       ...g.columns.map((c: any) => {
         // Soliq turi aniqlanmagan: fayldagi qiymat boricha (qayta yuklansa o'sha natija)
-        if (!r.taxType) return r.cells[c.reportTypeId]?.raw ?? '';
+        if (!r.taxType || r.cells[c.reportTypeId]?.raw !== undefined) return r.cells[c.reportTypeId]?.raw ?? '';
         const st = r.cells[c.reportTypeId]?.state as CellState | undefined;
         // Import formati: holat ustunida X = holat yo'q (0 qayta yuklansa belgi qo'yib yuboradi)
         if (r.cells[c.reportTypeId]?.noEvent) return 'X';
@@ -198,7 +199,7 @@ gridRouter.get('/export.xlsx', async (req, res) => {
       r.note ?? '',
     ]);
     g.columns.forEach((c: any, j: number) => {
-      const st = (!r.taxType ? undefined : r.cells[c.reportTypeId]?.noEvent ? 'X' : r.cells[c.reportTypeId]?.state) as CellState | undefined;
+      const st = (!r.taxType || r.cells[c.reportTypeId]?.raw !== undefined ? undefined : r.cells[c.reportTypeId]?.noEvent ? 'X' : r.cells[c.reportTypeId]?.state) as CellState | undefined;
       const cell = row.getCell(5 + j);
       cell.alignment = { horizontal: 'center' };
       const fill = st === '1' ? FILL.done : st === '!' ? FILL.overdue : st === 'X' ? FILL.na : null;
@@ -235,12 +236,16 @@ gridRouter.post('/cell/:taskId/done', requireLeader, async (req, res) => {
  *   0 — vazifa ochiq (bajarilgan bo'lsa qayta ochiladi)
  *   X — vazifa bekor qilinadi (o'chirilmaydi, audit'da), bajarilgani ham
  * Keyingi oylar (joriy oygacha) yangi tanlovga moslanadi: ochiq vazifa bekor / yangisi yaratiladi, DONE tegilmaydi.
+ * Excel importi ham shu yo'l bilan (u = null, xabarsiz): fayldagi qiymat jadvalda boricha ko'rinsin.
  */
 export async function setGridCell(
   db: Db,
-  u: AuthUser,
+  u: AuthUser | null,
   c: { clientId: number; reportTypeId: number; month: string; value: '1' | '0' | 'X' },
+  opts: Pick<MarkDoneOptions, 'source' | 'notify'> = {},
 ) {
+  const actorId = u?.id ?? null;
+  const source = opts.source ?? 'GRID';
   // Ustunning vazifa davri: oylik = ko'rilayotgan oy, choraklik/yillik = oxirgi generatsiya oyi
   const col = await one<{ sourcePeriod: string | null; code: string }>(
     db,
@@ -258,6 +263,8 @@ export async function setGridCell(
   // Tur aniqlanmagan mijozda katakda fayldagi qiymat turadi (V24): avval soliq turi tanlanadi
   if (!client.taxType) throw new AppError(409, 'NO_TAX_TYPE', 'Avval soliq turini tanlang');
   const period = col.sourcePeriod;
+  // Katakda turgan tanilmagan fayl matni endi tanlov bilan almashadi
+  await db.query('DELETE FROM client_report_raw WHERE client_id = $1 AND report_type_id = $2 AND period = $3', [c.clientId, c.reportTypeId, periodFromMonth(c.month)]);
   const before = await one<{ applicable: boolean }>(
     db,
     'SELECT applicable FROM client_report_cell WHERE client_id = $1 AND report_type_id = $2 AND period = $3',
@@ -266,21 +273,21 @@ export async function setGridCell(
   await db.query(
     `INSERT INTO client_report_cell (client_id, report_type_id, period, applicable, set_by) VALUES ($1, $2, $3, $4, $5)
      ON CONFLICT (client_id, report_type_id, period) DO UPDATE SET applicable = EXCLUDED.applicable, set_by = EXCLUDED.set_by, set_at = now()`,
-    [c.clientId, c.reportTypeId, period, c.value !== 'X', u.id],
+    [c.clientId, c.reportTypeId, period, c.value !== 'X', actorId],
   );
   await audit(db, {
-    actorId: u.id,
+    actorId,
     entity: 'client',
     entityId: c.clientId,
     clientId: c.clientId,
     action: 'REPORT_CELL',
     before: before ? { report: col.code, applicable: before.applicable } : null,
-    after: { report: col.code, month: period.slice(0, 7), value: c.value },
+    after: { report: col.code, month: period.slice(0, 7), value: c.value, ...(source !== 'GRID' ? { source } : {}) },
   });
 
   const cur = currentPeriod();
   for (let p = period; p <= cur || p === period; p = addMonthsIso(p, 1)) {
-    await syncReportTask(db, c.clientId, c.reportTypeId, p, u.id);
+    await syncReportTask(db, c.clientId, c.reportTypeId, p, actorId);
   }
 
   let task = await one<{ id: number; status: string }>(
@@ -290,18 +297,18 @@ export async function setGridCell(
   );
   if (c.value === 'X' && task?.status === 'DONE') {
     // Qo'lda X bajarilganini ham bekor qiladi (Exceldagidek: katakdagi qiymat almashadi)
-    await cancelTask(db, task.id, c.clientId, 'MANUAL_X', u.id);
+    await cancelTask(db, task.id, c.clientId, 'MANUAL_X', actorId);
     task = undefined;
   }
-  if (c.value === '0' && task?.status === 'DONE') await reopenDone(db, task.id, c.clientId, u.id, 'GRID');
+  if (c.value === '0' && task?.status === 'DONE') await reopenDone(db, task.id, c.clientId, actorId, source);
   if (c.value === '1' && task && task.status !== 'DONE') {
-    return { task: await markDone(db, task.id, u, { source: 'GRID' }) };
+    return { task: await markDone(db, task.id, u, { source, notify: opts.notify }) };
   }
   return { task: null };
 }
 
 /** Bitta (mijoz, hisobot, davr) vazifasini qo'llanishga moslash. Doimiy ishlarga tegmaydi (o'tgan oyga ish yaratmaslik uchun) */
-async function syncReportTask(db: Db, clientId: number, reportTypeId: number, period: string, actorId: number) {
+async function syncReportTask(db: Db, clientId: number, reportTypeId: number, period: string, actorId: number | null) {
   const a = await one<{ applicable: boolean }>(
     db,
     'SELECT applicable FROM fn_report_applicability($1) WHERE client_id = $2 AND report_type_id = $3',
@@ -343,13 +350,13 @@ async function syncReportTask(db: Db, clientId: number, reportTypeId: number, pe
 }
 
 /** Katakda 1 -> 0: bajarilgan vazifa qayta ochiladi, rahbarga ketmagan "bajarildi" xabari bekor */
-export async function reopenDone(db: Db, taskId: number, clientId: number, actorId: number, source: string) {
+export async function reopenDone(db: Db, taskId: number, clientId: number, actorId: number | null, source: string) {
   await db.query(`UPDATE task SET status = 'TODO', done_at = NULL, done_by = NULL, prev_status = NULL WHERE id = $1`, [taskId]);
   await cancelPendingForTask(db, taskId, 'TASK_DONE');
   await audit(db, { actorId, entity: 'task', entityId: taskId, clientId, action: 'REOPEN', before: { status: 'DONE' }, after: { status: 'TODO', source } });
 }
 
-export async function cancelTask(db: Db, taskId: number, clientId: number, reason: string, actorId: number) {
+export async function cancelTask(db: Db, taskId: number, clientId: number, reason: string, actorId: number | null) {
   const t = await one<{ status: string; title: string }>(db, 'SELECT status, title FROM task WHERE id = $1', [taskId]);
   await stopTimersForTask(db, taskId);
   // Bajarilgani ham (done_at faqat DONE holatda); oldingi holat audit'da qoladi

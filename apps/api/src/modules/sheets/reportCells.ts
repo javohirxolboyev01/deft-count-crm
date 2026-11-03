@@ -2,6 +2,7 @@ import { audit } from '../../common/audit';
 import { addMonthsIso, currentPeriod } from '../../common/time';
 import { type Db, q } from '../../db';
 import { reconcileClient } from '../generator';
+import { setGridCell } from '../grid';
 import { markDone } from '../taskService';
 import { parseCell } from './parse';
 import { insertReview } from './review';
@@ -144,6 +145,7 @@ export async function applyReportCells(
   for (const col of values) {
     const v = parseCell(col.raw);
     if (v === null) {
+      // Matn katakda boricha ko'rinadi (client_report_raw — chaqiruvchi saqlaydi), rahbar 1/0/X tanlaguncha
       review.push(`${col.code}: tanib bo'lmaydigan qiymat "${col.raw}"`);
       continue;
     }
@@ -153,14 +155,18 @@ export async function applyReportCells(
       if (v === '1') review.push(`${col.code}: hisobot turi faol emas, lekin "1" qo'yilgan`);
       continue;
     }
-    if (v !== 'X' && !cell.applicable) {
-      review.push(`${col.code}: jadvalda "${v}", lekin ${ctx.taxType} bo'yicha topshirilmaydi (X bo'lishi kerak)`);
+    if ((v !== 'X' && !cell.applicable) || (v === '0' && cell.taskStatus === 'DONE')) {
+      // Fayl boricha (rahbar qarori): soliq turi qoidasi / holat to'smaydi, bajarilgani ham qayta ochiladi —
+      // jadvaldagi qo'lda 1/0/X tanlovi bilan bir xil yo'l (client_report_cell, xabarsiz)
+      if (!cell.applicable) review.push(`${col.code}: jadvalda "${v}", ${ctx.taxType} bo'yicha odatda topshirilmaydi (fayldagidek qo'yildi)`);
+      const r = await setGridCell(db, null, { clientId, reportTypeId: col.reportTypeId, month: period.slice(0, 7), value: v }, { source: 'IMPORT', notify: false });
+      if (r.task) cellsDone++;
+      changes.push(`${col.code}=${v}`);
+      marksChanged = true;
     } else if (v === '1' && cell.taskId && cell.taskStatus !== 'DONE') {
       // Import paytida rahbarlarga ommaviy xabar yuborilmaydi
       await markDone(db, cell.taskId, null, { notify: false, source: 'IMPORT' });
       cellsDone++;
-    } else if (v === '0' && cell.taskStatus === 'DONE') {
-      review.push(`${col.code}: jadvalda 0, tizimda allaqachon bajarilgan`);
     }
   }
   return { cellsDone, marksChanged, changes, review };
@@ -178,9 +184,13 @@ export async function saveRawReportCells(db: Db, clientId: number, period: strin
   }
 }
 
+/** Turi ma'lum mijozda 1/0/X deb tanilmagan katak matni: jadvalda boricha ko'rinadi */
+export const saveUnknownReportCells = (db: Db, clientId: number, period: string, values: RawReportCell[], actorId: number | null) =>
+  saveRawReportCells(db, clientId, period, values.filter((v) => parseCell(v.raw) === null), actorId);
+
 /**
  * Soliq turi endi aniqlandi (karta yoki fayl): oldin saqlangan fayl kataklari vazifalarga qo'llanadi va o'chiriladi.
- * Hal bo'lmagan qiymatlar qo'lda tekshirish ro'yxatiga tushadi. Kelajak oylar kataklari o'z oyi kelguncha turadi.
+ * Tanilmagan matn katakda qoladi, kamchilik jadvaldagi ⚠ belgisida. Kelajak oylar kataklari o'z oyi kelguncha turadi.
  */
 export async function applyPendingReportCells(db: Db, clientId: number, actorId: number | null) {
   const client = await q<{ taxType: string | null; stir: string | null; name: string }>(
@@ -206,6 +216,7 @@ export async function applyPendingReportCells(db: Db, clientId: number, actorId:
       await insertReview(db, { ref: period.slice(0, 7), stir: c.stir, name: c.name, message: msg, clientId, section: 'REPORTS' });
     }
     await db.query('DELETE FROM client_report_raw WHERE client_id = $1 AND period = $2', [clientId, period]);
+    await saveUnknownReportCells(db, clientId, period, rows.filter((x) => x.period === period), actorId);
   }
   if (rows.length) {
     await audit(db, { actorId, entity: 'client', entityId: clientId, clientId, action: 'APPLY_IMPORT_CELLS', after: { cells: rows.length, done: cellsDone } });

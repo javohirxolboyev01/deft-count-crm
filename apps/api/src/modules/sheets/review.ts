@@ -19,7 +19,7 @@ const FIELD_RULES: [RegExp, string[]][] = [
   [/^Bank-kalit/, ['bankKey']],
   [/^Xodim soni/, ['employeeCount']],
   [/^my\.mehnat\.uz sanasi/, ['mehnatCheckedAt']],
-  [/X bo'lishi kerak\)$/, ['taxType']],
+  [/X bo'lishi kerak\)$|fayldagidek qo'yildi\)$/, ['taxType']],
 ];
 
 /** Doimiy ish katagi (Buxgalter ishlari jadvalida oy kiritilganda yopiladi) */

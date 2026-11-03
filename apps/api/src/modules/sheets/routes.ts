@@ -5,7 +5,7 @@ import multer from 'multer';
 import { z } from 'zod';
 import { me, requireAuth, requireLeader } from '../../common/auth';
 import { audit } from '../../common/audit';
-import { AppError, notFound, parse } from '../../common/errors';
+import { AppError, parse } from '../../common/errors';
 import { periodFromMonth } from '../../common/time';
 import { type Db, dryTx, one, pool, q, tx } from '../../db';
 import { importTable } from './importer';
@@ -128,7 +128,7 @@ sheetsRouter.post('/import', upload.single('file'), async (req, res) => {
   res.json({ ...report, alreadyImported: previous ?? null });
 });
 
-/** kind — sahifa: faqat shu jadval faylining kamchiliklari (berilmasa hammasi) */
+/** kind — sahifa: faqat shu jadval faylining kamchiliklari (berilmasa hammasi). Alohida ro'yxat yo'q: jadvaldagi ⚠ belgisi */
 sheetsRouter.get('/review', async (req, res) => {
   const f = parse(z.object({ kind: z.enum(['REPORTS', 'WORKS']).optional() }), req.query);
   res.json(
@@ -141,15 +141,4 @@ sheetsRouter.get('/review', async (req, res) => {
       [f.kind ?? null],
     ),
   );
-});
-
-sheetsRouter.post('/errors/:id/resolve', async (req, res) => {
-  const u = me(req);
-  const id = parse(z.coerce.number().int(), req.params.id);
-  const r = await pool.query(
-    'UPDATE sheet_sync_error SET resolved = true, resolved_by = $2, resolved_at = now() WHERE id = $1 AND NOT resolved',
-    [id, u.id],
-  );
-  if (!r.rowCount) throw notFound('Yozuv');
-  res.json({ ok: true });
 });
