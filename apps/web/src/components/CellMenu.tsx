@@ -38,7 +38,7 @@ export function CellMenu({
     <>
       <button
         ref={ref}
-        className={cn('flex h-8 w-full items-center justify-center rounded', className, busy && 'opacity-60', open && 'ring-2 ring-brand-500')}
+        className={cn('flex h-8 w-full items-center justify-center rounded', className, busy && 'opacity-60', open && 'relative z-[1] ring-2 ring-inset ring-brand-500')}
         aria-label={label}
         aria-haspopup="menu"
         aria-expanded={open}

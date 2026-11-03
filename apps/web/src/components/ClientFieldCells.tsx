@@ -45,7 +45,7 @@ export function useClientPatch(clientId: number) {
 
 // Katak ichidagi boshqaruv: chegarasiz, hover/fokusda ko'rinadi (jadval Excel'dagidek tekis tursin)
 const CELL_CTRL =
-  'h-8 rounded border border-transparent bg-transparent px-1.5 text-xs shadow-none hover:border-brand-300 focus-visible:border-brand-500 dark:bg-transparent';
+  'h-8 rounded border border-transparent bg-transparent px-1.5 text-xs shadow-none hover:border-brand-300 focus-visible:border-brand-500 dark:border-transparent dark:bg-transparent dark:hover:border-brand-700';
 
 /** Matn/son katagi. parse: input matni -> saqlanadigan qiymat (undefined = noto'g'ri, saqlanmaydi) */
 export function EditableTextCell<T extends string | number | null>({

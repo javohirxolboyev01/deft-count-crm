@@ -181,14 +181,15 @@ export default function Monthly() {
           {g && g.rows?.length > 0 && (
             // ~100 qator x ~10 ustun: oddiy jadval yetarli (virtualizatsiya shart emas)
             <div className="custom-scrollbar min-h-0 flex-1 overflow-auto">
-              <table className="w-full border-separate border-spacing-0 text-sm">
+              {/* Exceldagidek katakli jadval: har katakda chiziq, rangli katak butun katakni to'ldiradi (oraliq/yumaloq yo'q) */}
+              <table className="w-full border-separate border-spacing-0 text-sm [&_td]:border-gray-300">
                 <thead className="table-head">
                   <tr>
                     {/* Ustunlar "Hisobot topshirish jadvali" bilan bir xil: № | STIR | Korxona nomi | Soliq turi | hisobotlar | izoh */}
                     <th className="sticky left-0 top-0 z-20 w-10 min-w-10 border-r border-brand-400 px-2 py-2.5 text-center text-xs">{t('monthly.no')}</th>
                     <th className="sticky left-10 top-0 z-20 w-[104px] min-w-[104px] border-r border-brand-400 px-2 py-2.5 text-left text-xs">{t('monthly.stir')}</th>
                     <th className="sticky left-[144px] top-0 z-20 min-w-[220px] border-r border-brand-400 px-3 py-2.5 text-left text-xs">{t('monthly.company')}</th>
-                    <th className="sticky top-0 z-10 border-r border-brand-400 px-2 py-2.5 text-xs">{t('clients.taxType')}</th>
+                    <th className="sticky top-0 z-10 w-[88px] min-w-[88px] border-r border-brand-400 px-2 py-2.5 text-xs">{t('clients.taxType')}</th>
                     <th className="sticky top-0 z-10 min-w-[120px] border-r border-brand-400 px-2 py-2.5 text-left text-xs">{t('clients.status')}</th>
                     {g.columns.map((c) => (
                       <th key={c.reportTypeId} className="sticky top-0 z-10 min-w-[92px] border-r border-brand-400 px-2 py-2.5 text-center text-xs" title={colName(c)}>
@@ -202,27 +203,28 @@ export default function Monthly() {
                 <tbody>
                   {g.rows.map((r, i) => (
                     <tr key={r.clientId} className="group">
-                      <td className="sticky left-0 z-10 border-b border-r bg-white px-2 text-center text-xs text-gray-500 group-hover:bg-gray-100">{i + 1}</td>
+                      {/* Qator raqami — Exceldagi qator sarlavhasi kabi */}
+                      <td className="sticky left-0 z-10 border-b border-r bg-gray-50 px-2 text-center text-xs tabular-nums text-gray-500 group-hover:bg-gray-100">{i + 1}</td>
                       <ClientCells row={r} isLeader={isLeader} review={<ReviewMark items={reviews.get(r.clientId)} needs={isLeader ? clientNeeds(r, t) : []} />} onTaxChange={setTaxConfirm} />
                       {g.columns.map((c) => {
                         const cell = r.cells[c.reportTypeId];
-                        if (!cell) return <td key={c.reportTypeId} className="border-b" />;
+                        if (!cell) return <td key={c.reportTypeId} className="border-b border-r" />;
                         // Soliq turi aniqlanmagan: fayldagi qiymat boricha (vazifa yo'q). Tur tanlanganda vazifaga aylanadi
                         if (!r.taxType) {
                           return (
-                            <td key={c.reportTypeId} className="border-b p-0.5 text-center" title={t('monthly.rawHint')}>
-                              <span className="flex h-8 w-full items-center justify-center rounded bg-amber-50/60 text-xs font-medium text-amber-800">{cell.raw ?? ''}</span>
+                            <td key={c.reportTypeId} className="border-b border-r p-0 text-center" title={t('monthly.rawHint')}>
+                              <span className="flex h-9 w-full items-center justify-center bg-amber-50/60 text-xs font-medium text-amber-800">{cell.raw ?? ''}</span>
                             </td>
                           );
                         }
                         const label = `${r.name} — ${colName(c)}: ${t(`monthly.legend.${legendKey(cell.state)}`)}`;
                         return (
-                          <td key={c.reportTypeId} className="border-b p-0.5 text-center">
+                          <td key={c.reportTypeId} className="border-b border-r p-0 text-center">
                             {/* Buxgalter faqat ko'radi (server ham yopiq: PUT /monthly-grid/cell requireLeader) */}
                             {isLeader ? (
                               <CellMenu
                                 current={cell.state === '!' ? '0' : cell.state}
-                                className={CELL[cell.state].cls}
+                                className={cn('h-9 rounded-none', CELL[cell.state].cls)}
                                 symbol={CELL[cell.state].sym}
                                 labels={{ '1': t('monthly.legend.done'), '0': t('monthly.legend.open'), X: t('monthly.legend.na') }}
                                 title={t('monthly.cellHint')}
@@ -232,7 +234,7 @@ export default function Monthly() {
                                 onOpenTask={cell.taskId ? () => openTask(cell.taskId!) : undefined}
                               />
                             ) : (
-                              <span className={cn('flex h-8 w-full items-center justify-center rounded', CELL[cell.state].cls)} aria-label={label}>{CELL[cell.state].sym}</span>
+                              <span className={cn('flex h-9 w-full items-center justify-center', CELL[cell.state].cls)} aria-label={label}>{CELL[cell.state].sym}</span>
                             )}
                           </td>
                         );
@@ -280,12 +282,12 @@ function ClientCells({
           <EditableTextCell value={null} display={`${r.stirRaw || '—'} ?`} parse={parseStir} onSave={(v) => v && save.mutate({ stir: v })} label={`${r.name} — ${t('monthly.stir')}`} inputMode="numeric" className="text-amber-800" />
         )}
       </td>
-      <td className="sticky left-[144px] z-10 border-b border-r bg-white px-0.5 py-0.5 group-hover:bg-gray-100">
+      {/* Bir qatorli (Exceldagidek): buxgalter nomi ustiga olib borilganda ko'rinadi */}
+      <td className="sticky left-[144px] z-10 max-w-[320px] border-b border-r bg-white px-0.5 group-hover:bg-gray-100" title={`${t('clients.accountant')}: ${r.accountantName ?? t('clients.noAccountant')}`}>
         <div className="flex items-center gap-1">
           <EditableTextCell value={r.name} parse={parseTextCell} onSave={(v) => v && save.mutate({ name: v })} readOnly={ro} label={`${r.name} — ${t('monthly.company')}`} className="font-medium text-brand-500 dark:text-brand-400" />
           {review}
         </div>
-        <div className="truncate px-1.5 text-[11px] text-gray-500">{r.accountantName ?? '—'}</div>
       </td>
       <td className="border-b border-r px-0.5 text-center text-xs">
         <SelectCell
