@@ -21,8 +21,8 @@ import { api, qs } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
 import { errorText } from '@/lib/errors';
-import { currentMonth, fmtDate, fmtDateTime, fmtShortDue } from '@/lib/time';
-import { type AuditItem, CLIENT_STATUSES, type ClientCard as ClientCardData, type ClientStatus, type Task, type TaxType } from '@/lib/types';
+import { currentMonth, fmtDate, fmtShortDue } from '@/lib/time';
+import { CLIENT_STATUSES, type ClientCard as ClientCardData, type ClientStatus, type Task, type TaxType } from '@/lib/types';
 
 interface Form {
   stir: string;
@@ -83,7 +83,6 @@ export default function ClientCard() {
   const [confirmTax, setConfirmTax] = useState(false);
 
   const q = useQuery({ queryKey: ['client', id], queryFn: () => api.get<ClientCardData>(`/clients/${id}`) });
-  const history = useQuery({ queryKey: ['client', id, 'history'], queryFn: () => api.get<AuditItem[]>(`/clients/${id}/history`) });
   const tasks = useQuery({ queryKey: ['tasks', 'client', id], queryFn: () => api.get<Task[]>(`/tasks${qs({ clientId: id, month: currentMonth() })}`) });
   useEffect(() => {
     if (q.data) setForm(toForm(q.data));
@@ -243,48 +242,36 @@ export default function ClientCard() {
         </form>
       </Card>
 
-      {q.data && (
-        <div className="space-y-4">
-          <ClientReportCards client={q.data} isLeader={isLeader} />
-        </div>
-      )}
-      <Card className="xl:col-span-2">
-        <CardHeader title={t('clients.currentTasks')} />
-        <QueryState q={tasks}>
-          {!tasks.data?.length && <Empty />}
-          <ul className="divide-y text-sm">
-            {tasks.data?.map((task) => {
-              const tone = taskTone(task);
-              return (
-                <li key={task.id}>
-                  <button className="flex w-full items-center gap-3 px-4 py-2 text-left hover:bg-gray-50" onClick={() => openTask(task.id)}>
-                    <span className="flex-1">{taskTitle(task, i18n.language)}</span>
-                    <span className={cn('text-xs', tone === 'overdue' && 'text-overdue', tone === 'soon' && 'text-soon')}>{fmtShortDue(task.dueAt)}</span>
-                    <span className="w-28 truncate text-xs text-gray-500">{task.assigneeName ?? t('task.unassigned')}</span>
-                    <TaskStatusBadge status={task.status} />
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        </QueryState>
-      </Card>
-
-      <Card>
-        <CardHeader title={t('clients.history')} />
-        <QueryState q={history}>
-          {!history.data?.length && <Empty />}
-          <ul className="max-h-[500px] divide-y overflow-y-auto text-xs">
-            {history.data?.map((h) => (
-              <li key={h.id} className="px-4 py-2">
-                <div className="flex justify-between text-gray-500"><span>{h.actorName ?? t('notif.system')}</span><span>{fmtDateTime(h.at)}</span></div>
-                <div className="mt-0.5"><b>{t(`auditAction.${h.action}`, { defaultValue: h.action })}</b> · {h.entity} #{h.entityId}</div>
-                {h.after != null && <code className="mt-0.5 block break-all text-gray-600">{JSON.stringify(h.after)}</code>}
-              </li>
-            ))}
-          </ul>
-        </QueryState>
-      </Card>
+      {/* O'ng ustun: soliq turi tarixi va joriy oy vazifalari (holat bo'yicha hisobotlar va o'zgarishlar tarixi kartada yo'q) */}
+      <div className="space-y-4">
+        {q.data && <ClientReportCards client={q.data} isLeader={isLeader} />}
+        <Card>
+          <CardHeader title={t('clients.currentTasks')} />
+          <QueryState q={tasks}>
+            {!tasks.data?.length && <Empty />}
+            <ul className="divide-y text-sm">
+              {tasks.data?.map((task) => {
+                const tone = taskTone(task);
+                return (
+                  <li key={task.id}>
+                    {/* Tor ustun: 1-qator nom + holat, 2-qator muddat + mas'ul */}
+                    <button className="w-full px-4 py-2 text-left hover:bg-gray-50" onClick={() => openTask(task.id)}>
+                      <div className="flex items-center gap-2">
+                        <span className="min-w-0 flex-1 truncate">{taskTitle(task, i18n.language)}</span>
+                        <TaskStatusBadge status={task.status} />
+                      </div>
+                      <div className="mt-0.5 flex gap-2 text-xs text-gray-500">
+                        <span className={cn(tone === 'overdue' && 'text-overdue', tone === 'soon' && 'text-soon')}>{fmtShortDue(task.dueAt)}</span>
+                        <span className="truncate">· {task.assigneeName ?? t('task.unassigned')}</span>
+                      </div>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </QueryState>
+        </Card>
+      </div>
     </div>
   );
 
