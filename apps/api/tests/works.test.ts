@@ -168,3 +168,93 @@ describe('fayl ustunlari: to\'lov, bank-kalit, my.mehnat.uz', () => {
     expect((await A1.patch(`/api/clients/${aos}`, { mehnatPassword: '' })).body.hasMehnatPassword).toBe(false);
   });
 });
+
+describe("tanlangan oy ko'rinishi (/api/works?month=)", () => {
+  let c: number;
+  const at = async (m: string, work: string) => {
+    const r = await L.get(`/api/works?pageSize=100&month=${m}`);
+    expect(r.status).toBe(200);
+    expect(r.body.month).toBe(m);
+    return r.body.items.find((i: any) => i.clientId === c).cells[ids[work]];
+  };
+
+  beforeAll(async () => {
+    c = await tx((db) => createClient(db, { stir: '309111222', name: 'OY MCHJ', taxType: 'AOS', status: 'ACTIVE', accountantId: team.acc1 }, team.leader));
+    await tx((db) => generatePeriod(db, `${month(-1)}-01`));
+  });
+
+  it("katakda shu oy vazifasi: o'tgan oy muddati o'tgan, joriy oy ochiq; bajarilsa done", async () => {
+    const prev = await at(month(-1), 'salary');
+    expect(prev).toMatchObject({ state: 'overdue', beforeSystem: false });
+    expect(prev.next).toMatchObject({ kind: 'TASK', taskId: prev.taskId, month: month(-1) });
+    expect(['open', 'soon']).toContain((await at(month(0), 'salary')).state);
+    expect((await L.post(`/api/tasks/${prev.taskId}/done`)).status).toBe(200);
+    expect(await at(month(-1), 'salary')).toMatchObject({ state: 'done', taskId: prev.taskId, next: null });
+    // Kelajak oyda vazifa yo'q
+    expect((await at(month(1), 'salary')).state).toBe('na');
+  });
+
+  it("INPS ish oyi bo'yicha: o'tgan oy ishi = joriy oy vazifasi, joriy oy hali chiqmagan", async () => {
+    const prev = await at(month(-1), 'inps');
+    const task = await one(pool, `SELECT to_char(period, 'YYYY-MM') AS p FROM task WHERE id = $1`, [prev.taskId]);
+    expect(task.p).toBe(month(0));
+    expect((await at(month(0), 'inps')).state).toBe('na');
+  });
+
+  it("tizimgacha bo'lgan oylar boshlang'ich nuqtadan: faqat navbatdagi oy bosiladi", async () => {
+    expect((await L.put(`/api/works/${c}/${ids.bank}/baseline`, { month: month(-4) })).status).toBe(200);
+    expect(await at(month(-5), 'bank')).toMatchObject({ state: 'done', beforeSystem: true, taskId: null });
+    expect(await at(month(-4), 'bank')).toMatchObject({ state: 'done', beforeSystem: true });
+    expect(await at(month(-3), 'bank')).toMatchObject({ state: 'overdue', beforeSystem: true, next: { kind: 'BASELINE', month: month(-3) } });
+    expect(await at(month(-2), 'bank')).toMatchObject({ state: 'overdue', next: null });
+    // Boshlang'ich nuqtasi yo'q ish: tizimgacha "—"
+    expect((await at(month(-3), 'salary')).state).toBe('na');
+  });
+
+  it("noto'g'ri oy formati rad etiladi", async () => {
+    expect((await L.get('/api/works?month=2026-13')).status).toBe(400);
+  });
+});
+
+describe("Excel kabi ish katagi: PUT /api/works/cell (V31)", () => {
+  let c: number;
+  const at = async (m: string, work: string) =>
+    (await L.get(`/api/works?pageSize=100&month=${m}`)).body.items.find((i: any) => i.clientId === c).cells[ids[work]];
+  const put = (who: ReturnType<typeof api>, work: string, m: string, value: string) =>
+    who.put('/api/works/cell', { clientId: c, routineTypeId: ids[work], month: m, value });
+
+  beforeAll(async () => {
+    // Nol hisobot: qoida bo'yicha doimiy ish chiqmaydi; faqat Buxgalter ishlarida (INPS doimiy ish)
+    c = await tx((db) => createClient(db, { stir: '309333444', name: 'NOL ISH MCHJ', taxType: 'AOS', status: 'ZERO_REPORT', accountantId: team.acc1, inReports: false, inWorks: true }, team.leader));
+  });
+
+  it("holat to'smaydi: Nol hisobot mijozga ish 0 qilinadi, keyin 1, 0, X", async () => {
+    expect((await at(month(0), 'salary')).state).toBe('na');
+    expect((await put(L, 'salary', month(0), '0')).status).toBe(200);
+    const open = await at(month(0), 'salary');
+    expect(['open', 'soon']).toContain(open.state);
+    const done = await put(L, 'salary', month(0), '1');
+    expect(done.body.task).toMatchObject({ id: open.taskId, status: 'DONE' });
+    expect((await at(month(0), 'salary')).state).toBe('done');
+    await put(L, 'salary', month(0), '0');
+    expect((await at(month(0), 'salary')).taskId).toBe(open.taskId);
+    await put(L, 'salary', month(0), 'X');
+    expect((await at(month(0), 'salary')).state).toBe('na');
+    expect((await one(pool, 'SELECT status FROM task WHERE id = $1', [open.taskId])).status).toBe('CANCELLED');
+  });
+
+  it("tanlov keyingi oyga o'tadi; INPS ish oyi bo'yicha (joriy oy ishi = keyingi oy vazifasi)", async () => {
+    await put(L, 'bank', month(-1), '0');
+    expect(['overdue', 'open']).toContain((await at(month(-1), 'bank')).state);
+    expect(['open', 'soon']).toContain((await at(month(0), 'bank')).state);
+    const r = await put(L, 'inps', month(0), '1');
+    expect(r.status).toBe(200);
+    const task = await one(pool, `SELECT to_char(period, 'YYYY-MM') AS p, status FROM task WHERE id = $1`, [r.body.task.id]);
+    expect(task).toMatchObject({ p: month(1), status: 'DONE' });
+    expect((await at(month(0), 'inps')).state).toBe('done');
+  });
+
+  it('faqat rahbar', async () => {
+    expect((await put(A1, 'salary', month(0), '1')).status).toBe(403);
+  });
+});

@@ -16,10 +16,24 @@ import { Select } from './ui/select';
 const empty = { stir: '', name: '', contactPerson: '', phone: '', taxType: 'AOS' as TaxType, taxTypeEffectiveFrom: '', accountantId: '', status: 'ACTIVE' as ClientStatus, note: '' };
 
 /**
- * Yangi mijoz (faqat rahbar): alohida sahifa emas, mijozlar ro'yxati ustidagi modal. Yaratilgach mijoz kartasiga o'tadi.
+ * Yangi mijoz (faqat rahbar): alohida sahifa emas, jadval ustidagi modal.
+ * section — qaysi sahifadan: mijoz faqat o'sha bo'limga tushadi (shu STIR boshqa bo'limda bo'lsa — o'sha mijoz qo'shiladi).
+ * onCreated berilsa (Hisobot topshirish: detail sahifa yo'q) — jadvalda qoladi, aks holda mijoz kartasiga o'tadi.
  * lead berilsa — operator topgan firmani mijozga aylantirish: forma uning ma'lumotlari bilan to'ldiriladi.
  */
-export function NewClientDialog({ open, onClose, lead }: { open: boolean; onClose: () => void; lead?: Lead | null }) {
+export function NewClientDialog({
+  open,
+  onClose,
+  lead,
+  section,
+  onCreated,
+}: {
+  open: boolean;
+  onClose: () => void;
+  lead?: Lead | null;
+  section?: 'REPORTS' | 'WORKS';
+  onCreated?: (c: { id: number; stir: string }) => void;
+}) {
   const { t } = useTranslation();
   const qc = useQueryClient();
   const navigate = useNavigate();
@@ -33,7 +47,8 @@ export function NewClientDialog({ open, onClose, lead }: { open: boolean; onClos
 
   const create = useMutation({
     mutationFn: () =>
-      api.post<{ id?: number; clientId?: number }>(lead ? `/leads/${lead.id}/convert` : '/clients', {
+      api.post<{ id?: number; clientId?: number; joined?: boolean }>(lead ? `/leads/${lead.id}/convert` : '/clients', {
+        ...(!lead && section && { section }),
         stir: form.stir,
         name: form.name,
         contactPerson: form.contactPerson || null,
@@ -45,11 +60,13 @@ export function NewClientDialog({ open, onClose, lead }: { open: boolean; onClos
         ...(form.taxTypeEffectiveFrom && { taxTypeEffectiveFrom: form.taxTypeEffectiveFrom }),
       }),
     onSuccess: (c) => {
-      toast.success(t('common.saved'));
-      void qc.invalidateQueries({ queryKey: ['clients'] });
-      void qc.invalidateQueries({ queryKey: ['leads'] });
+      // Shu STIR boshqa bo'limda bor edi: yangi mijoz emas, o'sha mijoz shu bo'limga qo'shildi
+      toast.success(c.joined ? t('clients.joinedSection') : t('common.saved'));
+      for (const key of ['clients', 'leads', 'grid', 'works']) void qc.invalidateQueries({ queryKey: [key] });
       onClose();
-      navigate(`/clients/${c.clientId ?? c.id}`);
+      const id = (c.clientId ?? c.id)!;
+      if (onCreated) onCreated({ id, stir: form.stir });
+      else navigate(`/clients/${id}`);
     },
     onError: (e) => toast.error(errorText(e, t)),
   });

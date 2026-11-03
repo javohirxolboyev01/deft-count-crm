@@ -65,6 +65,10 @@ interface PreviousImport {
  * Fayl turi sarlavhadan aniqlanadi; sahifaga mos kelmasa 400 WRONG_FILE_KIND (boshqa sahifaga yozib yubormaslik uchun).
  * Fayl mazmuni (SHA-256) avval import qilingan bo'lsa: dry-run javobida `alreadyImported`, haqiqiy importda 409
  * FILE_ALREADY_IMPORTED — bir xil faylni qayta yozish hech narsa qo'shmaydi, faqat chalg'itadi.
+ * force=true: rahbar ataylab qayta yuklaydi (masalan import qoidasi o'zgargan: V24 "boricha" — oldin tushib qolgan
+ * qatorlar endi yoziladi). Import idempotent: o'zgarmagan qatorlar UNCHANGED.
+ * Haqiqiy importdan keyin shu fayldagi korxonalarning eski "Qo'lda tekshirish" yozuvlari yopiladi — ro'yxat
+ * faqat oxirgi import holatini ko'rsatadi (yangi muammolar shu import yozganlari).
  */
 sheetsRouter.post('/import', upload.single('file'), async (req, res) => {
   const u = me(req);
@@ -74,6 +78,7 @@ sheetsRouter.post('/import', upload.single('file'), async (req, res) => {
       kind: z.enum(['REPORTS', 'WORKS']).optional(),
       month: z.string().optional(),
       sheet: z.string().optional(),
+      force: z.enum(['true', 'false']).default('false'),
     }),
     req.query,
   );
@@ -87,7 +92,7 @@ sheetsRouter.post('/import', upload.single('file'), async (req, res) => {
      FROM sheet_import_file f LEFT JOIN app_user u ON u.id = f.imported_by WHERE f.file_hash = $1`,
     [fileHash],
   );
-  if (previous && !dryRun) throw new AppError(409, 'FILE_ALREADY_IMPORTED', 'Bu fayl allaqachon import qilingan', previous);
+  if (previous && !dryRun && f.force !== 'true') throw new AppError(409, 'FILE_ALREADY_IMPORTED', 'Bu fayl allaqachon import qilingan', previous);
   const rows = await xlsxToRows(req.file.buffer, f.sheet);
   // Fayl turi sarlavhadan: "Бухгалтер ишлари" (doimiy ish ustunlari) -> Buxgalter ishlari, aks holda hisobot jadvali
   const works = await detectWorksFile(pool, rows);
@@ -101,8 +106,20 @@ sheetsRouter.post('/import', upload.single('file'), async (req, res) => {
     ? await dryTx(run)
     : await tx(async (db) => {
         const r = await run(db);
+        // Shu import yozgan yozuvlar occurred_at = now() (tranzaksiya vaqti); eskilari undan oldin.
+        // Faqat shu jadval bo'limidagilar: boshqa sahifa faylining kamchiliklariga tegilmaydi (V27)
+        const stirs = [...new Set(r.rows.map((x) => x.stir).filter(Boolean))];
+        const ids = [...new Set(r.rows.map((x) => x.clientId).filter(Boolean))];
         await db.query(
-          `INSERT INTO sheet_import_file (file_hash, file_name, period, imported_by, summary) VALUES ($1, $2, $3, $4, $5)`,
+          `UPDATE sheet_sync_error SET resolved = true, resolved_by = $2, resolved_at = now()
+           WHERE kind = 'IMPORT_REVIEW' AND NOT resolved AND occurred_at < now() AND section = $4
+             AND (stir = ANY ($1::text[]) OR client_id = ANY ($3::bigint[]))`,
+          [stirs, u.id, ids, detected],
+        );
+        await db.query(
+          `INSERT INTO sheet_import_file (file_hash, file_name, period, imported_by, summary) VALUES ($1, $2, $3, $4, $5)
+           ON CONFLICT (file_hash) DO UPDATE SET file_name = EXCLUDED.file_name, period = EXCLUDED.period,
+             imported_by = EXCLUDED.imported_by, imported_at = now(), summary = EXCLUDED.summary`,
           // multer nomni latin1 deb o'qiydi: kirill/o'zbekcha nomlar buzilmasin
           [fileHash, Buffer.from(req.file!.originalname, 'latin1').toString('utf8'), `${r.period}-01`, u.id, r.summary],
         );
@@ -111,13 +128,17 @@ sheetsRouter.post('/import', upload.single('file'), async (req, res) => {
   res.json({ ...report, alreadyImported: previous ?? null });
 });
 
-sheetsRouter.get('/review', async (_req, res) => {
+/** kind — sahifa: faqat shu jadval faylining kamchiliklari (berilmasa hammasi) */
+sheetsRouter.get('/review', async (req, res) => {
+  const f = parse(z.object({ kind: z.enum(['REPORTS', 'WORKS']).optional() }), req.query);
   res.json(
     await q(
       pool,
-      `SELECT e.id, e.occurred_at AS "occurredAt", e.ref, e.stir, e.message, c.id AS "clientId"
+      `SELECT e.id, e.occurred_at AS "occurredAt", e.ref, e.stir, e.message, coalesce(e.client_id, c.id) AS "clientId"
        FROM sheet_sync_error e LEFT JOIN client c ON c.stir = e.stir
-       WHERE e.kind = 'IMPORT_REVIEW' AND NOT e.resolved ORDER BY e.occurred_at DESC, e.id LIMIT 500`,
+       WHERE e.kind = 'IMPORT_REVIEW' AND NOT e.resolved AND ($1::text IS NULL OR e.section = $1)
+       ORDER BY e.occurred_at DESC, e.id LIMIT 500`,
+      [f.kind ?? null],
     ),
   );
 });

@@ -1,14 +1,16 @@
 import ExcelJS from 'exceljs';
 import { Router } from 'express';
 import { z } from 'zod';
-import { isLeader, me, requireAuth } from '../common/auth';
-import { parse } from '../common/errors';
+import { type AuthUser, me, requireAuth, requireLeader } from '../common/auth';
+import { audit } from '../common/audit';
+import { AppError, notFound, parse } from '../common/errors';
 import { normalizeName } from '../common/normalize';
 import { addMonthsIso, currentPeriod, monthOf, periodFromMonth } from '../common/time';
-import { type Db, pool, q, tx } from '../db';
+import { type Db, one, pool, q, tx } from '../db';
 import { CLIENT_STATUSES } from './clients';
 import { getDueTime } from './generator';
-import { markDone } from './taskService';
+import { cancelPendingForTask } from './notifications';
+import { markDone, stopTimersForTask } from './taskService';
 
 export type CellState = '1' | '0' | '!' | 'X';
 
@@ -30,7 +32,8 @@ export async function loadGrid(
      ORDER BY rt.sort_order, rt.id`,
     [period, dueTime],
   );
-  const where: string[] = [];
+  // Faqat Hisobot topshirish bo'limidagi mijozlar (V25: «Бухгалтер ишлари» faylidan yuklanganlar bu yerda ko'rinmaydi)
+  const where: string[] = ['c.in_reports'];
   const params: unknown[] = [period];
   const p = (v: unknown) => (params.push(v), `$${params.length}`);
   if (f.accountantId) where.push(`c.accountant_id = ${p(f.accountantId)}`);
@@ -43,7 +46,7 @@ export async function loadGrid(
     db,
     `SELECT g.client_id AS "clientId", g.report_type_id AS "reportTypeId", g.tax_type AS "taxType",
             g.task_id AS "taskId", g.task_status AS "taskStatus", g.cell AS state,
-            c.stir, c.name, c.status, c.note, c.tax_type_raw AS "taxTypeRaw", c.accountant_id AS "accountantId", a.full_name AS "accountantName"
+            c.stir, c.stir_raw AS "stirRaw", c.name, c.status, c.note, c.tax_type_raw AS "taxTypeRaw", c.accountant_id AS "accountantId", a.full_name AS "accountantName"
      FROM fn_monthly_grid($1) g
      JOIN client c ON c.id = g.client_id
      LEFT JOIN app_user a ON a.id = c.accountant_id
@@ -60,6 +63,7 @@ export async function loadGrid(
       r = {
         clientId: c.clientId,
         stir: c.stir,
+        stirRaw: c.stir ? null : c.stirRaw,
         name: c.name,
         taxType: c.taxType,
         taxTypeRaw: c.taxType ? null : c.taxTypeRaw,
@@ -118,7 +122,6 @@ export const gridRouter = Router();
 gridRouter.use(requireAuth);
 
 gridRouter.get('/', async (req, res) => {
-  const u = me(req);
   const f = parse(
     z.object({
       month: z.string().optional(),
@@ -129,9 +132,9 @@ gridRouter.get('/', async (req, res) => {
     }),
     req.query,
   );
-  // Buxgalter faqat o'z mijozlarini ko'radi (serverda majburiy)
-  const accountantId = isLeader(u) ? f.accountantId : u.id;
-  res.json(await loadGrid(pool, periodFromMonth(f.month), { ...f, accountantId }));
+  // Hisobot topshirish buxgalterga biriktirilmaydi (rahbar qarori): hamma korxona hammaga ko'rinadi,
+  // buxgalter faqat ko'radi — o'zgartirish yo'llari serverda yopiq (cell/done requireLeader)
+  res.json(await loadGrid(pool, periodFromMonth(f.month), f));
 });
 
 // Ekrandagi sarlavhalar bilan bir xil qisqa nomlar va muddat sanasi ko'rsatilmaydigan ustunlar (Monthly.tsx)
@@ -147,12 +150,12 @@ const HEAD = {
 };
 const FILL = { done: 'FFDCFCE7', overdue: 'FFFEE2E2', na: 'FFF3F4F6', head: 'FF37A0AD' };
 
-// Excel: butun jadval (filtrsiz), buxgalterga faqat o'z mijozlari. Katak qiymati import formatidagidek 1/0/X;
+// Excel: butun jadval (filtrsiz), buxgalterga ham hammasi. Katak qiymati import formatidagidek 1/0/X;
 // muddati o'tgan katak "0" bo'lib qoladi, faqat qizil fon bilan ajraladi (rahbar qarori).
 gridRouter.get('/export.xlsx', async (req, res) => {
   const u = me(req);
   const { month } = parse(z.object({ month: z.string().optional() }), req.query);
-  const g = await loadGrid(pool, periodFromMonth(month), { accountantId: isLeader(u) ? undefined : u.id });
+  const g = await loadGrid(pool, periodFromMonth(month), {});
   const lang = u.language === 'ru' ? 'ru' : 'uz';
   const h = HEAD[lang];
 
@@ -181,7 +184,7 @@ gridRouter.get('/export.xlsx', async (req, res) => {
   g.rows.forEach((r: any, i: number) => {
     const row = ws.addRow([
       i + 1,
-      r.stir,
+      r.stir ?? r.stirRaw ?? '',
       r.name,
       r.taxType ?? r.taxTypeRaw ?? '',
       ...g.columns.map((c: any) => {
@@ -218,9 +221,155 @@ gridRouter.get('/export.xlsx', async (req, res) => {
   res.end();
 });
 
-// Katakchani bosish = "Bajarildi" (B4 mexanizmi, 5 soniyalik undo bilan).
-// creates_accountant_task=false hisobot kataklarini ham mijozning buxgalteri/rahbar belgilay oladi (TODO(tasdiqlash)).
-gridRouter.post('/cell/:taskId/done', async (req, res) => {
+// Katakchani bosish = "Bajarildi" (B4 mexanizmi, 5 soniyalik undo bilan). Faqat rahbar: buxgalter
+// Hisobot topshirish sahifasini faqat ko'radi (rahbar qarori), o'z vazifasini "Mening kunim"da yopadi.
+gridRouter.post('/cell/:taskId/done', requireLeader, async (req, res) => {
   const taskId = parse(z.coerce.number().int().positive(), req.params.taskId);
   res.json(await tx((db) => markDone(db, taskId, me(req), { source: 'GRID' })));
+});
+
+/**
+ * Excel kabi katak (rahbar qarori): istalgan katakka 1 / 0 / X, soliq turi qoidasi to'smaydi.
+ * Tanlov client_report_cell'ga yoziladi (V30, keyingi oylarga ham o'tadi), vazifa shunga moslanadi:
+ *   1 — vazifa (yo'q bo'lsa yaratiladi) "Bajarildi" (6.6: rahbarlarga xabar, 5 soniyalik undo)
+ *   0 — vazifa ochiq (bajarilgan bo'lsa qayta ochiladi)
+ *   X — vazifa bekor qilinadi (o'chirilmaydi, audit'da), bajarilgani ham
+ * Keyingi oylar (joriy oygacha) yangi tanlovga moslanadi: ochiq vazifa bekor / yangisi yaratiladi, DONE tegilmaydi.
+ */
+export async function setGridCell(
+  db: Db,
+  u: AuthUser,
+  c: { clientId: number; reportTypeId: number; month: string; value: '1' | '0' | 'X' },
+) {
+  // Ustunning vazifa davri: oylik = ko'rilayotgan oy, choraklik/yillik = oxirgi generatsiya oyi
+  const col = await one<{ sourcePeriod: string | null; code: string }>(
+    db,
+    `SELECT to_char(g.source_period, 'YYYY-MM-DD') AS "sourcePeriod", rt.code
+     FROM fn_grid_columns($1) g JOIN report_type rt ON rt.id = g.report_type_id WHERE g.report_type_id = $2`,
+    [periodFromMonth(c.month), c.reportTypeId],
+  );
+  if (!col?.sourcePeriod) throw notFound('Hisobot');
+  const client = await one<{ taxType: string | null }>(
+    db,
+    'SELECT tax_type AS "taxType" FROM client WHERE id = $1 AND in_reports FOR UPDATE',
+    [c.clientId],
+  );
+  if (!client) throw notFound('Mijoz');
+  // Tur aniqlanmagan mijozda katakda fayldagi qiymat turadi (V24): avval soliq turi tanlanadi
+  if (!client.taxType) throw new AppError(409, 'NO_TAX_TYPE', 'Avval soliq turini tanlang');
+  const period = col.sourcePeriod;
+  const before = await one<{ applicable: boolean }>(
+    db,
+    'SELECT applicable FROM client_report_cell WHERE client_id = $1 AND report_type_id = $2 AND period = $3',
+    [c.clientId, c.reportTypeId, period],
+  );
+  await db.query(
+    `INSERT INTO client_report_cell (client_id, report_type_id, period, applicable, set_by) VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (client_id, report_type_id, period) DO UPDATE SET applicable = EXCLUDED.applicable, set_by = EXCLUDED.set_by, set_at = now()`,
+    [c.clientId, c.reportTypeId, period, c.value !== 'X', u.id],
+  );
+  await audit(db, {
+    actorId: u.id,
+    entity: 'client',
+    entityId: c.clientId,
+    clientId: c.clientId,
+    action: 'REPORT_CELL',
+    before: before ? { report: col.code, applicable: before.applicable } : null,
+    after: { report: col.code, month: period.slice(0, 7), value: c.value },
+  });
+
+  const cur = currentPeriod();
+  for (let p = period; p <= cur || p === period; p = addMonthsIso(p, 1)) {
+    await syncReportTask(db, c.clientId, c.reportTypeId, p, u.id);
+  }
+
+  let task = await one<{ id: number; status: string }>(
+    db,
+    `SELECT id, status FROM task WHERE client_id = $1 AND kind = 'REPORT' AND report_type_id = $2 AND period = $3`,
+    [c.clientId, c.reportTypeId, period],
+  );
+  if (c.value === 'X' && task?.status === 'DONE') {
+    // Qo'lda X bajarilganini ham bekor qiladi (Exceldagidek: katakdagi qiymat almashadi)
+    await cancelTask(db, task.id, c.clientId, 'MANUAL_X', u.id);
+    task = undefined;
+  }
+  if (c.value === '0' && task?.status === 'DONE') await reopenDone(db, task.id, c.clientId, u.id, 'GRID');
+  if (c.value === '1' && task && task.status !== 'DONE') {
+    return { task: await markDone(db, task.id, u, { source: 'GRID' }) };
+  }
+  return { task: null };
+}
+
+/** Bitta (mijoz, hisobot, davr) vazifasini qo'llanishga moslash. Doimiy ishlarga tegmaydi (o'tgan oyga ish yaratmaslik uchun) */
+async function syncReportTask(db: Db, clientId: number, reportTypeId: number, period: string, actorId: number) {
+  const a = await one<{ applicable: boolean }>(
+    db,
+    'SELECT applicable FROM fn_report_applicability($1) WHERE client_id = $2 AND report_type_id = $3',
+    [period, clientId, reportTypeId],
+  );
+  if (!a) return; // bu oy bu hisobot davri emas (choraklik/yillik)
+  const t = await one<{ id: number; status: string }>(
+    db,
+    `SELECT id, status FROM task WHERE client_id = $1 AND kind = 'REPORT' AND report_type_id = $2 AND period = $3`,
+    [clientId, reportTypeId, period],
+  );
+  if (!a.applicable) {
+    if (t && ['TODO', 'IN_PROGRESS', 'WAITING_CLIENT'].includes(t.status)) await cancelTask(db, t.id, clientId, 'MANUAL_X', actorId);
+    return;
+  }
+  if (t?.status === 'CANCELLED') {
+    await db.query(
+      `UPDATE task t SET status = 'TODO', prev_status = NULL, cancel_reason = NULL,
+              assignee_id = CASE WHEN rt.creates_accountant_task THEN c.accountant_id END
+       FROM report_type rt, client c WHERE t.id = $1 AND rt.id = t.report_type_id AND c.id = t.client_id`,
+      [t.id],
+    );
+    await audit(db, { actorId, entity: 'task', entityId: t.id, clientId, action: 'REOPEN_RECONCILE', after: { source: 'GRID' } });
+  } else if (!t) {
+    const dueTime = await getDueTime(db);
+    const created = await one<{ id: number; title: string }>(
+      db,
+      `INSERT INTO task (client_id, kind, report_type_id, period, title, assignee_id, due_at, status, overdue_notified_at)
+       SELECT c.id, 'REPORT', rt.id, $3, rt.name, CASE WHEN rt.creates_accountant_task THEN c.accountant_id END,
+              fn_due_at($3, rt.due_day, $4), 'TODO',
+              -- muddati allaqachon o'tgan bo'lsa "muddat o'tdi" xabari yuborilmaydi (generator bilan bir xil)
+              CASE WHEN fn_due_at($3, rt.due_day, $4) < now() THEN now() END
+       FROM client c, report_type rt WHERE c.id = $1 AND rt.id = $2
+       RETURNING id, title`,
+      [clientId, reportTypeId, period, dueTime],
+    );
+    await audit(db, { actorId, entity: 'task', entityId: created!.id, clientId, action: 'CREATE_RECONCILE', after: { kind: 'REPORT', title: created!.title, source: 'GRID' } });
+  }
+}
+
+/** Katakda 1 -> 0: bajarilgan vazifa qayta ochiladi, rahbarga ketmagan "bajarildi" xabari bekor */
+export async function reopenDone(db: Db, taskId: number, clientId: number, actorId: number, source: string) {
+  await db.query(`UPDATE task SET status = 'TODO', done_at = NULL, done_by = NULL, prev_status = NULL WHERE id = $1`, [taskId]);
+  await cancelPendingForTask(db, taskId, 'TASK_DONE');
+  await audit(db, { actorId, entity: 'task', entityId: taskId, clientId, action: 'REOPEN', before: { status: 'DONE' }, after: { status: 'TODO', source } });
+}
+
+export async function cancelTask(db: Db, taskId: number, clientId: number, reason: string, actorId: number) {
+  const t = await one<{ status: string; title: string }>(db, 'SELECT status, title FROM task WHERE id = $1', [taskId]);
+  await stopTimersForTask(db, taskId);
+  // Bajarilgani ham (done_at faqat DONE holatda); oldingi holat audit'da qoladi
+  await db.query(
+    `UPDATE task SET prev_status = status, status = 'CANCELLED', cancel_reason = $2, done_at = NULL, done_by = NULL WHERE id = $1`,
+    [taskId, reason],
+  );
+  await cancelPendingForTask(db, taskId, 'TASK_DONE');
+  await audit(db, { actorId, entity: 'task', entityId: taskId, clientId, action: 'CANCEL_MANUAL_X', before: { status: t!.status }, after: { status: 'CANCELLED', title: t!.title } });
+}
+
+gridRouter.put('/cell', requireLeader, async (req, res) => {
+  const body = parse(
+    z.object({
+      clientId: z.number().int().positive(),
+      reportTypeId: z.number().int().positive(),
+      month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'Oy formati YYYY-MM'),
+      value: z.enum(['1', '0', 'X']),
+    }),
+    req.body,
+  );
+  res.json(await tx((db) => setGridCell(db, me(req), body)));
 });

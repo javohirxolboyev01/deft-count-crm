@@ -4,6 +4,7 @@ import { type Db, q } from '../../db';
 import { reconcileClient } from '../generator';
 import { markDone } from '../taskService';
 import { parseCell } from './parse';
+import { insertReview } from './review';
 
 // Hisobot faylidagi bitta mijoz qatorining kataklarini (1/0/X) tizimga qo'llash. Ikki joydan chaqiriladi:
 //  - import paytida (soliq turi ma'lum bo'lsa);
@@ -52,6 +53,22 @@ export async function applyReportCells(
        FROM fn_monthly_grid($1) WHERE client_id = $2`,
       [period, clientId],
     );
+  // Fayl o'z oyi uchun ustun (V30): shu oydan keyingi qo'lda tanlovlar o'chiriladi, fayldagi qiymat amal qiladi
+  const filled = values.filter((v) => parseCell(v.raw)).map((v) => v.reportTypeId);
+  const cleared = filled.length
+    ? (await db.query('DELETE FROM client_report_cell WHERE client_id = $1 AND period >= $2 AND report_type_id = ANY ($3::bigint[])', [clientId, period, filled])).rowCount ?? 0
+    : 0;
+  // Oldingi oydan o'tib kelayotgan qo'lda tanlov: fayl unga zid bo'lsa, shu oydan fayldagi qiymat tanlov bo'ladi
+  const carried = new Map(
+    (
+      await q<{ reportTypeId: number; applicable: boolean }>(
+        db,
+        `SELECT DISTINCT ON (report_type_id) report_type_id AS "reportTypeId", applicable FROM client_report_cell
+         WHERE client_id = $1 AND period < $2 ORDER BY report_type_id, period DESC`,
+        [clientId, period],
+      )
+    ).map((x) => [Number(x.reportTypeId), x.applicable]),
+  );
   let cells = await loadCells();
 
   // Rahbar qarori: soliq turi bo'yicha topshiriladigan katakda X -> mijoz bu hisobotni doimiy topshirmaydi
@@ -65,7 +82,7 @@ export async function applyReportCells(
   const events = new Set(
     (await q<{ id: number }>(db, 'SELECT report_type_id AS id FROM client_report_event WHERE client_id = $1 AND month = $2', [clientId, eventMonth])).map((e) => Number(e.id)),
   );
-  let marksChanged = false;
+  let marksChanged = cleared > 0;
   for (const col of values) {
     const v = parseCell(col.raw);
     const cell = cells.find((c) => c.reportTypeId === col.reportTypeId);
@@ -83,6 +100,20 @@ export async function applyReportCells(
         await db.query('DELETE FROM client_report_event WHERE client_id = $1 AND report_type_id = $2 AND month = $3', [clientId, col.reportTypeId, eventMonth]);
         await audit(db, { actorId, entity: 'client', entityId: clientId, clientId, action: 'EVENT_UNMARK', before: { report: col.code, month: eventMonth }, after: { source: 'IMPORT' } });
         changes.push(`${col.code}:X`);
+        marksChanged = true;
+      }
+      continue;
+    }
+    const manual = carried.get(col.reportTypeId);
+    if (manual !== undefined) {
+      if (manual !== (v !== 'X')) {
+        await db.query(
+          `INSERT INTO client_report_cell (client_id, report_type_id, period, applicable, set_by) VALUES ($1, $2, $3, $4, $5)
+           ON CONFLICT (client_id, report_type_id, period) DO UPDATE SET applicable = EXCLUDED.applicable, set_by = EXCLUDED.set_by, set_at = now()`,
+          [clientId, col.reportTypeId, period, v !== 'X', actorId],
+        );
+        await audit(db, { actorId, entity: 'client', entityId: clientId, clientId, action: 'REPORT_CELL', after: { report: col.code, month: period.slice(0, 7), value: v, source: 'IMPORT' } });
+        changes.push(`${col.code}=${v}`);
         marksChanged = true;
       }
       continue;
@@ -152,7 +183,7 @@ export async function saveRawReportCells(db: Db, clientId: number, period: strin
  * Hal bo'lmagan qiymatlar qo'lda tekshirish ro'yxatiga tushadi. Kelajak oylar kataklari o'z oyi kelguncha turadi.
  */
 export async function applyPendingReportCells(db: Db, clientId: number, actorId: number | null) {
-  const client = await q<{ taxType: string | null; stir: string; name: string }>(
+  const client = await q<{ taxType: string | null; stir: string | null; name: string }>(
     db,
     'SELECT tax_type AS "taxType", stir, name FROM client WHERE id = $1',
     [clientId],
@@ -172,10 +203,7 @@ export async function applyPendingReportCells(db: Db, clientId: number, actorId:
     const r = await applyReportCells(db, { clientId, period, taxType: c.taxType, actorId }, rows.filter((x) => x.period === period));
     cellsDone += r.cellsDone;
     for (const msg of r.review) {
-      await db.query(
-        `INSERT INTO sheet_sync_error (kind, ref, stir, message) VALUES ('IMPORT_REVIEW', $1, $2, $3)`,
-        [period.slice(0, 7), c.stir, `${c.name}: ${msg}`],
-      );
+      await insertReview(db, { ref: period.slice(0, 7), stir: c.stir, name: c.name, message: msg, clientId, section: 'REPORTS' });
     }
     await db.query('DELETE FROM client_report_raw WHERE client_id = $1 AND period = $2', [clientId, period]);
   }

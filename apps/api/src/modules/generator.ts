@@ -61,31 +61,30 @@ export async function generatePeriod(db: Db, period: string, clientId: number | 
     [period, clientId, dueTime],
   );
 
-  // 2) Oylik doimiy ishlar: faqat ACTIVE va soliq turi aniqlangan (V24: importda tanilmagan tur — mijoz
-  //    "to'ldirilmagan", vazifa chiqmaydi). INPS kabi hisobotga bog'langan ish, hisobot qo'llansa
-  //    alohida yaratilmaydi (bitta vazifa). Muddat: oyning oxirgi kuni.
+  // 2) Oylik doimiy ishlar: qo'llanishi fn_routine_applicability'da (V31) — ACTIVE, soliq turi aniqlangan (V24),
+  //    Buxgalter ishlari bo'limidagi (V25 in_works), rahbarning qo'lda tanlovi (V31) ustun. INPS kabi hisobotga
+  //    bog'langan ish, hisobot qo'llansa alohida yaratilmaydi (bitta vazifa). Muddat: oyning oxirgi kuni.
   //    TODO(tasdiqlash): doimiy ishlar muddati oy oxiri deb olindi.
-  const routineWhere = `c.status = 'ACTIVE' AND c.tax_type IS NOT NULL AND w.active AND w.effective_from <= $1
-       AND ($2::bigint IS NULL OR c.id = $2)
-       AND NOT (w.report_type_id IS NOT NULL AND EXISTS (
-         SELECT 1 FROM a WHERE a.client_id = c.id AND a.report_type_id = w.report_type_id))`;
+  const RA = `WITH ra AS (SELECT client_id, routine_type_id FROM fn_routine_applicability($1)
+                         WHERE applicable AND ($2::bigint IS NULL OR client_id = $2))`;
   const reopenedRoutines = await q(
     db,
-    `${A}
+    `${RA}
      UPDATE task t SET status = 'TODO', prev_status = NULL, cancel_reason = NULL, assignee_id = c.accountant_id
-     FROM client c, routine_work_type w
-     WHERE t.client_id = c.id AND t.kind = 'ROUTINE' AND t.routine_type_id = w.id AND t.period = $1
-       AND t.status = 'CANCELLED' AND ${routineWhere}
+     FROM ra, client c
+     WHERE t.client_id = ra.client_id AND t.kind = 'ROUTINE' AND t.routine_type_id = ra.routine_type_id AND t.period = $1
+       AND t.status = 'CANCELLED' AND c.id = ra.client_id
      RETURNING t.id, t.client_id AS "clientId", t.kind, t.title`,
     [period, clientId],
   );
   const routines = await q(
     db,
-    `${A}
+    `${RA}
      INSERT INTO task (client_id, kind, routine_type_id, period, title, assignee_id, due_at, status)
      SELECT c.id, 'ROUTINE', w.id, $1, w.name, c.accountant_id, fn_due_at($1, 31, $3), 'TODO'
-     FROM client c CROSS JOIN routine_work_type w
-     WHERE ${routineWhere}
+     FROM ra
+     JOIN client c ON c.id = ra.client_id
+     JOIN routine_work_type w ON w.id = ra.routine_type_id
      ORDER BY c.id, w.sort_order
      ${CONFLICT}
      RETURNING id, client_id AS "clientId", kind, title`,
@@ -134,11 +133,9 @@ export async function reconcileClient(db: Db, clientId: number, actorId: number 
          (t.kind = 'REPORT' AND NOT EXISTS (
             SELECT 1 FROM fn_report_applicability($2) a
             WHERE a.client_id = t.client_id AND a.report_type_id = t.report_type_id AND a.applicable))
-         OR (t.kind = 'ROUTINE' AND (
-            c.status <> 'ACTIVE' OR c.tax_type IS NULL
-            OR EXISTS (SELECT 1 FROM routine_work_type w
-                       JOIN fn_report_applicability($2) a ON a.report_type_id = w.report_type_id
-                       WHERE w.id = t.routine_type_id AND a.client_id = t.client_id AND a.applicable)))
+         OR (t.kind = 'ROUTINE' AND NOT EXISTS (
+            SELECT 1 FROM fn_routine_applicability($2) r
+            WHERE r.client_id = t.client_id AND r.routine_type_id = t.routine_type_id AND r.applicable))
        )
      RETURNING t.id, t.kind, t.title, t.prev_status AS "prevStatus"`,
     [clientId, period],

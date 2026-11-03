@@ -51,6 +51,7 @@ export default function App() {
           <Route path="clients/new" element={<Navigate to="/clients" replace />} />
           <Route path="clients/:id" element={<Protected roles={S}><ClientCard /></Protected>} />
           <Route path="monthly" element={<Protected roles={S}><Monthly /></Protected>} />
+          {/* Hisobot topshirish detail: faqat rahbar (buxgalter jadvalni faqat ko'radi) */}
           <Route path="leads" element={<Protected roles={['LEADER', 'OPERATOR']}><Leads /></Protected>} />
           <Route path="settings" element={<Protected roles={L}><Settings /></Protected>} />
           <Route path="users" element={<Protected roles={L}><Users /></Protected>} />

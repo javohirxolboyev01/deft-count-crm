@@ -285,18 +285,23 @@ describe('eslatma: muddat o\'tdi', () => {
 });
 
 describe('oylik jadval', () => {
-  it('buxgalter faqat o\'z mijozlarini ko\'radi; katak bosish DONE qiladi', async () => {
+  it('buxgalter hamma korxonani ko\'radi (biriktirilmaydi), katakni bosa olmaydi; rahbar bosishi DONE qiladi', async () => {
     const g = await A1.get('/api/monthly-grid');
-    expect(g.body.rows.map((r: any) => r.clientId)).toEqual([aosClient]);
+    const all = (await L.get('/api/monthly-grid')).body.rows.map((r: any) => r.clientId);
+    expect(g.body.rows.map((r: any) => r.clientId)).toEqual(all);
+    expect(all.length).toBeGreaterThan(1);
     const cols = Object.fromEntries(g.body.columns.map((c: any) => [c.code, c.reportTypeId]));
-    const row = g.body.rows[0];
+    const row = g.body.rows.find((r: any) => r.clientId === aosClient);
     expect(row.cells[cols.QQS].state).toBe('X');
     expect(row.cells[cols.FOYDA].state).toBe('X');
     const jshds = row.cells[cols.JSHDS];
-    const r = await A1.post(`/api/monthly-grid/cell/${jshds.taskId}/done`);
+    // Buxgalter jadvalni faqat ko'radi
+    expect((await A1.post(`/api/monthly-grid/cell/${jshds.taskId}/done`)).status).toBe(403);
+    expect((await A1.get('/api/monthly-grid')).body.rows.find((r: any) => r.clientId === aosClient).cells[cols.JSHDS].state).not.toBe('1');
+    const r = await L.post(`/api/monthly-grid/cell/${jshds.taskId}/done`);
     expect(r.status).toBe(200);
     const g2 = await A1.get('/api/monthly-grid');
-    expect(g2.body.rows[0].cells[cols.JSHDS].state).toBe('1');
+    expect(g2.body.rows.find((r: any) => r.clientId === aosClient).cells[cols.JSHDS].state).toBe('1');
   });
 
   it('Excel yuklab olish: buxgalterga faqat o\'z mijozlari, katak 1/0/X', async () => {
@@ -318,7 +323,10 @@ describe('oylik jadval', () => {
     const r = await bin(A1.get('/api/monthly-grid/export.xlsx'));
     expect(r.status).toBe(200);
     expect(r.headers['content-type']).toContain('spreadsheetml');
-    const { head, rows } = await read(r);
+    const { head, rows: allRows } = await read(r);
+    // Buxgalterga ham butun jadval (hisobot topshirish biriktirilmaydi)
+    expect(allRows.length).toBeGreaterThan(1);
+    const rows = allRows.filter((x) => x[1] === '305123456');
     expect(rows).toHaveLength(1);
     const col = (prefix: string) => head.findIndex((x) => x.toUpperCase().startsWith(prefix));
     expect(rows[0][col('QQS')]).toBe('X');
@@ -332,11 +340,11 @@ describe('oylik jadval', () => {
   it('Dividend: holat belgilanmagan katak "0" (qat\'iy "—" emas), bosilsa belgilanadi va vazifa chiqadi; bekor qilsa qaytadi', async () => {
     const g = await A1.get('/api/monthly-grid');
     const cols = Object.fromEntries(g.body.columns.map((c: any) => [c.code, c.reportTypeId]));
-    const cell = () => A1.get('/api/monthly-grid').then((r) => r.body.rows[0].cells[cols.DIVIDEND]);
-    expect(g.body.rows[0].cells[cols.DIVIDEND]).toMatchObject({ state: '0', taskId: null, noEvent: true, markable: true });
+    const cell = () => A1.get('/api/monthly-grid').then((r) => r.body.rows.find((r: any) => r.clientId === aosClient).cells[cols.DIVIDEND]);
+    expect(g.body.rows.find((r: any) => r.clientId === aosClient).cells[cols.DIVIDEND]).toMatchObject({ state: '0', taskId: null, noEvent: true, markable: true });
     // AOS mijozga Norezident foyda soliq turi bo'yicha topshirilmaydi: qat'iy "—", bosib bo'lmaydi
-    expect(g.body.rows[0].cells[cols.NOREZIDENT_FOYDA]).toMatchObject({ state: 'X' });
-    expect(g.body.rows[0].cells[cols.NOREZIDENT_FOYDA].markable).toBeUndefined();
+    expect(g.body.rows.find((r: any) => r.clientId === aosClient).cells[cols.NOREZIDENT_FOYDA]).toMatchObject({ state: 'X' });
+    expect(g.body.rows.find((r: any) => r.clientId === aosClient).cells[cols.NOREZIDENT_FOYDA].markable).toBeUndefined();
 
     const url = `/api/clients/${aosClient}/events/${cols.DIVIDEND}/${g.body.eventMonth}`;
     expect((await A1.put(url)).status).toBe(200);
@@ -354,8 +362,73 @@ describe('oylik jadval', () => {
     const later = new Date(Date.UTC(y, m + 1, 1)).toISOString().slice(0, 7);
     const g3 = await A1.get(`/api/monthly-grid?month=${later}`);
     expect(g3.body.eventMonth).toBeNull();
-    expect(g3.body.rows[0].cells[cols.DIVIDEND]).toMatchObject({ state: '0', noEvent: true });
-    expect(g3.body.rows[0].cells[cols.DIVIDEND].markable).toBeUndefined();
+    expect(g3.body.rows.find((r: any) => r.clientId === aosClient).cells[cols.DIVIDEND]).toMatchObject({ state: '0', noEvent: true });
+    expect(g3.body.rows.find((r: any) => r.clientId === aosClient).cells[cols.DIVIDEND].markable).toBeUndefined();
+  });
+  it("Excel kabi katak: rahbar istalgan katakka 1/0/X qo'yadi, soliq turi to'smaydi; tanlov keyingi oyga o'tadi (V30)", async () => {
+    const g = await L.get('/api/monthly-grid');
+    const month = g.body.period;
+    const cols = Object.fromEntries(g.body.columns.map((c: any) => [c.code, c.reportTypeId]));
+    const cell = async (code: string) =>
+      (await L.get(`/api/monthly-grid?month=${month}`)).body.rows.find((r: any) => r.clientId === aosClient).cells[cols[code]];
+    const put = (who: typeof L, code: string, value: string) => who.put('/api/monthly-grid/cell', { clientId: aosClient, reportTypeId: cols[code], month, value });
+
+    // AOS to'lovchida QQS qoida bo'yicha X — qo'lda 0 qilinadi: vazifa yaratiladi
+    expect((await cell('QQS')).state).toBe('X');
+    expect((await put(L, 'QQS', '0')).status).toBe(200);
+    const open = await cell('QQS');
+    expect(['0', '!']).toContain(open.state);
+    expect(open.taskId).toBeTruthy();
+    // 1 — Bajarildi (javobda vazifa: undo uchun)
+    const done = await put(L, 'QQS', '1');
+    expect(done.body.task).toMatchObject({ id: open.taskId, status: 'DONE' });
+    expect((await cell('QQS')).state).toBe('1');
+    // 1 -> 0: qayta ochiladi
+    await put(L, 'QQS', '0');
+    expect((await cell('QQS')).taskStatus).toBe('TODO');
+    // Topshiriladigan hisobotga X: vazifa bekor (o'chirilmaydi)
+    const jshds = (await cell('JSHDS')).taskId;
+    expect((await put(L, 'JSHDS', 'X')).status).toBe(200);
+    expect(await cell('JSHDS')).toMatchObject({ state: 'X', taskId: null });
+    expect((await one(pool, 'SELECT status FROM task WHERE id = $1', [jshds])).status).toBe('CANCELLED');
+    // Tanlov keyingi oyga ham o'tadi (Exceldagidek nusxa)
+    const next = await one(pool, `SELECT (date_trunc('month', $1::date) + interval '1 month')::date AS p`, [`${month}-01`]);
+    const ap = await q(pool, 'SELECT report_type_id, applicable FROM fn_report_applicability($1) WHERE client_id = $2', [next.p, aosClient]);
+    expect(ap.find((x) => Number(x.report_type_id) === cols.QQS)?.applicable).toBe(true);
+    expect(ap.find((x) => Number(x.report_type_id) === cols.JSHDS)?.applicable).toBe(false);
+    // Qaytarish: JSHDS yana 0 — bekor qilingan vazifa qayta ochiladi
+    await put(L, 'JSHDS', '0');
+    expect((await cell('JSHDS')).taskId).toBe(jshds);
+    // Faqat rahbar; noto'g'ri qiymat rad etiladi
+    expect((await put(A1, 'QQS', 'X')).status).toBe(403);
+    expect((await put(L, 'QQS', '2')).status).toBe(400);
+    expect((await L.get(`/api/monthly-grid/client/${aosClient}`)).status).toBe(404);
+  });
+});
+
+describe("yangi mijoz sahifaning o'z bo'limiga qo'shiladi", () => {
+  it("Hisobot topshirishdan — faqat hisobotda; shu STIR Buxgalter ishlaridan — o'sha mijoz, ikkala bo'limda", async () => {
+    const body = { stir: '402000001', name: 'BOLIM MCHJ', taxType: 'AOS', status: 'ACTIVE' };
+    const r = await L.post('/api/clients', { ...body, section: 'REPORTS' });
+    expect(r.status).toBe(201);
+    expect(r.body.joined).toBe(false);
+    const id = r.body.id;
+    expect(await one(pool, 'SELECT in_reports, in_works FROM client WHERE id = $1', [id])).toEqual({ in_reports: true, in_works: false });
+    const grid = await L.get('/api/monthly-grid?search=402000001');
+    expect(grid.body.rows.map((x: any) => x.clientId)).toEqual([id]);
+    expect((await L.get('/api/works?search=402000001')).body.items).toHaveLength(0);
+    // Doimiy ish chiqmaydi, hisobot chiqadi
+    expect((await one(pool, `SELECT count(*)::int AS n FROM task WHERE client_id = $1 AND kind = 'ROUTINE' AND status <> 'CANCELLED'`, [id])).n).toBe(0);
+    expect((await one(pool, `SELECT count(*)::int AS n FROM task WHERE client_id = $1 AND kind = 'REPORT'`, [id])).n).toBeGreaterThan(0);
+
+    // Shu bo'limda takror — 409; boshqa bo'limdan — o'sha mijoz qo'shiladi
+    expect((await L.post('/api/clients', { ...body, section: 'REPORTS' })).status).toBe(409);
+    const joined = await L.post('/api/clients', { ...body, name: 'BOSHQA NOM', section: 'WORKS' });
+    expect(joined.status).toBe(200);
+    expect(joined.body).toMatchObject({ id, joined: true, name: 'BOLIM MCHJ' });
+    expect(await one(pool, 'SELECT in_reports, in_works FROM client WHERE id = $1', [id])).toEqual({ in_reports: true, in_works: true });
+    expect((await one(pool, `SELECT count(*)::int AS n FROM task WHERE client_id = $1 AND kind = 'ROUTINE'`, [id])).n).toBeGreaterThan(0);
+    expect((await A1.post('/api/clients', { ...body, stir: '402000002', section: 'WORKS' })).status).toBe(403);
   });
 });
 

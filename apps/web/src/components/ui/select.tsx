@@ -65,11 +65,14 @@ export function Select({
   const listId = useId();
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(-1);
+  // Ro'yxat trigger kengligidan tor bo'lmaydi (matchWidth); 400px cheklovi faqat tor triggerdagi uzun matnlar uchun
+  const [menuMaxW, setMenuMaxW] = useState(400);
   const selectedIdx = options.findIndex((o) => o.value === value);
   const selected = options[selectedIdx];
 
   const show = () => {
     setActive(selectedIdx);
+    setMenuMaxW(Math.max(400, ref.current?.offsetWidth ?? 0));
     setOpen(true);
   };
   const pick = (v: string) => {
@@ -109,7 +112,7 @@ export function Select({
         </span>
       </button>
       <Popover anchorRef={ref} open={open} onClose={() => setOpen(false)} matchWidth>
-        <ul id={listId} role="listbox" className={cn('custom-scrollbar max-h-60 max-w-[400px] overflow-auto py-1 text-sm', menuClassName)}>
+        <ul id={listId} role="listbox" style={{ maxWidth: menuMaxW }} className={cn('custom-scrollbar max-h-60 overflow-auto py-1 text-sm', menuClassName)}>
           {options.length === 0 && <li className="whitespace-nowrap px-3 py-2 text-gray-500">{t('common.empty')}</li>}
           {options.map((o, i) => (
             <li

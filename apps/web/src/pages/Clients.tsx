@@ -1,12 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Copy, Eye, EyeOff, Pencil, Plus, Search } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Pencil, Plus, Search } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
+import { CellMenu, type CellValue } from '@/components/CellMenu';
+import { DateCell, EditableTextCell, PasswordCell, SelectCell, formatIntCell, parseIntCell, parseTextCell, useClientPatch } from '@/components/ClientFieldCells';
 import { NewClientDialog } from '@/components/NewClientDialog';
 import { NoteCell } from '@/components/NoteCell';
-import { SheetImportActions } from '@/components/SheetImport';
+import { ReviewMark, SheetImportActions, clientNeeds, useReviewByClient } from '@/components/SheetImport';
 import { TaxBadge } from '@/components/StatusBadge';
 import { Button } from '@/components/ui/button';
 import { Card, PageHeader } from '@/components/ui/card';
@@ -23,25 +25,22 @@ import { api, qs } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
 import { errorText } from '@/lib/errors';
-import { fmtDate, monthLabel } from '@/lib/time';
-import { type AdvanceResult, CLIENT_STATUSES, type WorkCell, type WorkColumn, type WorkTone, type Works, type WorksRow } from '@/lib/types';
+import { currentMonth, monthLabel, shiftMonth } from '@/lib/time';
+import { type AdvanceResult, CLIENT_STATUSES, type Task, type WorkCell, type WorkColumn, type WorkState, type Works, type WorksRow } from '@/lib/types';
 
-// "Oylik ishlar" ("Бухгалтер ишлари" fayli): qatorda mijoz, ustunda doimiy ish, katakda qaysi oygacha
-// uzluksiz bajarilgani va necha oy orqada. Holat serverda vazifalardan hisoblanadi (works.ts).
-type Tone = WorkTone | 'progress' | 'na';
-const TONE: Record<Tone, string> = {
+// "Oylik ishlar" ("Бухгалтер ишлари" fayli): qatorda mijoz, ustunda doimiy ish, katakda tanlangan oy ishining
+// holati ("Hisobot topshirish"dagidek oyma-oy). Holat serverda vazifalardan hisoblanadi (works.ts, ?month=).
+const TONE: Record<WorkState, string> = {
   done: 'bg-done-bg text-done',
-  progress: 'text-gray-700 hover:bg-blue-50 dark:text-on-brand',
+  open: 'text-gray-700 hover:bg-blue-50 dark:text-on-brand',
   soon: 'bg-soon-bg text-soon',
   waiting: 'bg-waiting-bg text-waiting',
   overdue: 'bg-overdue-bg text-overdue hover:bg-red-200',
   na: 'bg-gray-100 text-gray-600 dark:text-on-brand',
 };
-const LEGEND: Tone[] = ['done', 'progress', 'soon', 'waiting', 'overdue', 'na'];
-const LEGEND_SYM: Partial<Record<Tone, string>> = { progress: '○', na: '—' };
-const toneOf = (c: WorkCell): Tone => (c.na ? 'na' : c.tone ?? 'progress');
-/** 'YYYY-MM' -> 'MM.yyyy' (faylda 30.09.2026 kabi oy oxiri yozilgan) */
-const fmtMonth = (m: string) => `${m.slice(5)}.${m.slice(0, 4)}`;
+const LEGEND: WorkState[] = ['done', 'open', 'soon', 'waiting', 'overdue', 'na'];
+/** Katak belgilari "Hisobot topshirish" bilan bir xil: ✓ bajarildi, ○ ochiq, ! muddati o'tgan, — chiqmaydi */
+const SYM: Record<WorkState, string> = { done: '✓', open: '○', soon: '○', waiting: '○', overdue: '!', na: '—' };
 /** Faylda 1,000,000 ko'rinishida */
 const fmtMoney = (n: number | null | undefined) => (n == null ? '' : n.toLocaleString('en-US'));
 const TH = 'border-r border-brand-400 px-2 py-2 text-left text-xs';
@@ -58,7 +57,7 @@ const sectionBg = (offset: number, total: number): React.CSSProperties => ({
   backgroundPosition: `${-offset}px 0`,
 });
 
-type Pair = { clientId: number; routineTypeId: number; month: string };
+type Pair = { clientId: number; routineTypeId: number; month: string; next: NonNullable<WorkCell['next']> };
 
 export default function Clients() {
   const { t, i18n } = useTranslation();
@@ -66,16 +65,19 @@ export default function Clients() {
   const qc = useQueryClient();
   const openTask = useOpenTask();
   const [newOpen, setNewOpen] = useState(false);
+  const [month, setMonth] = useState(currentMonth());
   const [edit, setEdit] = useState<{ row: WorksRow; col: WorkColumn } | null>(null);
   const accountants = useAccountants();
+  const reviews = useReviewByClient('WORKS');
+  const accountantOptions = accountants.data?.map((a) => ({ value: String(a.id), label: a.fullName })) ?? [];
   const months = t('months', { returnObjects: true }) as string[];
   // ?taxType=NONE: Dashboard'dagi "soliq turi aniqlanmagan" havolasidan
   const [params] = useSearchParams();
   const [f, setF] = useState({ search: '', status: '', taxType: params.get('taxType') ?? '', accountantId: '', page: 1, pageSize: 50 });
   const set = (patch: Partial<typeof f>) => setF({ ...f, page: 1, ...patch });
   const q = useQuery({
-    queryKey: ['works', f],
-    queryFn: () => api.get<Works>(`/works${qs({ ...f })}`),
+    queryKey: ['works', f, month],
+    queryFn: () => api.get<Works>(`/works${qs({ ...f, month })}`),
     placeholderData: (prev) => prev,
   });
   const ru = i18n.language === 'ru';
@@ -83,9 +85,13 @@ export default function Clients() {
   // Sarlavha fayldagidek qisqa ("Ish haqi"), to'liq nom title'da
   const colLabel = (c: WorkColumn) => (ru ? c.shortNameRu : c.shortName) || colName(c);
 
-  // Katakni bosish: keyingi oy "Bajarildi" + 5 soniyalik "Bekor qilish" (useMarkDone bilan bir xil oqim)
+  // Katakni bosish: shu oy ishi "Bajarildi" + 5 soniyalik "Bekor qilish" (useMarkDone bilan bir xil oqim).
+  // Tizimgacha bo'lgan oy (vazifasi yo'q) — boshlang'ich nuqta bir oy suriladi (advance)
   const advance = useMutation({
-    mutationFn: (p: Pair) => api.post<AdvanceResult>(`/works/${p.clientId}/${p.routineTypeId}/advance`),
+    mutationFn: (p: Pair): Promise<AdvanceResult> =>
+      p.next.kind === 'TASK'
+        ? api.post<Task>(`/tasks/${p.next.taskId}/done`).then((task) => ({ kind: 'TASK' as const, task }))
+        : api.post<AdvanceResult>(`/works/${p.clientId}/${p.routineTypeId}/advance`),
     onSuccess: (r, p) => {
       invalidateTasks(qc);
       const undo = () =>
@@ -109,8 +115,35 @@ export default function Clients() {
     },
     onError: (e) => toast.error(errorText(e, t)),
   });
+  // Rahbar: Excel kabi 1 / 0 / X (V31), holat to'smaydi. "1" — Bajarildi, 5 soniya ichida bekor qilish mumkin
+  const setCell = useMutation({
+    mutationFn: (p: { clientId: number; routineTypeId: number; value: CellValue }) =>
+      api.put<{ task: Task | null }>('/works/cell', { ...p, month }),
+    onSuccess: (r) => {
+      invalidateTasks(qc);
+      const task = r.task;
+      if (!task) return;
+      toast.success(t('works.doneToast', { work: taskTitle(task, i18n.language), month: monthLabel(month, months), client: task.clientName }), {
+        duration: 5000,
+        action: {
+          label: t('task.undo'),
+          onClick: () => {
+            api
+              .post(`/tasks/${task.id}/undo-done`)
+              .then(() => {
+                invalidateTasks(qc);
+                toast.info(t('task.undone'));
+              })
+              .catch((e) => toast.error(errorText(e, t)));
+          },
+        },
+      });
+    },
+    onError: (e) => toast.error(errorText(e, t)),
+  });
   const pending = (clientId: number, routineTypeId: number) =>
-    advance.isPending && advance.variables?.clientId === clientId && advance.variables.routineTypeId === routineTypeId;
+    (advance.isPending && advance.variables?.clientId === clientId && advance.variables.routineTypeId === routineTypeId) ||
+    (setCell.isPending && setCell.variables?.clientId === clientId && setCell.variables.routineTypeId === routineTypeId);
 
   const items = q.data?.items ?? [];
   const columns = q.data?.columns ?? [];
@@ -129,12 +162,16 @@ export default function Clients() {
     <div className="page-fill">
       <PageHeader
         title={t('works.title')}
-        actions={isLeader && (
+        actions={
           <>
-            <SheetImportActions kind="WORKS" />
-            <Button onClick={() => setNewOpen(true)}><Plus className="h-4 w-4" /> {t('clients.new')}</Button>
+            {isLeader && <SheetImportActions kind="WORKS" beforeImport={<Button onClick={() => setNewOpen(true)}><Plus className="h-4 w-4" /> {t('clients.new')}</Button>} />}
+            <div className="flex items-center gap-1">
+              <Button variant="outline" size="icon" onClick={() => setMonth(shiftMonth(month, -1))} aria-label={t('common.prev')}><ChevronLeft className="h-4 w-4" /></Button>
+              <span className="min-w-[140px] text-center text-sm font-medium capitalize">{monthLabel(month, months)}</span>
+              <Button variant="outline" size="icon" onClick={() => setMonth(shiftMonth(month, 1))} aria-label={t('common.next')}><ChevronRight className="h-4 w-4" /></Button>
+            </div>
           </>
-        )}
+        }
       />
       <Card className="flex min-h-0 flex-1 flex-col">
         <div className="flex shrink-0 flex-wrap items-center gap-2 border-b p-3">
@@ -158,9 +195,9 @@ export default function Clients() {
           <div className="ml-auto flex flex-wrap gap-3 text-xs text-gray-600">
             {LEGEND.map((s) => (
               <span key={s} className="inline-flex items-center gap-1">
-                {/* Katakdagi belgi bilan bir xil: ○ hali bajarilmagan, — chiqmaydi */}
+                {/* Katakdagi belgi bilan bir xil */}
                 <span className={cn('inline-flex h-4 w-4 items-center justify-center rounded border text-[10px] font-semibold leading-none', TONE[s])}>
-                  {LEGEND_SYM[s]}
+                  {SYM[s]}
                 </span>
                 {t(`works.legend.${s}`)}
               </span>
@@ -210,30 +247,27 @@ export default function Clients() {
                   {items.map((r, i) => (
                     <tr key={r.clientId} className="group">
                       <td className="sticky left-0 z-10 border-b border-r bg-white px-2 text-center text-xs text-gray-500 group-hover:bg-gray-100">{(f.page - 1) * f.pageSize + i + 1}</td>
-                      <td className="sticky left-10 z-10 hidden border-b border-r bg-white px-2 text-xs tabular-nums group-hover:bg-gray-100 sm:table-cell">{r.stir}</td>
+                      <td className="sticky left-10 z-10 hidden border-b border-r bg-white px-2 text-xs tabular-nums group-hover:bg-gray-100 sm:table-cell">{r.stir ?? <span className="rounded bg-amber-50 px-1 font-medium text-amber-800" title={t('clients.stirMissing')}>{r.stirRaw || '—'} ?</span>}</td>
                       <td className="sticky left-10 z-10 border-b border-r bg-white p-0 group-hover:bg-gray-100 sm:left-[144px]">
                         {/* Butun katak bosiladi */}
                         <Link to={`/clients/${r.clientId}`} className="block px-3 py-1.5">
-                          <div className="w-fit font-medium text-brand-500 hover:text-ink dark:text-brand-400 dark:hover:text-ink">{r.name}</div>
+                          <div className="flex items-center gap-1.5">
+                            <span className="w-fit font-medium text-brand-500 hover:text-ink dark:text-brand-400 dark:hover:text-ink">{r.name}</span>
+                            <ReviewMark items={reviews.get(r.clientId)} needs={isLeader ? clientNeeds(r, t) : []} />
+                          </div>
                           {r.status !== 'ACTIVE' && <div className="text-[11px] text-gray-500">{t(`clientStatus.${r.status}`)}</div>}
                         </Link>
                       </td>
                       <td className="border-b border-r px-2 text-center"><TaxBadge taxType={r.taxType} raw={r.taxTypeRaw} /></td>
-                      {isLeader && <td className={cn(TD, 'text-right tabular-nums')}>{fmtMoney(r.monthlyFee)}</td>}
-                      <td className={cn(TD, 'text-right tabular-nums')}>{fmtMoney(r.accountantShare)}</td>
-                      <td className={TD}>{r.accountantName ?? <span className="text-gray-400">{t('clients.noAccountant')}</span>}</td>
-                      <td className={cn(TD, 'text-center')}>{r.bankKey == null ? '' : r.bankKey ? t('works.bankYes') : <span className="text-gray-500">{t('works.bankNo')}</span>}</td>
-                      <td className={cn(TD, 'text-center tabular-nums')}>{r.employeeCount ?? ''}</td>
-                      <td className={cn(TD, 'text-center tabular-nums')}>{r.mehnatCheckedAt ? fmtDate(r.mehnatCheckedAt) : ''}</td>
-                      <td className={cn(TD, 'font-mono')}>{r.mehnatLogin ?? ''}</td>
-                      <td className={TD}>{r.hasMehnatPassword && <PasswordCell clientId={r.clientId} label={r.name} />}</td>
+                      <ClientFieldTds row={r} isLeader={isLeader} accountants={accountantOptions} />
                       {columns.map((c) => (
                         <WorkCellView
                           key={c.routineTypeId}
                           cell={r.cells[c.routineTypeId]}
                           label={`${r.name} — ${colLabel(c)}`}
                           busy={pending(r.clientId, c.routineTypeId)}
-                          onAdvance={(month) => advance.mutate({ clientId: r.clientId, routineTypeId: c.routineTypeId, month })}
+                          onAdvance={(next) => advance.mutate({ clientId: r.clientId, routineTypeId: c.routineTypeId, month: next.month, next })}
+                          onPick={isLeader ? (value) => setCell.mutate({ clientId: r.clientId, routineTypeId: c.routineTypeId, value }) : undefined}
                           onOpenTask={openTask}
                           onEdit={isLeader ? () => setEdit({ row: r, col: c }) : undefined}
                         />
@@ -258,7 +292,7 @@ export default function Clients() {
       <p className="mt-2 shrink-0 text-xs text-gray-500">
         {t('works.hint')} {isLeader && t('works.leaderHint')}
       </p>
-      {isLeader && <NewClientDialog open={newOpen} onClose={() => setNewOpen(false)} />}
+      {isLeader && <NewClientDialog open={newOpen} onClose={() => setNewOpen(false)} section="WORKS" />}
       {isLeader && edit && <BaselineDialog key={`${edit.row.clientId}:${edit.col.routineTypeId}`} {...edit} colName={colLabel(edit.col)} onClose={() => setEdit(null)} />}
     </div>
   );
@@ -277,58 +311,72 @@ function WorkCellView({
   label,
   busy,
   onAdvance,
+  onPick,
   onOpenTask,
   onEdit,
 }: {
   cell: WorkCell | undefined;
   label: string;
   busy: boolean;
-  onAdvance: (month: string) => void;
+  onAdvance: (next: NonNullable<WorkCell['next']>) => void;
+  /** Rahbar: 1 / 0 / X menyusi (tizimgacha bo'lgan oylardan tashqari — ular boshlang'ich nuqtadan) */
+  onPick?: (v: CellValue) => void;
   onOpenTask: (taskId: number) => void;
   onEdit?: () => void;
 }) {
   const { t } = useTranslation();
   const months = t('months', { returnObjects: true }) as string[];
   if (!cell) return <td className="border-b border-r" />;
-  const tone = toneOf(cell);
   const next = cell.next;
   const title = cell.raw
     ? t('works.rawHint', { raw: cell.raw })
-    : cell.na
-      ? t('works.legend.na')
-      : next
-        ? t('works.clickHint', { month: monthLabel(next.month, months) })
-        : t('works.allDone');
+    : next
+      ? t('works.clickHint', { month: monthLabel(next.month, months) })
+      : cell.beforeSystem
+        ? t(cell.state === 'done' ? 'works.beforeSystemDone' : 'works.gapOrder')
+        : t(`works.legend.${cell.state}`);
+
+  if (onPick && !cell.beforeSystem) {
+    return (
+      <td className="border-b border-r p-0.5 text-center">
+        <CellMenu
+          current={cell.state === 'done' ? '1' : cell.state === 'na' ? 'X' : '0'}
+          className={cn('h-10', cell.raw ? 'bg-amber-50 text-amber-800 ring-1 ring-inset ring-amber-300' : TONE[cell.state])}
+          symbol={cell.raw ? <span className="line-clamp-2 break-all px-1 text-[11px] font-medium">{cell.raw}</span> : <span className="text-sm font-semibold">{SYM[cell.state]}</span>}
+          labels={{ '1': t('works.legend.done'), '0': t('works.legend.open'), X: t('works.legend.na') }}
+          title={cell.raw ? t('works.rawHint', { raw: cell.raw }) : t('works.cellHint')}
+          label={`${label}: ${t(`works.legend.${cell.state}`)}. ${t('works.cellHint')}`}
+          busy={busy}
+          onPick={onPick}
+          onOpenTask={cell.taskId ? () => onOpenTask(cell.taskId!) : undefined}
+        />
+      </td>
+    );
+  }
 
   return (
     <td className="group/cell relative border-b border-r p-0.5 text-center">
       <button
         className={cn(
-          'flex h-10 w-full flex-col items-center justify-center rounded leading-tight transition-colors disabled:cursor-default',
+          'flex h-10 w-full items-center justify-center rounded leading-tight transition-colors disabled:cursor-default',
           // Fayldagi tanilmagan qiymat: boricha, sariq (rahbar oyni kiritguncha)
-          cell.raw ? 'bg-amber-50 text-amber-800 ring-1 ring-inset ring-amber-300' : TONE[tone],
+          cell.raw ? 'bg-amber-50 text-amber-800 ring-1 ring-inset ring-amber-300' : TONE[cell.state],
           busy && 'opacity-60',
         )}
         disabled={!next || busy}
         title={title}
-        aria-label={`${label}: ${cell.doneThrough ? monthLabel(cell.doneThrough, months) : '—'}. ${title}`}
-        onClick={() => next && onAdvance(next.month)}
+        aria-label={`${label}: ${t(`works.legend.${cell.state}`)}. ${title}`}
+        onClick={() => next && onAdvance(next)}
         onContextMenu={(e) => {
-          if (next?.kind !== 'TASK') return;
+          if (!cell.taskId) return;
           e.preventDefault();
-          onOpenTask(next.taskId);
+          onOpenTask(cell.taskId);
         }}
       >
         {cell.raw ? (
           <span className="line-clamp-2 break-all px-1 text-[11px] font-medium">{cell.raw}</span>
         ) : (
-          <>
-            <span className="text-xs font-semibold tabular-nums">
-              {/* Hali bajarilgan oy yo'q: "Hisobot topshirish" belgilari (○ ochiq, ! muddati o'tgan) */}
-              {cell.doneThrough ? fmtMonth(cell.doneThrough) : cell.na ? '—' : tone === 'overdue' ? '!' : '○'}
-            </span>
-            {cell.lag > 0 && <span className="text-[10px] font-medium">{t('works.behind', { n: cell.lag })}</span>}
-          </>
+          <span className="text-sm font-semibold">{SYM[cell.state]}</span>
         )}
       </button>
       {onEdit && (
@@ -353,7 +401,7 @@ function BaselineDialog({ row, col, colName, onClose }: { row: WorksRow; col: Wo
   const cell = row.cells[col.routineTypeId];
   const [month, setMonth] = useState(cell?.baseline ?? '');
   const save = useMutation({
-    mutationFn: () => api.put<WorkCell>(`/works/${row.clientId}/${col.routineTypeId}/baseline`, { month: month || null }),
+    mutationFn: () => api.put(`/works/${row.clientId}/${col.routineTypeId}/baseline`, { month: month || null }),
     onSuccess: () => {
       toast.success(t('common.saved'));
       void qc.invalidateQueries({ queryKey: ['works'] });
@@ -377,12 +425,9 @@ function BaselineDialog({ row, col, colName, onClose }: { row: WorksRow; col: Wo
     >
       <div className="space-y-3">
         {cell?.raw && <p className="rounded bg-amber-50 px-2 py-1.5 text-sm text-amber-800">{t('works.rawHint', { raw: cell.raw })}</p>}
-        {cell && !cell.na && (
-          <p className="text-sm text-gray-600">
-            {t('works.current')}: <span className="font-semibold text-ink">{cell.doneThrough ? monthLabel(cell.doneThrough, months) : t('works.notYet')}</span>
-            {cell.lag > 0 && <span className="text-overdue"> · {t('works.behind', { n: cell.lag })}</span>}
-          </p>
-        )}
+        <p className="text-sm text-gray-600">
+          {t('works.current')}: <span className="font-semibold text-ink">{cell?.baseline ? monthLabel(cell.baseline, months) : t('works.notYet')}</span>
+        </p>
         <label className="block space-y-1.5">
           <span className="text-sm font-medium">{t('works.baselineLabel')}</span>
           <MonthPicker value={month} onChange={setMonth} clearable aria-label={t('works.baselineLabel')} />
@@ -397,37 +442,76 @@ function BaselineDialog({ row, col, colName, onClose }: { row: WorksRow; col: Wo
  * my.mehnat.uz paroli: odatda yashirin; ko'zcha bosilganda serverdan ochiladi (har ochish audit_log'da).
  * Ochiq qiymat faqat shu komponent holatida turadi, kesh/so'rovlar ro'yxatiga tushmaydi.
  */
-function PasswordCell({ clientId, label }: { clientId: number; label: string }) {
+
+/**
+ * Mijoz maydonlari (Oylik to'lov | ulush | Javobgar | Bank-klyuch | my.mehnat.uz) Excel'dagidek katak ichida tahrirlanadi.
+ * Buxgalterga server ruxsat bergan maydonlar: bank-klyuch, xodim soni, sana, login, parol; ulush hisoblanadi.
+ */
+function ClientFieldTds({ row: r, isLeader, accountants }: { row: WorksRow; isLeader: boolean; accountants: { value: string; label: string }[] }) {
   const { t } = useTranslation();
-  const [value, setValue] = useState<string | null>(null);
-  const reveal = useMutation({
-    mutationFn: () => api.post<{ password: string }>(`/clients/${clientId}/mehnat-password/reveal`),
-    onSuccess: (r) => setValue(r.password),
-    onError: (e) => toast.error(errorText(e, t)),
-  });
-  const btn = 'inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-gray-500 hover:bg-gray-100 hover:text-brand-500 disabled:opacity-40';
+  const save = useClientPatch(r.clientId);
+  const P = 'border-b border-r p-0.5 text-xs';
   return (
-    <div className="flex items-center gap-1">
-      <span className="min-w-0 flex-1 truncate font-mono">{value ?? '••••••••'}</span>
-      {value === null ? (
-        <button className={btn} onClick={() => reveal.mutate()} disabled={reveal.isPending} title={t('works.showPassword')} aria-label={`${label} — ${t('works.showPassword')}`}>
-          <Eye className="h-3.5 w-3.5" />
-        </button>
-      ) : (
-        <>
-          <button
-            className={btn}
-            onClick={() => navigator.clipboard.writeText(value).then(() => toast.success(t('works.copied')), () => undefined)}
-            title={t('works.copy')}
-            aria-label={`${label} — ${t('works.copy')}`}
-          >
-            <Copy className="h-3.5 w-3.5" />
-          </button>
-          <button className={btn} onClick={() => setValue(null)} title={t('works.hidePassword')} aria-label={`${label} — ${t('works.hidePassword')}`}>
-            <EyeOff className="h-3.5 w-3.5" />
-          </button>
-        </>
+    <>
+      {isLeader && (
+        <td className={cn(P, 'min-w-[96px]')}>
+          <EditableTextCell
+            value={r.monthlyFee ?? null}
+            display={fmtMoney(r.monthlyFee)}
+            parse={parseIntCell(1_000_000_000_000)}
+            format={formatIntCell}
+            onSave={(v) => save.mutate({ monthlyFee: v })}
+            inputMode="numeric"
+            className="justify-end text-right tabular-nums"
+            label={`${r.name} — ${t('works.fee')}`}
+          />
+        </td>
       )}
-    </div>
+      <td className={cn(TD, 'text-right tabular-nums')}>{fmtMoney(r.accountantShare)}</td>
+      <td className={cn(P, 'min-w-[150px]')}>
+        <SelectCell
+          value={r.accountantId ? String(r.accountantId) : ''}
+          options={accountants}
+          onChange={(v) => save.mutate({ accountantId: v ? Number(v) : null })}
+          readOnly={!isLeader}
+          display={r.accountantName ?? <span className="text-gray-400">{t('clients.noAccountant')}</span>}
+          label={`${r.name} — ${t('works.accountant')}`}
+        />
+      </td>
+      <td className={cn(P, 'min-w-[84px] text-center')}>
+        <SelectCell
+          value={r.bankKey == null ? '' : r.bankKey ? 'yes' : 'no'}
+          options={[{ value: 'yes', label: t('works.bankYes') }, { value: 'no', label: t('works.bankNo') }]}
+          onChange={(v) => save.mutate({ bankKey: v === '' ? null : v === 'yes' })}
+          label={`${r.name} — ${t('works.bankKey')}`}
+        />
+      </td>
+      <td className={cn(P, 'min-w-[64px]')}>
+        <EditableTextCell
+          value={r.employeeCount ?? null}
+          parse={parseIntCell(100_000)}
+          format={formatIntCell}
+          onSave={(v) => save.mutate({ employeeCount: v })}
+          inputMode="numeric"
+          className="justify-center text-center tabular-nums"
+          label={`${r.name} — ${t('works.employees')}`}
+        />
+      </td>
+      <td className={cn(P, 'min-w-[120px]')}>
+        <DateCell value={r.mehnatCheckedAt ?? ''} onChange={(v) => save.mutate({ mehnatCheckedAt: v || null })} label={`${r.name} — ${t('works.checkedAt')}`} />
+      </td>
+      <td className={cn(P, 'min-w-[130px]')}>
+        <EditableTextCell
+          value={r.mehnatLogin ?? null}
+          parse={parseTextCell}
+          onSave={(v) => save.mutate({ mehnatLogin: v })}
+          mono
+          label={`${r.name} — ${t('works.login')}`}
+        />
+      </td>
+      <td className={cn(P, 'min-w-[160px]')}>
+        <PasswordCell clientId={r.clientId} label={r.name} hasPassword={r.hasMehnatPassword} onSave={(pw) => save.mutate({ mehnatPassword: pw })} />
+      </td>
+    </>
   );
 }

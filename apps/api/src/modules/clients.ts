@@ -9,9 +9,10 @@ import { addMonthsIso, currentPeriod, monthOf } from '../common/time';
 import { type Db, one, pool, q, tx } from '../db';
 import { reassignOpenTasks, reconcileClient } from './generator';
 import { applyPendingReportCells } from './sheets/reportCells';
+import { resolveReviewOnSave } from './sheets/review';
 
 export const CLIENT = `c.id, c.stir, c.name, c.contact_person AS "contactPerson", c.phone, c.tax_type AS "taxType",
-  c.tax_type_raw AS "taxTypeRaw", c.tax_type_effective_from AS "taxTypeEffectiveFrom", c.accountant_id AS "accountantId",
+  c.stir_raw AS "stirRaw", c.tax_type_raw AS "taxTypeRaw", c.tax_type_effective_from AS "taxTypeEffectiveFrom", c.accountant_id AS "accountantId",
   a.full_name AS "accountantName", c.status, c.note, c.created_at AS "createdAt", c.updated_at AS "updatedAt",
   c.monthly_fee AS "monthlyFee", c.bank_key AS "bankKey", c.employee_count AS "employeeCount",
   c.mehnat_checked_at AS "mehnatCheckedAt", c.mehnat_login AS "mehnatLogin",
@@ -125,7 +126,16 @@ export async function recordTaxType(db: Db, clientId: number, taxType: string, e
  * Import uchun soliq turi null bo'lishi mumkin (fayldagi qiymat tanilmadi, V24): mijoz "to'ldirilmagan",
  * vazifa chiqmaydi, fayldagi matn tax_type_raw'da. Formadan qo'shishda tur majburiy (clientInput).
  */
-type NewClient = Omit<z.infer<typeof clientInput>, 'taxType'> & { taxType: 'AOS' | 'QQS' | null; taxTypeRaw?: string | null };
+type NewClient = Omit<z.infer<typeof clientInput>, 'taxType' | 'stir'> & {
+  /** null: importda STIR yo'q/noto'g'ri/takroriy (V26), fayldagi matn stirRaw'da */
+  stir: string | null;
+  stirRaw?: string | null;
+  taxType: 'AOS' | 'QQS' | null;
+  taxTypeRaw?: string | null;
+  /** V25: qaysi bo'limda (import faqat o'z bo'limini qo'yadi; forma va lead — ikkalasi) */
+  inReports?: boolean;
+  inWorks?: boolean;
+};
 
 export async function createClient(db: Db, input: NewClient, actorId: number | null) {
   await assertAccountant(db, input.accountantId);
@@ -133,8 +143,8 @@ export async function createClient(db: Db, input: NewClient, actorId: number | n
     db,
     `INSERT INTO client (stir, name, name_normalized, contact_person, phone, tax_type, tax_type_effective_from,
                          accountant_id, status, note, monthly_fee, bank_key, employee_count, mehnat_checked_at,
-                         mehnat_login, mehnat_password_enc, tax_type_raw)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) RETURNING id`,
+                         mehnat_login, mehnat_password_enc, tax_type_raw, in_reports, in_works, stir_raw)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20) RETURNING id`,
     [
       input.stir,
       input.name,
@@ -153,6 +163,9 @@ export async function createClient(db: Db, input: NewClient, actorId: number | n
       input.mehnatLogin || null,
       input.mehnatPassword ? encryptSecret(input.mehnatPassword) : null,
       input.taxType ? null : input.taxTypeRaw ?? null,
+      input.inReports ?? true,
+      input.inWorks ?? true,
+      input.stir ? null : input.stirRaw ?? null,
     ],
   );
   // Boshlang'ich tur: "qachondan" berilmasa, butun o'tmish uchun amal qiladi
@@ -239,12 +252,43 @@ clientsRouter.get('/:id/history', async (req, res) => {
   );
 });
 
+/**
+ * Yangi mijoz (faqat rahbar). section — qaysi sahifadan qo'shilmoqda: mijoz faqat o'sha bo'limga tushadi
+ * (Excel import qoidasi bilan bir xil, V25). Berilmasa (eski chaqiruvlar) — ikkala bo'limda.
+ * Shu STIR boshqa bo'limda allaqachon bo'lsa — yangi mijoz yaratilmaydi: o'sha mijoz bu bo'limga ham qo'shiladi
+ * (ma'lumot bitta), javob 200 va joined: true. Shu bo'limda bo'lsa — 409 DUPLICATE.
+ */
 clientsRouter.post('/', async (req, res) => {
   const u = me(req);
   if (!isLeader(u)) throw forbidden();
-  const input = parse(clientInput, req.body);
-  const id = await tx((db) => createClient(db, input, u.id));
-  res.status(201).json(presentClient(await loadClientForUser(pool, id, u), u, await sharePercent(pool)));
+  const input = parse(clientInput.extend({ section: z.enum(['REPORTS', 'WORKS']).optional() }), req.body);
+  const { section, ...data } = input;
+  const result = await tx(async (db) => {
+    const existing = section
+      ? await one<{ id: number; inReports: boolean; inWorks: boolean }>(
+          db,
+          'SELECT id, in_reports AS "inReports", in_works AS "inWorks" FROM client WHERE stir = $1 FOR UPDATE',
+          [data.stir],
+        )
+      : undefined;
+    if (existing) {
+      const col = section === 'REPORTS' ? 'in_reports' : 'in_works';
+      const already = section === 'REPORTS' ? existing.inReports : existing.inWorks;
+      if (already) throw new AppError(409, 'DUPLICATE', 'Bu STIR bilan mijoz shu bo\'limda allaqachon bor', { clientId: existing.id });
+      await db.query(`UPDATE client SET ${col} = true WHERE id = $1`, [existing.id]);
+      await audit(db, {
+        actorId: u.id, entity: 'client', entityId: existing.id, clientId: existing.id, action: 'UPDATE',
+        before: { [section === 'REPORTS' ? 'inReports' : 'inWorks']: false }, after: { [section === 'REPORTS' ? 'inReports' : 'inWorks']: true },
+      });
+      // Bo'lim vazifalari joriy oydan chiqadi
+      await reconcileClient(db, existing.id, u.id);
+      return { id: existing.id, joined: true };
+    }
+    const sections = section ? { inReports: section === 'REPORTS', inWorks: section === 'WORKS' } : {};
+    return { id: await createClient(db, { ...data, ...sections }, u.id), joined: false };
+  });
+  const body = { ...presentClient(await loadClientForUser(pool, result.id, u), u, await sharePercent(pool)), joined: result.joined };
+  res.status(result.joined ? 200 : 201).json(body);
 });
 
 clientsRouter.patch('/:id', async (req, res) => {
@@ -252,18 +296,22 @@ clientsRouter.patch('/:id', async (req, res) => {
   const id = parse(z.coerce.number().int(), req.params.id);
   const body = parse(clientInput.partial().omit({ status: true }).extend({
     status: z.enum(CLIENT_STATUSES).optional(),
+    // Rahbar kartani to'liq saqladi: "tekshiring" yozuvlari ko'rib chiqilgan (V28)
+    reviewed: z.boolean().optional(),
   }), req.body);
   // TODO(tasdiqlash): buxgalter aloqa ma'lumotlari, izoh, bank-kalit va my.mehnat.uz ma'lumotlarini o'zgartira oladi;
   // oylik to'lov, soliq turi, holat, buxgalter — faqat rahbar
   const ACCOUNTANT_FIELDS = ['contactPerson', 'phone', 'note', 'bankKey', 'employeeCount', 'mehnatCheckedAt', 'mehnatLogin', 'mehnatPassword'];
-  if (!isLeader(u) && Object.keys(body).some((k) => !ACCOUNTANT_FIELDS.includes(k))) throw forbidden();
+  if (!isLeader(u) && Object.keys(body).some((k) => k !== 'reviewed' && !ACCOUNTANT_FIELDS.includes(k))) throw forbidden();
   // Parol diff'ga kirmaydi (oldingi qiymat ochilmaydi): berilgan bo'lsa har doim yoziladi
   const pwChanged = body.mehnatPassword !== undefined;
 
   await tx(async (db) => {
     const before = await loadClientForUser(db, id, u, true);
-    const { mehnatPassword: _pw, ...rest } = body;
+    const { mehnatPassword: _pw, reviewed, ...rest } = body;
     const d = diff(before, rest);
+    // Tuzatilgan kamchiliklar o'zi yopiladi (V28); "tekshiring" yozuvlari o'zgarish bo'lmasa ham, rahbar saqlasa
+    await resolveReviewOnSave(db, id, [...Object.keys(d.after), ...(pwChanged ? ['mehnatPassword'] : [])], !!reviewed && isLeader(u), u.id);
     if (!d.changed && !pwChanged) return;
     if (body.accountantId !== undefined) await assertAccountant(db, body.accountantId);
 
@@ -275,7 +323,7 @@ clientsRouter.patch('/:id', async (req, res) => {
 
     await db.query(
       `UPDATE client SET
-         stir = coalesce($2, stir), name = coalesce($3, name), name_normalized = coalesce($4, name_normalized),
+         stir = coalesce($2, stir), stir_raw = CASE WHEN $2 IS NOT NULL THEN NULL ELSE stir_raw END, name = coalesce($3, name), name_normalized = coalesce($4, name_normalized),
          contact_person = CASE WHEN $5 THEN $6 ELSE contact_person END,
          phone = CASE WHEN $7 THEN $8 ELSE phone END,
          tax_type = coalesce($9, tax_type),

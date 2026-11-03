@@ -6,11 +6,14 @@ import { type Db, one, q } from '../../db';
 import { createClient, recordTaxType } from '../clients';
 import { type ReportTypeLite, cellText, detectColumns, hasSecret, parseCell, parseNote, sameCompany } from './parse';
 import { applyPendingReportCells, applyReportCells, reconcileThroughNow, saveRawReportCells } from './reportCells';
+import { insertReview } from './review';
 
 export interface ImportRowResult {
   row: number;
   stir: string;
   name: string;
+  /** Yozilgan mijoz (kamchilik yozuvi unga bog'lanadi; STIR'siz mijoz ham, V26) */
+  clientId?: number;
   action: 'NEW' | 'UPDATED' | 'UNCHANGED' | 'SKIPPED';
   changes: string[];
   review: string[];
@@ -75,16 +78,18 @@ export async function importTable(
     const res: ImportRowResult = { row: r + 1, stir, name, action: 'SKIPPED', changes: [], review: [] };
     results.push(res);
 
-    if (!/^(\d{9}|\d{14})$/.test(stir)) {
+    // V26 "boricha": STIR yaroqsiz yoki takroriy qator ham yoziladi — STIR'siz mijoz (nomi bo'yicha topiladi),
+    // fayldagi STIR matni stir_raw'da; rahbar kartada to'g'risini kiritadi
+    let stirOk = /^(\d{9}|\d{14})$/.test(stir);
+    if (!stirOk) {
       res.review.push(rawStir ? `STIR noto'g'ri: "${rawStir}"` : "STIR yo'q");
-      continue;
+    } else if (seen.has(stir)) {
+      // Bir faylda bir STIR ikki marta: qaysi biri to'g'riligi noma'lum, birinchisiga STIR beriladi
+      res.review.push(`STIR ${seen.get(stir)}-qatorda ham bor (boshqa firma STIRi bo'lishi mumkin)`);
+      stirOk = false;
+    } else {
+      seen.set(stir, r + 1);
     }
-    // Bir faylda bir STIR ikki marta: qaysi biri to'g'riligi noma'lum, birinchisi yoziladi
-    if (seen.has(stir)) {
-      res.review.push(`STIR ${seen.get(stir)}-qatorda ham bor: qator yozilmadi, STIRni tekshiring`);
-      continue;
-    }
-    seen.set(stir, r + 1);
 
     const taxRaw = map.taxType !== null ? cellText(row[map.taxType]).trim() : '';
     const taxType = normalizeTaxType(taxRaw);
@@ -104,16 +109,30 @@ export async function importTable(
       res.review.push(`Izohdagi soliq turi (${note.taxType}) "Soliq turi" ustunidagi (${taxType}) bilan mos emas`);
     }
 
-    const existing = await one<any>(
-      db,
-      `SELECT id, name, tax_type AS "taxType", tax_type_raw AS "taxTypeRaw",
-              to_char(tax_type_effective_from, 'YYYY-MM-DD') AS "taxTypeEffectiveFrom", status, note
-       FROM client WHERE stir = $1 FOR UPDATE`,
-      [stir],
-    );
+    const find = (where: string, v: string) =>
+      one<any>(
+        db,
+        `SELECT id, stir, name, tax_type AS "taxType", tax_type_raw AS "taxTypeRaw",
+                to_char(tax_type_effective_from, 'YYYY-MM-DD') AS "taxTypeEffectiveFrom", status, note, in_reports AS "inReports"
+         FROM client WHERE ${where} ORDER BY stir IS NULL DESC, id LIMIT 1 FOR UPDATE`,
+        [v],
+      );
+    let existing = stirOk ? await find('stir = $1', stir) : null;
     if (existing && name && !sameCompany(name, existing.name)) {
-      res.review.push(`STIR tizimda boshqa mijozga tegishli ("${existing.name}"): qator yozilmadi. Nom o'zgargan bo'lsa kartada yangilang`);
-      continue;
+      res.review.push(`STIR tizimda boshqa mijozga tegishli ("${existing.name}"). Nom o'zgargan bo'lsa kartada yangilang`);
+      stirOk = false;
+      existing = null;
+    }
+    // STIR'siz qator nomi bo'yicha: avval STIR'siz mijoz (qayta import), aks holda shu nomdagi yagona mijoz
+    // (masalan faylda boshqa firmaning STIR'i yozilgan, firma esa tizimda o'z STIR'i bilan bor) — dublikat bo'lmasin
+    if (!stirOk) {
+      existing = await find(
+        `name_normalized = $1 AND (stir IS NULL OR NOT EXISTS (
+           SELECT 1 FROM client x WHERE x.name_normalized = client.name_normalized AND x.id <> client.id))`,
+        normalizeName(name || rawStir),
+      );
+      // Natija: qaysi mijozga yozilgani aniq ko'rinsin (rahbar kartada tekshiradi)
+      res.review.push(existing?.stir ? `Nomi bo'yicha tizimdagi mijozga bog'landi (STIR ${existing.stir}) — tekshiring` : "STIR'siz qo'shildi — kartada to'g'ri STIRni kiriting");
     }
     if (!taxType && taxRaw && existing?.taxType) {
       res.review.push(`Soliq turi tanilmadi: "${taxRaw}" (tizimdagi ${existing.taxType} o'zgarmadi)`);
@@ -121,12 +140,14 @@ export async function importTable(
 
     let clientId: number;
     let taxBecameKnown = false;
+    // res.clientId — kamchilik yozuvi mijozga bog'lanadi (pastda, clientId aniqlangach)
     if (!existing) {
       clientId = await createClient(
         db,
         {
-          stir,
-          name: name || stir,
+          stir: stirOk ? stir : null,
+          stirRaw: stirOk ? null : rawStir || null,
+          name: name || rawStir,
           taxType,
           taxTypeRaw: taxType ? null : taxRaw || null,
           taxTypeEffectiveFrom: note.taxType === taxType ? note.effectiveFrom : null,
@@ -135,6 +156,9 @@ export async function importTable(
           accountantId: null,
           contactPerson: null,
           phone: null,
+          // Faqat shu bo'limda: Buxgalter ishlariga «Бухгалтер ишлари» fayli bilan qo'shiladi (V25)
+          inReports: true,
+          inWorks: false,
         },
         opts.actorId,
       );
@@ -150,6 +174,11 @@ export async function importTable(
       if (note.note && note.note !== existing.note) upd.note = note.note;
       const eff = note.taxType === taxType ? note.effectiveFrom : null;
       if (eff && eff !== existing.taxTypeEffectiveFrom) upd.taxTypeEffectiveFrom = eff;
+      if (!existing.inReports) {
+        // Buxgalter ishlaridagi mijoz hisobot jadvalida ham bor: endi ikkala bo'limda, ma'lumot bitta (V25)
+        await db.query('UPDATE client SET in_reports = true WHERE id = $1', [clientId]);
+        upd.inReports = true;
+      }
       if (Object.keys(upd).length) {
         await db.query(
           `UPDATE client SET name = coalesce($2, name), name_normalized = coalesce($3, name_normalized),
@@ -190,6 +219,7 @@ export async function importTable(
       }
       if (!taxType && !existing.taxType) res.review.push(`Soliq turi hali aniqlanmagan${taxRaw ? `: "${taxRaw}"` : ''} — kartada tanlang`);
     }
+    res.clientId = clientId;
     if (planned) {
       const has = await one(db, 'SELECT 1 FROM client_tax_type_history WHERE client_id = $1 AND effective_from = $2 AND tax_type = $3', [clientId, planned.from, planned.taxType]);
       if (!has) {
@@ -229,10 +259,7 @@ export async function importTable(
   // Qo'lda tekshirish ro'yxati (dry-run'da ROLLBACK bilan yo'qoladi)
   for (const r of results) {
     for (const msg of r.review) {
-      await db.query(
-        `INSERT INTO sheet_sync_error (kind, ref, stir, message) VALUES ('IMPORT_REVIEW', $1, $2, $3)`,
-        [`qator ${r.row}`, r.stir || null, `${r.name}: ${msg}`],
-      );
+      await insertReview(db, { ref: `qator ${r.row}`, stir: r.stir || null, name: r.name, message: msg, clientId: r.clientId ?? null, section: 'REPORTS' });
     }
   }
   if (!opts.dryRun) {

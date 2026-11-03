@@ -56,6 +56,7 @@ export default function Dashboard() {
       toast.success(t('dashboard.assigned'));
       invalidateTasks(qc);
       void qc.invalidateQueries({ queryKey: ['accountants'] });
+      void qc.invalidateQueries({ queryKey: ['sheets', 'review'] });
     },
     onError: (e) => toast.error(errorText(e, t)),
   });

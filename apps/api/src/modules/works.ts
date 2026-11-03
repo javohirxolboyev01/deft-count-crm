@@ -8,6 +8,9 @@ import { currentPeriod } from '../common/time';
 import { config } from '../config';
 import { type Db, one, pool, q, tx } from '../db';
 import { CLIENT, FROM, clientListQuery, clientListWhere, loadClientForUser, presentClient, sharePercent } from './clients';
+import { getDueTime } from './generator';
+import { cancelTask, reopenDone, setGridCell } from './grid';
+import { routineField, resolveReviewOnSave } from './sheets/review';
 import { markDone } from './taskService';
 
 // "Oylik ishlar" sahifasi ("Бухгалтер ишлари" fayli): qatorda mijoz, ustunda doimiy ish, katakda
@@ -48,6 +51,22 @@ export interface WorkCell {
   next: { kind: 'TASK'; taskId: number; status: string; month: string } | { kind: 'BASELINE'; month: string } | null;
   /** Fayldagi tanilmagan qiymat ("eri", "28,02,2025(14)"): oy kiritilguncha boricha ko'rsatiladi (V24) */
   raw?: string | null;
+}
+
+/**
+ * Tanlangan oy ko'rinishi (?month=YYYY-MM): katakda shu oy ishining holati ("Hisobot topshirish"dagidek).
+ * Vazifasi bo'lmagan tizimgacha bo'lgan oy rahbar kiritgan boshlang'ich nuqtadan hisoblanadi.
+ */
+export interface WorkMonthCell {
+  state: 'done' | 'open' | 'soon' | 'waiting' | 'overdue' | 'na';
+  /** Shu oy vazifasi (bajarilgani ham — o'ng tugma bilan ochiladi) */
+  taskId: number | null;
+  /** Vazifasi yo'q, tizimgacha bo'lgan oy */
+  beforeSystem: boolean;
+  /** Katakni bosganda nima yopiladi: shu oy vazifasi yoki tizimgacha bo'lgan navbatdagi oy */
+  next: WorkCell['next'];
+  baseline: string | null;
+  raw: string | null;
 }
 
 const monthOfPeriod = (period: string) => period.slice(0, 7);
@@ -186,22 +205,118 @@ export function computeCell(col: WorkColumn, agg: Agg | undefined, baseline: str
   };
 }
 
-export async function loadWorks(db: Db, u: AuthUser, f: z.infer<typeof clientListQuery>) {
+interface MonthTask {
+  clientId: number;
+  routineTypeId: number;
+  taskId: number | null;
+  status: string | null;
+  isOverdue: boolean | null;
+  isDueSoon: boolean | null;
+  firstPeriod: string;
+}
+
+/**
+ * Bitta oy kataklari. Ish oyi qoidasi loadCells bilan bir xil: hisobotga bog'langan ish (INPS) vazifasi
+ * keyingi oy davrida (oktyabr ishi = noyabr vazifasi, 15.11).
+ * TODO(tasdiqlash): joriy oyda INPS ustuni "—" (vazifasi keyingi oyning 1-kuni chiqadi).
+ */
+export async function loadMonthCells(db: Db, clientIds: number[], columns: WorkColumn[], month: string) {
+  const typeIds = columns.map((c) => c.routineTypeId);
+  const period = `${month}-01`;
+  const rows = clientIds.length
+    ? await q<MonthTask>(
+        db,
+        `WITH t AS (
+           SELECT t.client_id, w.id AS rid, t.id, t.period, t.status, t.is_overdue, t.is_due_soon,
+                  -- Shu oy ishining vazifasi: hisobotga bog'langan ishda keyingi oy davri
+                  t.period = ($3::date + make_interval(months => CASE WHEN w.report_type_id IS NULL THEN 0 ELSE 1 END))::date AS hit
+           FROM v_task_state t
+           JOIN routine_work_type w ON w.id = ANY ($2::bigint[]) AND (
+                (t.kind = 'ROUTINE' AND t.routine_type_id = w.id)
+             OR (t.kind = 'REPORT' AND t.report_type_id = w.report_type_id))
+           WHERE t.client_id = ANY ($1::bigint[]) AND t.status <> 'CANCELLED'
+         )
+         SELECT client_id AS "clientId", rid AS "routineTypeId",
+                (array_agg(id) FILTER (WHERE hit))[1] AS "taskId",
+                (array_agg(status) FILTER (WHERE hit))[1] AS status,
+                (array_agg(is_overdue) FILTER (WHERE hit))[1] AS "isOverdue",
+                (array_agg(is_due_soon) FILTER (WHERE hit))[1] AS "isDueSoon",
+                min(period) AS "firstPeriod"
+         FROM t GROUP BY client_id, rid`,
+        [clientIds, typeIds, period],
+      )
+    : [];
+  const baselines = clientIds.length
+    ? await q<{ clientId: number; routineTypeId: number; doneThrough: string }>(
+        db,
+        `SELECT client_id AS "clientId", routine_type_id AS "routineTypeId", done_through AS "doneThrough"
+         FROM client_routine_baseline WHERE client_id = ANY ($1::bigint[]) AND routine_type_id = ANY ($2::bigint[])`,
+        [clientIds, typeIds],
+      )
+    : [];
+  const raws = clientIds.length
+    ? await q<{ clientId: number; routineTypeId: number; raw: string }>(
+        db,
+        `SELECT client_id AS "clientId", routine_type_id AS "routineTypeId", raw
+         FROM client_routine_raw WHERE client_id = ANY ($1::bigint[]) AND routine_type_id = ANY ($2::bigint[])`,
+        [clientIds, typeIds],
+      )
+    : [];
+  const key = (c: number, r: number) => `${c}:${r}`;
+  const taskMap = new Map(rows.map((x) => [key(x.clientId, x.routineTypeId), x]));
+  const baseMap = new Map(baselines.map((b) => [key(b.clientId, b.routineTypeId), b.doneThrough]));
+  const rawMap = new Map(raws.map((x) => [key(x.clientId, x.routineTypeId), x.raw]));
+  const dueLimit = addMonths(currentPeriod(), -1);
+  return (clientId: number, col: WorkColumn): WorkMonthCell => {
+    const k = key(clientId, col.routineTypeId);
+    const t = taskMap.get(k);
+    const baseline = baseMap.get(k) ?? null;
+    const base = { taskId: null, beforeSystem: false, next: null, baseline: baseline ? monthOfPeriod(baseline) : null, raw: null };
+    if (t?.taskId) {
+      const state: WorkMonthCell['state'] =
+        t.status === 'DONE' ? 'done' : t.status === 'WAITING_CLIENT' ? 'waiting' : t.isOverdue ? 'overdue' : t.isDueSoon ? 'soon' : 'open';
+      return {
+        ...base,
+        state,
+        taskId: t.taskId,
+        next: t.status === 'DONE' ? null : { kind: 'TASK', taskId: t.taskId, status: t.status!, month },
+      };
+    }
+    const raw = rawMap.get(k) ?? null;
+    // Tizimdagi birinchi ish oyidan oldin: rahbar kiritgan nuqtagacha bajarilgan, undan keyingisi bo'shliq
+    const firstWork = t ? addMonths(t.firstPeriod, -workOffset(col)) : null;
+    if (!baseline || (firstWork && period >= firstWork)) return { ...base, state: 'na', raw };
+    if (period <= baseline) return { ...base, state: 'done', beforeSystem: true, raw };
+    const gapEnd = firstWork ? addMonths(firstWork, -1) : dueLimit;
+    // Bo'shliq oylari ketma-ket yopiladi (boshlang'ich nuqta uzluksiz): faqat navbatdagisi bosiladi
+    const isNext = period === addMonths(baseline, 1) && period <= gapEnd;
+    return {
+      ...base,
+      state: period <= dueLimit ? 'overdue' : 'open',
+      beforeSystem: true,
+      next: isNext ? { kind: 'BASELINE', month } : null,
+      raw,
+    };
+  };
+}
+
+export async function loadWorks(db: Db, u: AuthUser, f: z.infer<typeof clientListQuery>, month?: string) {
   const columns = await loadColumns(db);
   const params: unknown[] = [];
   const p = (v: unknown) => (params.push(v), `$${params.length}`);
-  const w = clientListWhere(u, f, p);
+  // Faqat Buxgalter ishlari bo'limidagi mijozlar (V25: hisobot jadvalidan yuklanganlar bu yerda ko'rinmaydi)
+  const w = `${clientListWhere(u, f, p) || 'WHERE true'} AND c.in_works`;
   const total = (await one<{ n: number }>(db, `SELECT count(*) AS n FROM client c ${w}`, params))!.n;
   const clients = await q(
     db,
     `SELECT ${CLIENT} ${FROM} ${w} ORDER BY c.name_normalized LIMIT ${p(f.pageSize)} OFFSET ${p((f.page - 1) * f.pageSize)}`,
     params,
   );
-  const cell = await loadCells(
-    db,
-    clients.map((c) => c.id),
-    columns,
-  );
+  const ids = clients.map((c) => c.id);
+  // month berilsa — shu oy ishlari holati, aks holda "qaysi oygacha bajarilgan"
+  const cell: (clientId: number, col: WorkColumn) => WorkCell | WorkMonthCell = month
+    ? await loadMonthCells(db, ids, columns, month)
+    : await loadCells(db, ids, columns);
   const pct = await sharePercent(db);
   // Ustunlar "Бухгалтер ишлари" fayli tartibida; oylik to'lov faqat rahbarga (presentClient)
   const items = clients.map((raw) => {
@@ -209,6 +324,7 @@ export async function loadWorks(db: Db, u: AuthUser, f: z.infer<typeof clientLis
     return {
       clientId: c.id,
       stir: c.stir,
+      stirRaw: c.stirRaw,
       name: c.name,
       taxType: c.taxType,
       taxTypeRaw: c.taxTypeRaw,
@@ -226,7 +342,7 @@ export async function loadWorks(db: Db, u: AuthUser, f: z.infer<typeof clientLis
       cells: Object.fromEntries(columns.map((col) => [col.routineTypeId, cell(c.id, col)])),
     };
   });
-  return { columns, items, total, page: f.page, pageSize: f.pageSize, month: monthOfPeriod(currentPeriod()), sharePercent: pct };
+  return { columns, items, total, page: f.page, pageSize: f.pageSize, month: month ?? monthOfPeriod(currentPeriod()), sharePercent: pct };
 }
 
 const intId = z.coerce.number().int().positive();
@@ -236,7 +352,8 @@ export const worksRouter = Router();
 worksRouter.use(requireAuth);
 
 worksRouter.get('/', async (req, res) => {
-  res.json(await loadWorks(pool, me(req), parse(clientListQuery, req.query)));
+  const { month } = parse(z.object({ month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'Oy formati YYYY-MM').optional() }), req.query);
+  res.json(await loadWorks(pool, me(req), parse(clientListQuery, req.query), month));
 });
 
 /**
@@ -255,6 +372,7 @@ worksRouter.post('/:clientId/:routineTypeId/advance', async (req, res) => {
     if (!cell.next) throw new AppError(409, 'NOTHING_TO_ADVANCE', "Bu ish bo'yicha yopiladigan oy yo'q");
     // Oy yopildi: fayldagi tanilmagan matn endi kerak emas
     if (cell.raw) await db.query('DELETE FROM client_routine_raw WHERE client_id = $1 AND routine_type_id = $2', [clientId, routineTypeId]);
+    await resolveReviewOnSave(db, clientId, [routineField(col.name)], false, u.id);
     if (cell.next.kind === 'TASK') {
       return { kind: 'TASK' as const, task: await markDone(db, cell.next.taskId, u, { source: 'WORKS' }) };
     }
@@ -360,6 +478,7 @@ worksRouter.put('/:clientId/:routineTypeId/baseline', requireLeader, async (req,
     }
     // Rahbar oyni aniqladi (yoki bo'shatdi): fayldagi tanilmagan matn o'rnini egalladi
     await db.query('DELETE FROM client_routine_raw WHERE client_id = $1 AND routine_type_id = $2', [clientId, routineTypeId]);
+    await resolveReviewOnSave(db, clientId, [routineField(col.name)], false, u.id);
     if ((before?.doneThrough ?? null) !== (month ? `${month}-01` : null)) {
       await audit(db, {
         actorId: u.id,
@@ -374,4 +493,110 @@ worksRouter.put('/:clientId/:routineTypeId/baseline', requireLeader, async (req,
     return (await loadCells(db, [clientId], [col]))(clientId, col);
   });
   res.json(cell);
+});
+
+/**
+ * Excel kabi ish katagi (rahbar qarori, Hisobot topshirish bilan bir xil): tanlangan oy ishiga 1 / 0 / X.
+ * Holat (Nol hisobot, Tugatilmoqda) to'smaydi. Tanlov client_routine_cell'ga (V31), keyingi oylarga ham o'tadi.
+ * INPS hisobot bo'limida ham bo'lsa — bitta hisobot vazifasi: Hisobot topshirish katagining o'zi (V30).
+ */
+async function setWorkCell(db: Db, u: AuthUser, c: { clientId: number; routineTypeId: number; month: string; value: '1' | '0' | 'X' }) {
+  const col = await loadColumn(db, c.routineTypeId);
+  const client = await one<{ inWorks: boolean; inReports: boolean; taxType: string | null }>(
+    db,
+    'SELECT in_works AS "inWorks", in_reports AS "inReports", tax_type AS "taxType" FROM client WHERE id = $1 FOR UPDATE',
+    [c.clientId],
+  );
+  if (!client?.inWorks) throw notFound('Mijoz');
+  // Vazifa davri: hisobotga bog'langan ishda ish oyidan keyingi oy (oktyabr INPS = noyabr vazifasi)
+  const period = addMonths(`${c.month}-01`, workOffset(col));
+  if (col.reportTypeId && client.inReports && client.taxType) {
+    return setGridCell(db, u, { clientId: c.clientId, reportTypeId: col.reportTypeId, month: monthOfPeriod(period), value: c.value });
+  }
+  const before = await one<{ applicable: boolean }>(
+    db,
+    'SELECT applicable FROM client_routine_cell WHERE client_id = $1 AND routine_type_id = $2 AND period = $3',
+    [c.clientId, c.routineTypeId, period],
+  );
+  await db.query(
+    `INSERT INTO client_routine_cell (client_id, routine_type_id, period, applicable, set_by) VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (client_id, routine_type_id, period) DO UPDATE SET applicable = EXCLUDED.applicable, set_by = EXCLUDED.set_by, set_at = now()`,
+    [c.clientId, c.routineTypeId, period, c.value !== 'X', u.id],
+  );
+  await audit(db, {
+    actorId: u.id,
+    entity: 'client',
+    entityId: c.clientId,
+    clientId: c.clientId,
+    action: 'ROUTINE_CELL',
+    before: before ? { work: col.name, applicable: before.applicable } : null,
+    after: { work: col.name, month: c.month, value: c.value },
+  });
+  // Keyingi oylar (joriy oygacha) yangi tanlovga moslanadi
+  const cur = currentPeriod();
+  for (let p = period; p <= cur || p === period; p = addMonths(p, 1)) await syncRoutineTask(db, c.clientId, c.routineTypeId, p, u.id);
+  await resolveReviewOnSave(db, c.clientId, [routineField(col.name)], false, u.id);
+
+  const task = await one<{ id: number; status: string }>(
+    db,
+    `SELECT id, status FROM task WHERE client_id = $1 AND kind = 'ROUTINE' AND routine_type_id = $2 AND period = $3`,
+    [c.clientId, c.routineTypeId, period],
+  );
+  if (c.value === 'X' && task?.status === 'DONE') await cancelTask(db, task.id, c.clientId, 'MANUAL_X', u.id);
+  if (c.value === '0' && task?.status === 'DONE') await reopenDone(db, task.id, c.clientId, u.id, 'WORKS');
+  if (c.value === '1' && task && task.status !== 'DONE' && task.status !== 'CANCELLED') {
+    return { task: await markDone(db, task.id, u, { source: 'WORKS' }) };
+  }
+  return { task: null };
+}
+
+/** Bitta (mijoz, ish, davr) doimiy ish vazifasini qo'llanishga moslash (fn_routine_applicability, V31) */
+async function syncRoutineTask(db: Db, clientId: number, routineTypeId: number, period: string, actorId: number) {
+  const a = await one<{ applicable: boolean }>(
+    db,
+    'SELECT applicable FROM fn_routine_applicability($1) WHERE client_id = $2 AND routine_type_id = $3',
+    [period, clientId, routineTypeId],
+  );
+  const t = await one<{ id: number; status: string }>(
+    db,
+    `SELECT id, status FROM task WHERE client_id = $1 AND kind = 'ROUTINE' AND routine_type_id = $2 AND period = $3`,
+    [clientId, routineTypeId, period],
+  );
+  if (!a?.applicable) {
+    if (t && ['TODO', 'IN_PROGRESS', 'WAITING_CLIENT'].includes(t.status)) await cancelTask(db, t.id, clientId, 'MANUAL_X', actorId);
+    return;
+  }
+  if (t?.status === 'CANCELLED') {
+    await db.query(
+      `UPDATE task t SET status = 'TODO', prev_status = NULL, cancel_reason = NULL, assignee_id = c.accountant_id
+       FROM client c WHERE t.id = $1 AND c.id = t.client_id`,
+      [t.id],
+    );
+    await audit(db, { actorId, entity: 'task', entityId: t.id, clientId, action: 'REOPEN_RECONCILE', after: { source: 'WORKS' } });
+  } else if (!t) {
+    const created = await one<{ id: number; title: string }>(
+      db,
+      `INSERT INTO task (client_id, kind, routine_type_id, period, title, assignee_id, due_at, status, overdue_notified_at)
+       SELECT c.id, 'ROUTINE', w.id, $3, w.name, c.accountant_id, fn_due_at($3, 31, $4), 'TODO',
+              -- o'tgan oy uchun yaratilsa "muddat o'tdi" xabari yuborilmaydi
+              CASE WHEN fn_due_at($3, 31, $4) < now() THEN now() END
+       FROM client c, routine_work_type w WHERE c.id = $1 AND w.id = $2
+       RETURNING id, title`,
+      [clientId, routineTypeId, period, await getDueTime(db)],
+    );
+    await audit(db, { actorId, entity: 'task', entityId: created!.id, clientId, action: 'CREATE_RECONCILE', after: { kind: 'ROUTINE', title: created!.title, source: 'WORKS' } });
+  }
+}
+
+worksRouter.put('/cell', requireLeader, async (req, res) => {
+  const body = parse(
+    z.object({
+      clientId: intId,
+      routineTypeId: intId,
+      month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'Oy formati YYYY-MM'),
+      value: z.enum(['1', '0', 'X']),
+    }),
+    req.body,
+  );
+  res.json(await tx((db) => setWorkCell(db, me(req), body)));
 });

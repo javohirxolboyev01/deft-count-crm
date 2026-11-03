@@ -77,7 +77,7 @@ export async function getTaskDto(db: Db, id: number) {
   return one(db, `${TASK_SELECT} WHERE t.id = $1`, [id]);
 }
 
-async function stopTimersForTask(db: Db, taskId: number) {
+export async function stopTimersForTask(db: Db, taskId: number) {
   await db.query('UPDATE time_entry SET ended_at = now() WHERE task_id = $1 AND ended_at IS NULL', [taskId]);
 }
 

@@ -90,7 +90,7 @@ export function UrgentDialog({ open, onClose }: { open: boolean; onClose: () => 
         <Field label={t('urgent.client')} group>
           {client ? (
             <div className="flex items-center justify-between rounded-md border bg-gray-50 px-3 py-2 text-sm">
-              <span><b>{client.name}</b> · {client.stir}</span>
+              <span><b>{client.name}</b> · {client.stir ?? '—'}</span>
               <button className="text-xs text-brand hover:underline" onClick={() => setClient(null)}>{t('common.change')}</button>
             </div>
           ) : (
@@ -112,7 +112,7 @@ export function UrgentDialog({ open, onClose }: { open: boolean; onClose: () => 
                 {list.map((c) => (
                   <li key={c.id}>
                     <button className="w-full px-3 py-1.5 text-left text-sm hover:bg-gray-50 focus:bg-gray-100" onClick={() => setClient(c)}>
-                      {c.name} <span className="text-xs text-gray-500">· {c.stir} · {c.accountantName ?? '—'}</span>
+                      {c.name} <span className="text-xs text-gray-500">· {c.stir ?? '—'} · {c.accountantName ?? '—'}</span>
                     </button>
                   </li>
                 ))}

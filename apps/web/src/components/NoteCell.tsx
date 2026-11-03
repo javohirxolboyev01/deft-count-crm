@@ -14,7 +14,20 @@ import { errorText } from '@/lib/errors';
  * Jadval ichidagi mijoz izohi (client.note): Hisobot topshirish va Oylik ishlar jadvallarida.
  * bo'sh -> input + saqlash; saqlangan -> matn + tahrirlash/o'chirish; tahrirlashda qalam saqlashga aylanadi.
  */
-export function NoteCell({ clientId, clientName, note, className }: { clientId: number; clientName: string; note: string | null; className?: string }) {
+export function NoteCell({
+  clientId,
+  clientName,
+  note,
+  className,
+  readOnly,
+}: {
+  clientId: number;
+  clientName: string;
+  note: string | null;
+  className?: string;
+  /** Faqat ko'rish (buxgalter Hisobot topshirish sahifasida): input va tugmalar yo'q */
+  readOnly?: boolean;
+}) {
   const { t } = useTranslation();
   const qc = useQueryClient();
   const [editing, setEditing] = useState(false);
@@ -31,12 +44,12 @@ export function NoteCell({ clientId, clientName, note, className }: { clientId: 
       setEditing(false);
       setDraft('');
       toast.success(value === null ? t('monthly.noteDeleted') : t('common.saved'));
-      for (const key of ['grid', 'works', 'clients']) void qc.invalidateQueries({ queryKey: [key] });
+      for (const key of ['grid', 'works', 'clients', 'sheets']) void qc.invalidateQueries({ queryKey: [key] });
       void qc.invalidateQueries({ queryKey: ['client', clientId] });
     },
     onError: (e) => toast.error(errorText(e, t)),
   });
-  const open = editing || !note;
+  const open = !readOnly && (editing || !note);
   const value = editing ? draft : open ? draft : note ?? '';
   const submit = () => {
     const v = draft.trim();
@@ -86,7 +99,7 @@ export function NoteCell({ clientId, clientName, note, className }: { clientId: 
             </Popover>
           </>
         )}
-        {open ? (
+        {readOnly ? null : open ? (
           <button
             className={cn(iconBtn, 'bg-brand-500 text-on-brand hover:bg-brand-600')}
             onClick={submit}
@@ -106,7 +119,7 @@ export function NoteCell({ clientId, clientName, note, className }: { clientId: 
             <Pencil className="h-3.5 w-3.5" />
           </button>
         )}
-        {note && (
+        {note && !readOnly && (
           <button
             className={cn(iconBtn, 'text-gray-500 hover:bg-overdue-bg hover:text-overdue')}
             onClick={() => setConfirmDelete(true)}

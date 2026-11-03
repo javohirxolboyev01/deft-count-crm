@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, Check, Plus, Trash2, X as XIcon } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
@@ -9,6 +9,7 @@ import { ConfirmDialog, Dialog } from '@/components/ui/dialog';
 import { Checkbox, Field, Input } from '@/components/ui/input';
 import { Empty, QueryState } from '@/components/ui/states';
 import { TableSkeleton } from '@/components/ui/skeleton';
+import { Switch } from '@/components/ui/switch';
 import { ApiError, api } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { errorText } from '@/lib/errors';
@@ -57,6 +58,15 @@ function Summary({ open, onClose, onConfirm, lines, busy }: { open: boolean; onC
 const fmtVal = (v: unknown, t: (k: string) => string) =>
   v === true ? t('common.yes') : v === false ? t('common.no') : v === null || v === undefined ? '—' : Array.isArray(v) ? v.join(', ') : String(v);
 
+type Group = 'monthly' | 'event' | 'periodic';
+const groupOf = (r: ReportType): Group => (r.requiresEventFlag ? 'event' : r.frequency === 'MONTHLY' ? 'monthly' : 'periodic');
+const GROUPS: Group[] = ['monthly', 'event', 'periodic'];
+
+/**
+ * Hisobot turlari — rahbar uchun oddiy tilda: har hisobot qachon topshiriladi, kimlar topshiradi, buxgalterga
+ * vazifa bo'lib chiqadimi, jadvalda ko'rinadimi. Texnik kodlar ko'rsatilmaydi. Hisobotlar uch guruhda (oylik,
+ * holat bo'yicha, choraklik/yillik). Saqlashdan oldin o'zgarishlar oddiy gaplar bilan ko'rsatiladi.
+ */
 function ReportTypesTab() {
   const { t, i18n } = useTranslation();
   const qc = useQueryClient();
@@ -79,8 +89,15 @@ function ReportTypesTab() {
     },
     onError: (e) => toast.error(errorText(e, t)),
   });
+  const name = (r: ReportType) => (i18n.language === 'ru' ? r.nameRu : r.name);
+  const months = t('months', { returnObjects: true }) as string[];
+  // Xulosa oddiy gap bilan: "JShDS: muddat 15-sana → 20-sana"
+  const say = (f: keyof ReportType, v: unknown) =>
+    f === 'dueDay' ? (v ? t('settings.rt.dayN', { n: v }) : t('settings.rt.noDay'))
+      : f === 'generationMonths' ? (Array.isArray(v) ? v.map((m) => months[m - 1]).join(', ') : '—')
+        : fmtVal(v, t);
   const lines = changes.flatMap((c) =>
-    c.fields.map((f) => `${c.row.name}: ${t(`settings.field.${String(f)}`)} — ${fmtVal(c.before[f], t)} → ${fmtVal(c.row[f], t)}`),
+    c.fields.map((f) => `${name(c.row)}: ${t(`settings.rt.change.${String(f)}`)} — ${say(f, c.before[f])} → ${say(f, c.row[f])}`),
   );
 
   return (
@@ -94,71 +111,150 @@ function ReportTypesTab() {
           </>
         }
       />
-      <QueryState q={q} skeleton={<TableSkeleton rows={10} cols={8} />}>
+      {/* Sahifa nima uchun — 3 gapda */}
+      <div className="mx-4 mb-3 rounded-lg border border-brand-200 bg-brand-light p-3 text-sm text-ink dark:border-brand-800">
+        <div className="mb-1 font-semibold">{t('settings.rt.introTitle')}</div>
+        <ul className="list-disc space-y-0.5 pl-5 text-gray-700">
+          <li>{t('settings.rt.intro1')}</li>
+          <li>{t('settings.rt.intro2')}</li>
+          <li>{t('settings.rt.intro3')}</li>
+        </ul>
+      </div>
+      <QueryState q={q} skeleton={<TableSkeleton rows={10} cols={5} />}>
         {!draft.length ? <Empty /> : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="table-head">
-              <tr>
-                <th className="px-3 py-2">{t('settings.report')}</th>
-                <th className="px-3 py-2">{t('settings.frequency')}</th>
-                <th className="px-3 py-2">{t('settings.field.dueDay')}</th>
-                <th className="px-3 py-2">{t('settings.field.generationMonths')}</th>
-                <th className="px-3 py-2 text-center">AOS</th>
-                <th className="px-3 py-2 text-center">QQS</th>
-                <th className="px-3 py-2 text-center">{t('settings.field.createsAccountantTask')}</th>
-                <th className="px-3 py-2 text-center">{t('settings.field.active')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {draft.map((r) => {
-                const changed = changes.some((c) => c.row.id === r.id);
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="table-head">
+                <tr>
+                  <th className="min-w-[220px] px-3 py-2.5 text-left">{t('settings.rt.colReport')}</th>
+                  <th className="min-w-[200px] px-3 py-2.5 text-left">{t('settings.rt.colDue')}</th>
+                  <th className="min-w-[170px] px-3 py-2.5 text-left">{t('settings.rt.colWho')}</th>
+                  <th className="min-w-[220px] px-3 py-2.5 text-left">{t('settings.rt.colTask')}</th>
+                  <th className="min-w-[150px] px-3 py-2.5 text-left">{t('settings.rt.colShown')}</th>
+                </tr>
+              </thead>
+              {GROUPS.map((g) => {
+                const rows = draft.filter((r) => groupOf(r) === g);
+                if (!rows.length) return null;
                 return (
-                  <tr key={r.id} className={cn('border-t', changed && 'bg-amber-50')}>
-                    <td className="px-3 py-2">
-                      <div className="font-medium">{i18n.language === 'ru' ? r.nameRu : r.name}</div>
-                      <div className="text-xs text-gray-500">{r.code}{r.requiresEventFlag && ` · ${t('settings.eventOnly')}`}</div>
-                    </td>
-                    <td className="px-3 py-2 text-xs">{t(`settings.freq.${r.frequency}`)}</td>
-                    <td className="px-3 py-2">
-                      {/* Yillik hisobotlarda muddat kuni yo'q (V16): katak har oy chiqadi, muddati o'tmaydi */}
-                      {r.frequency === 'YEARLY' ? (
-                        <span className="text-xs text-gray-400">—</span>
-                      ) : (
-                        <Input type="number" min={1} max={31} className="h-8 w-20" value={r.dueDay ?? ''} placeholder="?" onChange={(e) => update(r.id, { dueDay: e.target.value ? Number(e.target.value) : null })} aria-label={t('settings.field.dueDay')} />
-                      )}
-                    </td>
-                    <td className="px-3 py-2">
-                      {r.frequency === 'MONTHLY' || r.generationMonths?.length === 12 ? (
-                        <span className="text-xs text-gray-400">{t('settings.everyMonth')}</span>
-                      ) : (
-                        <Input
-                          className="h-8 w-28"
-                          value={(r.generationMonths ?? []).join(',')}
-                          onChange={(e) => {
-                            const months = e.target.value.split(',').map((x) => Number(x.trim())).filter((n) => n >= 1 && n <= 12);
-                            update(r.id, { generationMonths: months.length ? months : r.generationMonths });
-                          }}
-                          aria-label={t('settings.field.generationMonths')}
-                        />
-                      )}
-                    </td>
-                    {(['appliesToAos', 'appliesToQqs', 'createsAccountantTask', 'active'] as const).map((k) => (
-                      <td key={k} className="px-3 py-2 text-center">
-                        <input type="checkbox" className="h-4 w-4" checked={r[k]} onChange={(e) => update(r.id, { [k]: e.target.checked } as Partial<ReportType>)} aria-label={`${r.code} ${t(`settings.field.${k}`)}`} />
+                  <tbody key={g}>
+                    <tr>
+                      <td colSpan={5} className="border-t bg-gray-50 px-3 py-2">
+                        <div className="font-semibold text-ink">{t(`settings.rt.group.${g}`)}</div>
+                        <div className="text-xs text-gray-500">{t(`settings.rt.groupHint.${g}`)}</div>
                       </td>
+                    </tr>
+                    {rows.map((r) => (
+                      <ReportTypeRow key={r.id} r={r} name={name(r)} changed={changes.some((c) => c.row.id === r.id)} onChange={(patch) => update(r.id, patch)} />
                     ))}
-                  </tr>
+                  </tbody>
                 );
               })}
-            </tbody>
-          </table>
-        </div>
+            </table>
+          </div>
         )}
-        <p className="px-4 py-3 text-xs text-gray-500">{t('settings.reportTypesHint')}</p>
       </QueryState>
       <Summary open={summary} onClose={() => setSummary(false)} onConfirm={() => save.mutate()} lines={lines} busy={save.isPending} />
     </Card>
+  );
+}
+
+function ReportTypeRow({ r, name, changed, onChange }: { r: ReportType; name: string; changed: boolean; onChange: (p: Partial<ReportType>) => void }) {
+  const { t } = useTranslation();
+  const months = t('months', { returnObjects: true }) as string[];
+  const nobody = !r.appliesToAos && !r.appliesToQqs;
+  const pill = (on: boolean) =>
+    cn(
+      'inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition-colors',
+      on ? 'border-brand-500 bg-brand-500 text-on-brand' : 'border-gray-300 bg-white text-gray-500 hover:border-brand-300',
+    );
+  return (
+    <tr className={cn('border-t align-top', changed && 'bg-amber-50/60', !r.active && 'opacity-60')}>
+      <td className="px-3 py-3">
+        <div className="font-medium text-ink">{name}</div>
+        <div className="mt-0.5 text-xs text-gray-500">
+          {t(`settings.rt.freq.${r.frequency}`)}
+          {r.requiresEventFlag && ` · ${t('settings.rt.eventNote')}`}
+        </div>
+      </td>
+      <td className="px-3 py-3">
+        {r.frequency === 'YEARLY' ? (
+          // Yillik hisobotlarda muddat kuni yo'q (V16): katak har oy chiqadi, muddati o'tmaydi
+          <span className="text-xs text-gray-500">{t('settings.rt.noDueYearly')}</span>
+        ) : (
+          <div className="space-y-2">
+            <label className="flex items-center gap-2 text-xs text-gray-600">
+              {t('settings.rt.dueBefore')}
+              <Input
+                type="number"
+                min={1}
+                max={31}
+                className="h-8 w-16 text-center"
+                value={r.dueDay ?? ''}
+                placeholder="?"
+                onChange={(e) => onChange({ dueDay: e.target.value ? Math.min(31, Math.max(1, Number(e.target.value))) : null })}
+                aria-label={`${name} — ${t('settings.rt.colDue')}`}
+              />
+              {t('settings.rt.dueAfter')}
+            </label>
+            {r.dueDay == null && <div className="text-xs text-amber-700">{t('settings.rt.noDay')}</div>}
+            {r.frequency === 'QUARTERLY' && (
+              // Choraklik: qaysi oylarda topshiriladi — oy tugmalari (1,4,7,10 matni o'rniga)
+              <div className="flex max-w-[260px] flex-wrap gap-1" aria-label={`${name} — ${t('settings.rt.months')}`}>
+                {months.map((m, i) => {
+                  const on = (r.generationMonths ?? []).includes(i + 1);
+                  return (
+                    <button
+                      key={m}
+                      type="button"
+                      aria-pressed={on}
+                      className={cn('rounded px-1.5 py-0.5 text-[11px] capitalize', on ? 'bg-brand-500 text-on-brand' : 'bg-gray-100 text-gray-500')}
+                      onClick={() => {
+                        const next = on ? (r.generationMonths ?? []).filter((x) => x !== i + 1) : [...(r.generationMonths ?? []), i + 1].sort((a, b) => a - b);
+                        if (next.length) onChange({ generationMonths: next });
+                      }}
+                    >
+                      {m.slice(0, 3)}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+      </td>
+      <td className="px-3 py-3">
+        <div className="flex gap-2">
+          {(['appliesToAos', 'appliesToQqs'] as const).map((k) => (
+            <button
+              key={k}
+              type="button"
+              aria-pressed={r[k]}
+              className={pill(r[k])}
+              title={t(`settings.rt.payer.${k}`)}
+              aria-label={`${name} — ${t(`settings.rt.payer.${k}`)}`}
+              onClick={() => onChange({ [k]: !r[k] })}
+            >
+              {r[k] ? <Check className="h-3.5 w-3.5" /> : <XIcon className="h-3.5 w-3.5" />}
+              {k === 'appliesToAos' ? 'AOS' : 'QQS'}
+            </button>
+          ))}
+        </div>
+        {nobody && <div className="mt-1 text-xs text-amber-700">{t('settings.rt.nobody')}</div>}
+      </td>
+      <td className="px-3 py-3">
+        <div className="flex items-center gap-2">
+          <Switch checked={r.createsAccountantTask} onChange={(v) => onChange({ createsAccountantTask: v })} label={`${name} — ${t('settings.rt.colTask')}`} />
+          <span className="text-xs text-gray-600">{t(r.createsAccountantTask ? 'settings.rt.taskYes' : 'settings.rt.taskNo')}</span>
+        </div>
+      </td>
+      <td className="px-3 py-3">
+        <div className="flex items-center gap-2">
+          <Switch checked={r.active} onChange={(v) => onChange({ active: v })} label={`${name} — ${t('settings.rt.colShown')}`} />
+          <span className="text-xs text-gray-600">{t(r.active ? 'settings.rt.shownYes' : 'settings.rt.shownNo')}</span>
+        </div>
+      </td>
+    </tr>
   );
 }
 

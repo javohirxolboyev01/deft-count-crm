@@ -5,7 +5,7 @@ import { dryTx, tx } from '../src/db';
 import { importTable } from '../src/modules/sheets/importer';
 import { detectWorksFile, importWorks, matchAccountant, toAccountant } from '../src/modules/sheets/worksImporter';
 import { generatePeriod } from '../src/modules/generator';
-import { app, one, pool, q, reportCodes, resetDb, seedTeam, token } from './helpers';
+import { api, app, one, pool, q, reportCodes, resetDb, seedTeam, token } from './helpers';
 
 const HEADER = ['№', 'STIR', 'Korxona nomi', 'Soliq turi', 'JSHDS 15.10.2026', "To'lov manbai 15.10.2026", 'AOS 15.10.2026',
   'QQS 20.10.2026', 'FOYDA 20.10.2026', 'INPS', 'Poruchenya JSHDS', 'Қилиниши лозим бўлган ишлар'];
@@ -117,6 +117,31 @@ describe('Sheets import: bir xil faylni qayta yuklash', () => {
     expect((await one(pool, 'SELECT count(*)::int AS n FROM sheet_import_file')).n).toBe(1);
   });
 
+  it("force: rahbar ataylab qayta yuklaydi; shu korxonalarning eski \"Qo'lda tekshirish\" yozuvlari yopiladi", async () => {
+    await pool.query(
+      `INSERT INTO sheet_sync_error (kind, ref, stir, message, occurred_at, section) VALUES
+         ('IMPORT_REVIEW', 'qator 2', '305123456', 'eski: mijoz qo''shilmadi', now() - interval '1 day', 'REPORTS'),
+         ('IMPORT_REVIEW', 'qator 99', '999999999', 'boshqa fayl', now() - interval '1 day', 'REPORTS'),
+         ('IMPORT_REVIEW', 'qator 5', '305123456', 'ishlar fayli', now() - interval '1 day', 'WORKS')`,
+    );
+    const r = await request(app).post('/api/sheets/import?dryRun=false&force=true').set('Authorization', `Bearer ${tok}`).attach('file', xlsx, 'hisobot.xlsx');
+    expect(r.status).toBe(200);
+    expect(r.body.summary.created).toBe(0);
+    expect((await one(pool, 'SELECT count(*)::int AS n FROM sheet_import_file')).n).toBe(1);
+    const open = await q(pool, `SELECT stir, message FROM sheet_sync_error WHERE NOT resolved`);
+    expect(open.some((x) => x.message.startsWith('eski'))).toBe(false);
+    expect(open.some((x) => x.stir === '999999999')).toBe(true); // fayldagi korxona emas — tegilmaydi
+    expect(open.some((x) => x.message === 'ishlar fayli')).toBe(true); // Buxgalter ishlari kamchiligi — hisobot importi yopmaydi
+    // Ro'yxatda korxona kartasiga havola uchun clientId
+    const list = await request(app).get('/api/sheets/review').set('Authorization', `Bearer ${tok}`);
+    expect(list.body.find((x: any) => x.stir === '309567890')?.clientId).toBeTruthy();
+    // Har sahifa faqat o'z jadvali kamchiliklarini oladi (V27)
+    const reports = await request(app).get('/api/sheets/review?kind=REPORTS').set('Authorization', `Bearer ${tok}`);
+    const works = await request(app).get('/api/sheets/review?kind=WORKS').set('Authorization', `Bearer ${tok}`);
+    expect(reports.body.some((x: any) => x.message === 'ishlar fayli')).toBe(false);
+    expect(works.body.map((x: any) => x.message)).toEqual(['ishlar fayli']);
+  });
+
   it('sahifaga mos kelmagan fayl rad etiladi: hisobot fayli Buxgalter ishlari sahifasiga yuklanmaydi', async () => {
     const r = await request(app).post('/api/sheets/import?dryRun=true&kind=WORKS').set('Authorization', `Bearer ${tok}`).attach('file', xlsx, 'hisobot.xlsx');
     expect(r.status).toBe(400);
@@ -191,8 +216,9 @@ describe('"Бухгалтер ишлари" fayli importi', () => {
     // Hisobot importi uni o'zi tanimaydi, yo'naltirish routes.ts'da
     const r = await tx((db) => importWorks(db, works(), map!, { actorId: team.leader, dryRun: false }));
     expect(r.kind).toBe('WORKS');
-    // V24: YaTT ham mijoz bo'ladi (soliq turi aniqlanmagan), faqat STIRsiz qator o'tkaziladi
-    expect(r.summary).toMatchObject({ total: 3, created: 2, skipped: 1 });
+    // V24: YaTT ham mijoz bo'ladi (soliq turi aniqlanmagan); V26: STIRsiz qator ham (STIR'siz mijoz)
+    expect(r.summary).toMatchObject({ total: 3, created: 3, skipped: 0 });
+    expect(await one(pool, `SELECT stir, stir_raw FROM client WHERE name LIKE '%MIX%'`)).toEqual({ stir: null, stir_raw: null });
     expect(await one(pool, `SELECT tax_type, tax_type_raw FROM client WHERE stir = '63003046290049'`)).toEqual({ tax_type: null, tax_type_raw: 'YaTT' });
     const c = await one(
       pool,
@@ -211,7 +237,7 @@ describe('"Бухгалтер ишлари" fayli importi', () => {
     expect(by['Ish haqi hisoblash']).toBe('2026-08');
     expect(by['Kirim hisobvaraq-fakturalarini kiritish']).toBe('2025-12');
     expect(by['Bank aylanmalarini kiritish']).toBeUndefined(); // bo'sh katak
-    expect(r.rows.find((x) => x.name.includes('MIX'))!.review).toContain("STIR yo'q");
+    expect(r.rows.find((x) => x.name.includes('MIX'))!.review[0]).toContain("STIR yo'q");
     expect(r.rows.find((x) => x.stir === '63003046290049')!.review[0]).toContain('YaTT');
   });
 
@@ -282,15 +308,42 @@ describe('Import "boricha" (V24)', () => {
     expect(byCode).toMatchObject({ JSHDS: 'X', AOS: '1', QQS: 'X', INPS: 'X' });
   });
 
-  it('takroriy STIR va #REF! qatorlari yozilmaydi, sababi ko\'rsatiladi', async () => {
+  it('takroriy STIR va #REF! qatorlari STIR\'siz mijoz bo\'lib yoziladi (V26), sababi ko\'rsatiladi, kamchilik mijozga bog\'lanadi', async () => {
+    const giper = await one(pool, `SELECT id, stir, stir_raw FROM client WHERE name LIKE '%GIPER%'`);
+    expect(giper).toMatchObject({ stir: null, stir_raw: '310286184' });
+    const qibray = await one(pool, `SELECT id, stir, stir_raw FROM client WHERE name LIKE '%QIBRAY%'`);
+    expect(qibray).toMatchObject({ stir: null, stir_raw: '#REF!' });
+    // STIR birinchi qatorda qoladi, mavjud mijoz ustidan yozilmaydi
+    expect((await one(pool, `SELECT name FROM client WHERE stir = '310286184'`)).name).toContain('FREE WAY TRADE');
+    const rev = await q(pool, `SELECT client_id, message FROM sheet_sync_error WHERE client_id = ANY ($1::bigint[])`, [[giper.id, qibray.id]]);
+    expect(rev.some((x) => x.client_id === giper.id && x.message.includes('3-qatorda ham bor'))).toBe(true);
+    expect(rev.some((x) => x.client_id === giper.id && x.message.includes("STIR'siz qo'shildi"))).toBe(true);
+    expect(rev.some((x) => x.client_id === qibray.id && x.message.includes('#REF!'))).toBe(true);
+    // Jadvalda ham ko'rinadi (boricha)
+    const g = await request(app).get('/api/monthly-grid').set('Authorization', `Bearer ${tok}`);
+    expect(g.body.rows.find((x: any) => x.clientId === qibray.id)).toMatchObject({ stir: null, stirRaw: '#REF!' });
+
+    // Qayta import dublikat yaratmaydi: STIR'siz mijoz nomi bo'yicha topiladi
+    const n = (await one(pool, 'SELECT count(*)::int AS n FROM client')).n;
     const r = await dryTx((db) => importTable(db, rows(), { actorId: null, dryRun: true }));
-    expect(r.rows.find((x) => x.name.includes('GIPER'))!.review[0]).toContain('3-qatorda ham bor');
-    expect(r.rows.find((x) => x.name.includes('QIBRAY'))!.review[0]).toContain('#REF!');
-    // Boshqa nomli qator mavjud STIRga yozilmaydi
-    const other = rows().slice(0, 1).concat([['1', '310286184', '"GIPER GROUP" МЧЖ', 'ҚҚС', '1', 'X', '1', '1', '0', '']]);
+    expect(r.summary.created).toBe(0);
+    expect((await one(pool, 'SELECT count(*)::int AS n FROM client')).n).toBe(n);
+
+    // Boshqa nomli qator mavjud STIRga yozilmaydi, STIR'siz alohida mijoz bo'ladi
+    const other = rows().slice(0, 1).concat([['1', '310286184', '"YANGI NOM" МЧЖ', 'ҚҚС', '1', 'X', '1', '1', '0', '']]);
     const r2 = await dryTx((db) => importTable(db, other, { actorId: null, dryRun: true }));
-    expect(r2.rows[0]).toMatchObject({ action: 'SKIPPED' });
+    expect(r2.rows[0]).toMatchObject({ action: 'NEW' });
     expect(r2.rows[0].review[0]).toContain('FREE WAY TRADE');
+    // Faylda boshqa firmaning STIRi, firma esa tizimda bor (GIPER): nomi bo'yicha o'shanga bog'lanadi, dublikat yo'q
+    const giperAgain = rows().slice(0, 1).concat([['1', '310286184', '"GIPER GROUP" МЧЖ', 'ҚҚС', '1', 'X', '1', '1', '0', '']]);
+    const r3 = await dryTx((db) => importTable(db, giperAgain, { actorId: null, dryRun: true }));
+    expect(r3.rows[0].action).not.toBe('NEW');
+    expect(r3.rows[0].clientId).toBe(giper.id);
+
+    // Kartada STIR kiritilsa stir_raw tozalanadi
+    const p = await request(app).patch(`/api/clients/${qibray.id}`).set('Authorization', `Bearer ${tok}`).send({ stir: '309999999' });
+    expect(p.status).toBe(200);
+    expect(await one(pool, 'SELECT stir, stir_raw FROM client WHERE id = $1', [qibray.id])).toEqual({ stir: '309999999', stir_raw: null });
   });
 
   it('X istisnolari joriy oy vazifalariga ham qo\'llanadi', async () => {
@@ -351,5 +404,129 @@ describe('Import "boricha" (V24)', () => {
     const put = await request(app).put(`/api/works/${c}/${ishHaqi.routineTypeId}/baseline`).set('Authorization', `Bearer ${tok}`).send({ month: '2025-06' });
     expect(put.status).toBe(200);
     expect(put.body.raw).toBeNull();
+  });
+});
+
+describe("Bo'limlar alohida yuklanadi (V25)", () => {
+  let L: ReturnType<typeof api>;
+  let leader: number;
+  beforeAll(async () => {
+    await resetDb();
+    leader = (await seedTeam()).leader;
+    L = api(await token('leader'));
+  });
+  const reportRow = (n: string, stir: string, name: string) => [n, stir, name, 'AOC', '0', '0', '0', 'X', 'X', '0', '0', ''];
+  const worksRow = (stir: string, name: string) =>
+    ['1', stir, name, 'АОС', '1000000', '300000', 'Азиза', 'Бор', '3', '', '', '', '', '', '', '', '', '', '', '', ''];
+  const worksFile = (...rows: unknown[][]) => [WORKS_TOP, WORKS_SUB, ...rows];
+  const importWorksFile = async (rows: unknown[][]) => {
+    const map = (await detectWorksFile(pool, rows))!;
+    return tx((db) => importWorks(db, rows, map, { actorId: leader, dryRun: false }));
+  };
+  const flags = (stir: string) => one(pool, 'SELECT in_reports, in_works FROM client WHERE stir = $1', [stir]);
+  const openKinds = async (stir: string) =>
+    (await q<{ kind: string }>(
+      pool,
+      `SELECT DISTINCT t.kind FROM task t JOIN client c ON c.id = t.client_id WHERE c.stir = $1 AND t.status <> 'CANCELLED' ORDER BY 1`,
+      [stir],
+    )).map((r) => r.kind);
+  const worksNames = async () => (await L.get('/api/works?pageSize=500')).body.items.map((r: any) => r.name);
+  const gridNames = async () => (await L.get('/api/monthly-grid')).body.rows.map((r: any) => r.name);
+
+  it("hisobot jadvalidan yuklangan mijoz Buxgalter ishlarida ko'rinmaydi va oylik ish chiqmaydi", async () => {
+    await tx((db) => importTable(db, [HEADER, reportRow('1', '305123456', 'SHERPROM STROY')], { actorId: leader, dryRun: false }));
+    expect(await flags('305123456')).toEqual({ in_reports: true, in_works: false });
+    expect(await gridNames()).toContain('SHERPROM STROY');
+    expect(await worksNames()).not.toContain('SHERPROM STROY');
+    expect(await openKinds('305123456')).toEqual(['REPORT']);
+  });
+
+  it("«Бухгалтер ишлари» faylidan yuklangan mijoz Hisobot topshirishda ko'rinmaydi, hisobot chiqmaydi, INPS doimiy ish", async () => {
+    await importWorksFile(worksFile(worksRow('310309859', '"ALICOM" MCHJ')));
+    expect(await flags('310309859')).toEqual({ in_reports: false, in_works: true });
+    expect(await worksNames()).toContain('"ALICOM" MCHJ');
+    expect(await gridNames()).not.toContain('"ALICOM" MCHJ');
+    expect(await openKinds('310309859')).toEqual(['ROUTINE']);
+    const inps = await one(
+      pool,
+      `SELECT count(*)::int AS n FROM task t JOIN client c ON c.id = t.client_id JOIN routine_work_type w ON w.id = t.routine_type_id
+       WHERE c.stir = '310309859' AND w.report_type_id IS NOT NULL AND t.status <> 'CANCELLED'`,
+    );
+    expect(inps.n).toBe(1);
+  });
+
+  it('bir xil STIR ikkinchi bo\'lim faylida kelsa — bitta mijoz, ikkala bo\'limda, ma\'lumot bog\'liq', async () => {
+    await importWorksFile(worksFile(worksRow('305123456', 'SHERPROM STROY')));
+    expect(await flags('305123456')).toEqual({ in_reports: true, in_works: true });
+    expect(await worksNames()).toContain('SHERPROM STROY');
+    expect(await openKinds('305123456')).toEqual(['REPORT', 'ROUTINE']);
+
+    await tx((db) => importTable(db, [HEADER, reportRow('1', '310309859', '"ALICOM" MCHJ')], { actorId: leader, dryRun: false }));
+    expect(await flags('310309859')).toEqual({ in_reports: true, in_works: true });
+    expect(await gridNames()).toContain('"ALICOM" MCHJ');
+    // INPS endi hisobot vazifasi: ikki marta yaratilmaydi
+    const inps = await q(
+      pool,
+      `SELECT t.kind FROM task t JOIN client c ON c.id = t.client_id
+       LEFT JOIN routine_work_type w ON w.id = t.routine_type_id LEFT JOIN report_type rt ON rt.id = t.report_type_id
+       WHERE c.stir = '310309859' AND t.period = date_trunc('month', now() AT TIME ZONE 'Asia/Tashkent')::date
+         AND t.status <> 'CANCELLED' AND (rt.code = 'INPS' OR w.report_type_id IS NOT NULL)`,
+    );
+    expect(inps).toHaveLength(1);
+    expect((await one(pool, 'SELECT count(*)::int AS n FROM client')).n).toBe(2);
+  });
+});
+
+describe("Qo'lda tekshirish: kartada tuzatilsa o'zi yopiladi (V28)", () => {
+  let tok: string;
+  let clientId: number;
+  const open = async () => (await q(pool, `SELECT message FROM sheet_sync_error WHERE client_id = $1 AND NOT resolved ORDER BY id`, [clientId])).map((x) => x.message);
+
+  beforeAll(async () => {
+    await resetDb();
+    const { leader } = await seedTeam();
+    tok = await token('leader');
+    // Soliq turi tanilmagan mijoz: importdan kamchiliklar yoziladi
+    await tx((db) => importTable(db, [HEADER, ['1', '305123456', 'TEST MCHJ', 'ЯТТ', '0', '0', '0', '0', '0', '0', '0', '']], { actorId: leader, dryRun: false }));
+    clientId = (await one(pool, `SELECT id FROM client WHERE stir = '305123456'`)).id;
+    await pool.query(
+      `INSERT INTO sheet_sync_error (kind, ref, stir, message, client_id, section, fields) VALUES
+         ('IMPORT_REVIEW', 'qator 2', '305123456', 'TEST MCHJ: Oylik to''lov tanilmadi: "ko''p"', $1, 'WORKS', '{monthlyFee}'),
+         ('IMPORT_REVIEW', 'qator 2', '305123456', 'TEST MCHJ: Nomi bo''yicha tizimdagi mijozga bog''landi — tekshiring', $1, 'WORKS', '{}')`,
+      [clientId],
+    );
+  });
+
+  it('xabar matnidan maydon aniqlanadi', async () => {
+    const { reviewFields } = await import('../src/modules/sheets/review');
+    expect(reviewFields('Soliq turi hali aniqlanmagan — kartada tanlang')).toEqual(['taxType']);
+    expect(reviewFields("STIR tizimda boshqa mijozga tegishli (\"X\")")).toEqual(['name', 'stir']);
+    expect(reviewFields('Izohda login/parol bor')).toEqual([]);
+    expect(reviewFields('INPS hisoboti: sana tanilmadi "eri"')).toEqual(['routine:INPS hisoboti']);
+    const tax = await one(pool, `SELECT fields FROM sheet_sync_error WHERE client_id = $1 AND message LIKE '%Soliq turi%'`, [clientId]);
+    expect(tax.fields).toEqual(['taxType']);
+  });
+
+  it("jadval katagidagi tahrir faqat o'z maydonini yopadi, \"tekshiring\" qoladi", async () => {
+    const before = await open();
+    expect(before.some((m) => m.includes('Soliq turi'))).toBe(true);
+    expect((await api(tok).patch(`/api/clients/${clientId}`, { note: 'yangi izoh' })).status).toBe(200);
+    expect(await open()).toEqual(before);
+    expect((await api(tok).patch(`/api/clients/${clientId}`, { monthlyFee: 500000 })).status).toBe(200);
+    const after = await open();
+    expect(after.some((m) => m.includes("Oylik to'lov"))).toBe(false);
+    expect(after.some((m) => m.includes('tekshiring'))).toBe(true);
+  });
+
+  it("karta to'liq saqlansa: tuzatilgan maydon va \"tekshiring\" yopiladi, tuzatilmagani qoladi", async () => {
+    expect((await api(tok).patch(`/api/clients/${clientId}`, { name: 'TEST MCHJ', reviewed: true })).status).toBe(200);
+    const left = await open();
+    expect(left.some((m) => m.includes('tekshiring'))).toBe(false);
+    expect(left.some((m) => m.includes('Soliq turi'))).toBe(true); // tur hali tanlanmagan
+    expect((await api(tok).patch(`/api/clients/${clientId}`, { taxType: 'AOS', reviewed: true })).status).toBe(200);
+    const now = await open();
+    expect(now.some((m) => m.includes('Soliq turi'))).toBe(false);
+    // Tur tanlangach fayldagi kataklar qo'llandi: AOS'da topshirilmaydigan katakda 0 — yangi haqiqiy kamchilik
+    expect(now.every((m) => m.includes("X bo'lishi kerak"))).toBe(true);
   });
 });

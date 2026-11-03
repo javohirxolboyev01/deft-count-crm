@@ -38,7 +38,7 @@ Bu fayl loyiha ildizida `CLAUDE.md` nomi bilan turadi. Har bosqichda shu konteks
 ## 4. Rollar va ruxsatlar
 
 - **Rahbar (3):** hamma mijoz, hamma vazifa, dashboard, sozlamalar, buxgalter tayinlash, shoshilinch vazifa.
-- **Buxgalter (7):** faqat o'ziga biriktirilgan mijozlar va ularning vazifalari.
+- **Buxgalter (7):** faqat o'ziga biriktirilgan mijozlar va ularning vazifalari. Istisno: "Hisobot topshirish" jadvali buxgalterga biriktirilmaydi — barcha korxonalarni ko'radi, lekin faqat ko'radi (katak, holat belgisi, izoh o'zgarmaydi, mijoz kartasiga o'tmaydi).
 - **Sotuv operatori (1):** faqat "Yangi mijozlar" (`lead`) bo'limi. Mavjud mijozlar bilan gaplashmaydi, buxgalteriya API'lari unga yopiq (`requireStaff`).
 - Ruxsat tekshiruvi **serverda** (frontend yashirishi yetarli emas).
 
@@ -46,7 +46,7 @@ Bu fayl loyiha ildizida `CLAUDE.md` nomi bilan turadi. Har bosqichda shu konteks
 
 - `user` (role: LEADER | ACCOUNTANT | OPERATOR, til, telegram_chat_id)
 - `lead` (operator bazasi, `client`dan alohida): stir (unique), name, director, phone, address, registered_at, status (NEW | NO_ANSWER | CALL_LATER | MEETING | HAS_ACCOUNTANT | REJECTED | WON | CONVERTED), next_call_date, converted_client_id; `lead_call`: har qo'ng'iroq natijasi + izoh. Rahbar Excel yuklaydi (STIR bo'yicha takror va mavjud mijozlar o'tkaziladi). HAS_ACCOUNTANT/REJECTED — yopiladi. WON — rahbarga bildirishnoma (`LEAD_WON`), operatorga ko'rinmaydi. Rahbar mijozga aylantiradi (CONVERTED). Qayta qo'ng'iroq eslatmasi faqat ilovada ("Bugun qo'ng'iroq" ro'yxati).
-- `client`: stir (unique), name, name_normalized, contact_person, phone, tax_type (AOS | QQS | NULL = importda tanilmagan, fayldagi matn `tax_type_raw`), tax_type_effective_from, accountant_id, status (ACTIVE | ZERO_REPORT | LIQUIDATING | ARCHIVED), note
+- `client`: stir (unique), name, name_normalized, contact_person, phone, tax_type (AOS | QQS | NULL = importda tanilmagan, fayldagi matn `tax_type_raw`), tax_type_effective_from, accountant_id, status (ACTIVE | ZERO_REPORT | LIQUIDATING | ARCHIVED), note, in_reports / in_works (qaysi bo'limda, V25)
 - `client_tax_type_history`: client_id, tax_type, effective_from (rejim o'zgarsa hisobotlar shu sanadan almashadi)
 - `report_type`: code, name, frequency (MONTHLY | QUARTERLY | YEARLY), due_day, applies_to (AOS/QQS), active, creates_accountant_task (INPS = true, qolganlari = false, `TODO(tasdiqlash)`), generation_months (chorak: 1,4,7,10; yillik: 2)
 - `routine_work_type`: name, order, active (ko'pi bilan 10 ta; boshlang'ich 8 ta)
@@ -78,6 +78,7 @@ Mas'ul shaxs telefoni faqat aloqa ma'lumoti (mijozga avtomatik xabar **yuborilma
 - INPS ham "ish", ham "hisobot": **bitta** vazifa (ikki marta yaratilmaydi).
 - **Nol hisobot** mijozlarga 8 ta oylik ish chiqmaydi, faqat hisobotlar.
 - **Tugatilmoqda** mijozga hisobot vazifasi chiqmaydi.
+- Buxgalter ishlari sahifasi oyma-oy (`/api/works?month=`): katakda tanlangan oy ishining holati (✓ / ○ / ! / —), bosilsa shu oy ishi "Bajarildi". Ish oyi bo'yicha: INPS ustunida oktyabr = noyabr vazifasi (15.11). Vazifasi yo'q tizimgacha bo'lgan oy — rahbar kiritgan boshlang'ich nuqtadan, ketma-ket yopiladi. Rahbar katakni bosib **1 / 0 / X** tanlaydi (V31, `client_routine_cell`, `fn_routine_applicability`): holat (Nol hisobot, Tugatilmoqda) to'smaydi, tanlov keyingi oylarga o'tadi. INPS hisobot bo'limida ham bo'lsa — Hisobot topshirish katagi bilan bitta (V30). Buxgalter o'z ishini bosib "Bajarildi" qiladi.
 
 ### 6.3 Hisobotlar (soliq turiga qarab avtomatik)
 
@@ -102,7 +103,7 @@ Mas'ul shaxs telefoni faqat aloqa ma'lumoti (mijozga avtomatik xabar **yuborilma
 Korxonalar 2 sinfga bo'linadi: **QQS to'lovchi** va **AOS to'lovchi**. QQS to'lovchi AOS to'lamaydi.
 
 - Soliq turini **rahbar o'zi tanlaydi** (mijoz kartasida ochiladigan ro'yxat: `QQS` yoki `AOS`, boshqa qiymat yo'q). Buxgalter ko'radi, o'zgartirmaydi (`TODO(tasdiqlash)`).
-- Tanlovga qarab hisobot katakchalari **avtomatik** belgilanadi, qo'lda "X" qo'yilmaydi:
+- Tanlovga qarab hisobot katakchalari **avtomatik** belgilanadi (boshlang'ich qiymat; rahbar jadvalda istalgan katakni 1/0/X qila oladi — V30, pastda):
 
 | Tanlangan tur | AOS | QQS | Foyda solig'i | Qolgan hisobotlar |
 |---|---|---|---|---|
@@ -135,7 +136,7 @@ Korxonalar 2 sinfga bo'linadi: **QQS to'lovchi** va **AOS to'lovchi**. QQS to'lo
 - "Muddati o'tgan" **saqlanmaydi**, `due_at` va holatdan hisoblanadi.
 
 ### 6.6 "Bajarildi" bosilganda
-1. Buxgalter "Bajarildi" bosadi (yoki oylik jadvalda katakchani bosadi).
+1. Buxgalter "Bajarildi" bosadi (rahbar oylik jadvalda katakchani ham bosishi mumkin).
 2. Rahbarga bildirishnoma boradi.
 3. Xato bosilsa 5 soniya ichida "Bekor qilish" mumkin.
 
@@ -162,7 +163,7 @@ Qatorda mijoz, ustunda hisobot va muddati. Katakcha holati vazifadan olinadi:
 | `!` | muddati o'tdi (hisoblanadi) |
 | `X` / — | topshirmaydi (vazifa yaratilmaydi, soliq turi/holat sabab) |
 
-Katakchani bosish vazifani "Bajarildi" qiladi.
+Jadval Exceldagidek, detail sahifa yo'q (rahbar qarori). Rahbar katakni bosib **1 / 0 / X** tanlaydi — soliq turi qoidasi to'smaydi (`client_report_cell`, V30; qoida faqat boshlang'ich qiymat). Tanlov keyingi oylarga ham o'tadi (Exceldagi nusxa kabi), holat bo'yicha hisobotda faqat o'z oyi. 1 — vazifa "Bajarildi" (6.6 oqimi, undo); 0 — vazifa ochiq (bajarilgani qayta ochiladi); X — vazifa bekor (bajarilgani ham, audit'da). Fayl importi o'z oyidan boshlab qo'lda tanlovni almashtiradi. STIR, nom, soliq turi (almashsa tasdiq), holat, izoh — katakning o'zida. Soliq turi tarixi va holat belgilari mijoz kartasida (`/clients/:id`). Buxgalter faqat ko'radi (server `requireLeader`).
 
 ### 6.11 Dashboard
 - Mijozlar bo'yicha: joriy oy tayyor / jarayonda / kechikkan, umumiy foiz, muddati o'tganlar ro'yxati.
@@ -180,7 +181,9 @@ Haqiqiy jadval ustunlari:
 - Sarlavhadagi sanalar har oyda o'zgaradi (yangi ustun/varaq); ustunni sarlavha matnidan aniqlang, indeksdan emas.
 - Import fayl turini sarlavhadan o'zi aniqlaydi: kamida 3 ta doimiy ish ustuni (`routine_work_type.sheet_aliases`) bo'lsa "Бухгалтер ишлари" fayli → Buxgalter ishlari sahifasi (mijoz maydonlari, buxgalter, my.mehnat.uz, har ish uchun "qaysi oygacha bajarilgan"); aks holda hisobot jadvali → Hisobot topshirish sahifasi.
 - Jadval **boricha** yuklanadi (V24): tanilmagan qiymat tashlanmaydi va taxmin qilinmaydi. Soliq turi tanilmagan qator (ЯТТ, "Қ АОС", bo'sh) mijoz bo'ladi (`tax_type` NULL, vazifa chiqmaydi), kataklari `client_report_raw`da saqlanib jadvalda fayldagidek ko'rinadi; rahbar kartada turni tanlasa (yoki keyingi faylda kelsa) kataklar o'zi qo'llanadi. Tanilmagan ish katagi (`eri`, `28,02,2025(14)`) `client_routine_raw`da, oy kiritilganda o'chadi. Izohdagi "Ketgan"/"Kerak emas" → ARCHIVED, "bankrot" → LIQUIDATING. Bir faylda takroriy STIR yoki nomi tizimdagidan butunlay farqli STIR qatori yozilmaydi (review). Izohdagi login/parol izohga yozilmaydi.
+- Bo'limlar alohida yuklanadi (V25): hisobot jadvali mijozni faqat Hisobot topshirishga (`in_reports`), «Бухгалтер ишлари» fayli faqat Buxgalter ishlariga (`in_works`) qo'shadi. Bir xil STIR ikkinchi bo'lim faylida kelsa — o'sha mijoz, ikkala belgi, ma'lumot bitta. Bo'limida yo'q mijozga o'sha bo'lim vazifalari chiqmaydi (hisobot / doimiy ish); INPS faqat Buxgalter ishlarida bo'lsa doimiy ish, hisobot bo'limida ham bo'lsa bitta hisobot vazifasi. "Yangi mijoz" formasi ham shunday (rahbar qarori): Hisobot topshirishdan qo'shilgani faqat `in_reports`, Buxgalter ishlaridan — faqat `in_works`; shu STIR boshqa bo'limda bo'lsa yangi mijoz emas, o'sha mijozga ikkinchi belgi qo'yiladi (`joined`). Hisobot topshirishda yaratilgach jadvalda qoladi (detail yo'q). Lead'dan aylantirilgan mijoz ikkala bo'limda (`TODO(tasdiqlash)`).
 - Har sahifada "Excel yuklash" (faqat rahbar): avval dry-run + hisobot, keyin yuklash. Buxgalter ishlari sahifasi faqat «Бухгалтер ишлари» faylini, Hisobot topshirish faqat hisobot jadvalini qabul qiladi (`kind`, mos kelmasa `WRONG_FILE_KIND`). Bir xil fayl (SHA-256) qayta yozilmaydi. Davriy sinxron yo'q.
+- "Qo'lda tekshirish" (V27) har sahifada faqat o'z jadvali faylining kamchiliklari: ma'lumot yo'q yoki tizimdagidan farq qiladi. Import faqat o'z bo'limidagi eski yozuvlarni yopadi. Izoh farqi kamchilik emas: izoh bo'sh bo'lsa fayldan to'ldiriladi, aks holda tizimdagisi qoladi. Kartadagi blokda "Hal qilindi" yo'q (V28): yozuv o'z maydoni (`fields`) o'zgartirilib saqlansa yoki ish katagida oy kiritilsa o'zi yopiladi; maydonsiz "tekshiring" yozuvi karta to'liq saqlanganda (`reviewed`). Sahifadagi "Qo'lda tekshirish" ro'yxatida tugma qoladi.
 
 ## 8. Tizimda yo'q (qilmang)
 

@@ -10,6 +10,7 @@ import { markDone } from '../taskService';
 import { type ImportReport, type ImportRowResult, toCsv } from './importer';
 import { type RoutineTypeLite, type WorkColumnMap, cellText, detectWorkColumns, parseDate, sameCompany } from './parse';
 import { applyPendingReportCells } from './reportCells';
+import { insertReview } from './review';
 
 // "Бухгалтер ишлари" faylini import qilish ("Buxgalter ishlari" sahifasi). Hisobot importi (importer.ts) kabi:
 // dry-run tranzaksiya ROLLBACK bilan, avtomatik ajratib bo'lmaganlar jim taxmin qilinmaydi -> review.
@@ -113,16 +114,17 @@ export async function importWorks(
     const res: ImportRowResult = { row: r + 1, stir, name, action: 'SKIPPED', changes: [], review: [] };
     results.push(res);
 
-    if (!/^(\d{9}|\d{14})$/.test(stir)) {
+    // V26 "boricha": STIR yaroqsiz yoki takroriy qator ham yoziladi — STIR'siz mijoz (nomi bo'yicha topiladi)
+    let stirOk = /^(\d{9}|\d{14})$/.test(stir);
+    if (!stirOk) {
       res.review.push(rawStir ? `STIR noto'g'ri: "${rawStir}"` : "STIR yo'q");
-      continue;
+    } else if (seen.has(stir)) {
+      // Ikkinchisi birinchi mijozning ma'lumotini ustidan yozib yubormasin: alohida, STIR'siz
+      res.review.push(`STIR ${seen.get(stir)}-qatorda ham bor (boshqa firma STIRi bo'lishi mumkin)`);
+      stirOk = false;
+    } else {
+      seen.set(stir, r + 1);
     }
-    // Bir faylda bir STIR ikki marta: ikkinchisi boshqa mijozning ma'lumotini ustidan yozib yubormasin
-    if (seen.has(stir)) {
-      res.review.push(`STIR ${seen.get(stir)}-qatorda ham bor: qator yozilmadi, STIRni tekshiring`);
-      continue;
-    }
-    seen.set(stir, r + 1);
 
     // --- Mijoz maydonlari ---
     const upd: Record<string, unknown> = {};
@@ -161,17 +163,31 @@ export async function importWorks(
     const password = get(row, 'mehnatPassword');
     const note = get(row, 'note');
 
-    const existing = await one<any>(
-      db,
-      `SELECT id, name, tax_type AS "taxType", tax_type_raw AS "taxTypeRaw", accountant_id AS "accountantId", note, monthly_fee AS "monthlyFee",
-              bank_key AS "bankKey", employee_count AS "employeeCount", to_char(mehnat_checked_at, 'YYYY-MM-DD') AS "mehnatCheckedAt",
-              mehnat_login AS "mehnatLogin", mehnat_password_enc AS "mehnatPasswordEnc"
-       FROM client WHERE stir = $1 FOR UPDATE`,
-      [stir],
-    );
+    const find = (where: string, v: string) =>
+      one<any>(
+        db,
+        `SELECT id, stir, name, tax_type AS "taxType", tax_type_raw AS "taxTypeRaw", accountant_id AS "accountantId", note, monthly_fee AS "monthlyFee",
+                bank_key AS "bankKey", employee_count AS "employeeCount", to_char(mehnat_checked_at, 'YYYY-MM-DD') AS "mehnatCheckedAt",
+                mehnat_login AS "mehnatLogin", mehnat_password_enc AS "mehnatPasswordEnc", in_works AS "inWorks"
+         FROM client WHERE ${where} ORDER BY stir IS NULL DESC, id LIMIT 1 FOR UPDATE`,
+        [v],
+      );
+    let existing = stirOk ? await find('stir = $1', stir) : null;
     if (existing && name && !sameCompany(name, existing.name)) {
-      res.review.push(`STIR tizimda boshqa mijozga tegishli ("${existing.name}"): qator yozilmadi. Nom o'zgargan bo'lsa kartada yangilang`);
-      continue;
+      res.review.push(`STIR tizimda boshqa mijozga tegishli ("${existing.name}"). Nom o'zgargan bo'lsa kartada yangilang`);
+      stirOk = false;
+      existing = null;
+    }
+    // STIR'siz qator nomi bo'yicha: avval STIR'siz mijoz (qayta import), aks holda shu nomdagi yagona mijoz
+    // (masalan faylda boshqa firmaning STIR'i yozilgan, firma esa tizimda o'z STIR'i bilan bor) — dublikat bo'lmasin
+    if (!stirOk) {
+      existing = await find(
+        `name_normalized = $1 AND (stir IS NULL OR NOT EXISTS (
+           SELECT 1 FROM client x WHERE x.name_normalized = client.name_normalized AND x.id <> client.id))`,
+        normalizeName(name || rawStir),
+      );
+      // Natija: qaysi mijozga yozilgani aniq ko'rinsin (rahbar kartada tekshiradi)
+      res.review.push(existing?.stir ? `Nomi bo'yicha tizimdagi mijozga bog'landi (STIR ${existing.stir}) — tekshiring` : "STIR'siz qo'shildi — kartada to'g'ri STIRni kiriting");
     }
     const taxRaw = get(row, 'taxType');
     const taxType = normalizeTaxType(taxRaw);
@@ -181,8 +197,9 @@ export async function importWorks(
       clientId = await createClient(
         db,
         {
-          stir,
-          name: name || stir,
+          stir: stirOk ? stir : null,
+          stirRaw: stirOk ? null : rawStir || null,
+          name: name || rawStir,
           taxType,
           taxTypeRaw: taxType ? null : taxRaw || null,
           status: 'ACTIVE',
@@ -194,12 +211,23 @@ export async function importWorks(
           mehnatCheckedAt: (upd.mehnatCheckedAt as string) ?? null,
           mehnatLogin: (upd.mehnatLogin as string) ?? null,
           mehnatPassword: password || null,
+          // Faqat shu bo'limda: Hisobot topshirishga hisobot jadvali bilan qo'shiladi (V25)
+          inReports: false,
+          inWorks: true,
         },
         opts.actorId,
       );
       res.action = 'NEW';
     } else {
       clientId = existing.id;
+      if (!existing.inWorks) {
+        // Hisobot jadvalidagi mijoz «Бухгалтер ишлари» faylida ham bor: endi ikkala bo'limda, joriy oy ishlari chiqadi (V25)
+        await db.query('UPDATE client SET in_works = true WHERE id = $1', [clientId]);
+        await audit(db, { actorId: opts.actorId, entity: 'client', entityId: clientId, clientId, action: 'IMPORT_UPDATE', before: { inWorks: false }, after: { inWorks: true } });
+        await reconcileClient(db, clientId, opts.actorId);
+        res.changes.push('inWorks');
+        res.action = 'UPDATED';
+      }
       if (!existing.taxType && taxType) {
         // "To'ldirilmagan" mijoz: tur fayldan aniqlandi (butun o'tmish uchun), saqlangan kataklar qo'llanadi
         await db.query('UPDATE client SET tax_type = $2, tax_type_raw = NULL WHERE id = $1', [clientId, taxType]);
@@ -221,10 +249,8 @@ export async function importWorks(
         if (before === upd[k]) delete upd[k];
       }
       if (accountantId !== undefined && accountantId !== existing.accountantId) upd.accountantId = accountantId;
-      if (note && note !== existing.note) {
-        if (!existing.note) upd.note = note;
-        else if (!existing.note.includes(note)) res.review.push(`Izoh farq qiladi: faylda "${note}", tizimda "${existing.note}"`);
-      }
+      // Izoh faqat bo'sh bo'lsa to'ldiriladi; farq qilsa tizimdagisi qoladi (izoh kamchilik emas — ogohlantirilmaydi)
+      if (note && !existing.note) upd.note = note;
       // Shifrlangan parol har safar boshqacha (tasodifiy IV): ochib solishtiriladi
       const pwChanged = !!password && (!existing.mehnatPasswordEnc || decryptSecret(existing.mehnatPasswordEnc) !== password);
       if (Object.keys(upd).length || pwChanged) {
@@ -269,6 +295,8 @@ export async function importWorks(
         res.action = 'UNCHANGED';
       }
     }
+
+    res.clientId = clientId;
 
     // --- Doimiy ishlar: "shu oygacha bajarilgan" ---
     const cellsBefore = cellsDone;
@@ -353,10 +381,7 @@ export async function importWorks(
 
   for (const r of results) {
     for (const msg of r.review) {
-      await db.query(
-        `INSERT INTO sheet_sync_error (kind, ref, stir, message) VALUES ('IMPORT_REVIEW', $1, $2, $3)`,
-        [`qator ${r.row}`, r.stir || null, `${r.name}: ${msg}`],
-      );
+      await insertReview(db, { ref: `qator ${r.row}`, stir: r.stir || null, name: r.name, message: msg, clientId: r.clientId ?? null, section: 'WORKS' });
     }
   }
   if (!opts.dryRun) {

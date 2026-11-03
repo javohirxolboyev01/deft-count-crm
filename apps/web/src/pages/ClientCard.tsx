@@ -1,9 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, Trash2 } from 'lucide-react';
+import { Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useParams } from 'react-router-dom';
 import { toast } from 'sonner';
+import { ClientReportCards } from '@/components/ClientReportCards';
+import { ClientReviewBanner, clientNeeds } from '@/components/SheetImport';
 import { TaskStatusBadge } from '@/components/StatusBadge';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, PageHeader } from '@/components/ui/card';
@@ -19,7 +21,7 @@ import { api, qs } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
 import { errorText } from '@/lib/errors';
-import { currentMonth, fmtDate, fmtDateTime, fmtShortDue, monthLabel, shiftMonth } from '@/lib/time';
+import { currentMonth, fmtDate, fmtDateTime, fmtShortDue } from '@/lib/time';
 import { type AuditItem, CLIENT_STATUSES, type ClientCard as ClientCardData, type ClientStatus, type Task, type TaxType } from '@/lib/types';
 
 interface Form {
@@ -51,7 +53,7 @@ const numOrNull = (v: string) => (v.trim() === '' ? null : Number(v.replace(/\D/
 
 function toForm(c: ClientCardData): Form {
   return {
-    stir: c.stir,
+    stir: c.stir ?? '',
     name: c.name,
     contactPerson: c.contactPerson ?? '',
     phone: c.phone ?? '',
@@ -108,7 +110,10 @@ export default function ClientCard() {
     else if (form.clearPassword) body.mehnatPassword = '';
     if (isLeader) {
       Object.assign(body, {
-        stir: form.stir,
+        // Karta to'liq saqlandi: "tekshiring" kamchiliklari ham yopiladi (V28)
+        reviewed: true,
+        // STIR'siz mijoz (V26): bo'sh qoldirilsa yuborilmaydi
+        ...(form.stir && { stir: form.stir }),
         name: form.name,
         ...(form.taxType && { taxType: form.taxType }),
         accountantId: form.accountantId ? Number(form.accountantId) : null,
@@ -126,38 +131,10 @@ export default function ClientCard() {
       toast.success(t('common.saved'));
       setConfirmTax(false);
       refresh();
+      void qc.invalidateQueries({ queryKey: ['sheets', 'review'] });
     },
     onError: onErr,
   });
-  const eventMark = useMutation({
-    mutationFn: (p: { reportTypeId: number; month: string; on: boolean }) => {
-      const url = `/clients/${id}/events/${p.reportTypeId}/${p.month}`;
-      return p.on ? api.put(url) : api.del(url);
-    },
-    onSuccess: refresh,
-    onError: onErr,
-  });
-  const include = useMutation({
-    mutationFn: (reportTypeId: number) => api.del(`/clients/${id}/report-exclusions/${reportTypeId}`),
-    onSuccess: refresh,
-    onError: onErr,
-  });
-
-  const thisMonth = currentMonth();
-  const months = t('months', { returnObjects: true }) as string[];
-  // Holat belgisi faqat o'tgan va joriy oy uchun (server ham tekshiradi)
-  const eventMonths = [shiftMonth(thisMonth, -1), thisMonth];
-  // Bazada holat oyi saqlanadi, kartada esa topshirish oyi (holat oyi + 1) ko'rsatiladi: "Hisobot topshirish"
-  // sahifasi va Excel fayl ham topshirish oyi bo'yicha — buxgalter bitta oy bilan ishlaydi.
-  const filingLabel = (eventMonth: string, dueDay: number | null) => {
-    const m = shiftMonth(eventMonth, 1);
-    if (!dueDay) return monthLabel(m, months);
-    const [y, mo] = m.split('-').map(Number);
-    const day = Math.min(dueDay, new Date(y, mo, 0).getDate());
-    return t('clients.filingDue', { month: monthLabel(m, months), date: `${String(day).padStart(2, '0')}.${String(mo).padStart(2, '0')}` });
-  };
-  const events = q.data?.events?.filter((e) => e.applicable) ?? [];
-
   // Birinchi marta tanlash (aniqlanmagan tur) tasdiqsiz: o'zgaradigan eski tur yo'q
   const taxChanged = q.data?.taxType && (form.taxType !== q.data.taxType || (form.taxTypeEffectiveFrom || '') !== (q.data.taxTypeEffectiveFrom ?? ''));
   const submit = (e: React.FormEvent) => {
@@ -173,7 +150,13 @@ export default function ClientCard() {
       <Card className="xl:col-span-2">
         <CardHeader title={t('clients.card')} />
         <form onSubmit={submit} className="grid gap-4 p-4 sm:grid-cols-2">
-          <Field label={t('clients.stir')} htmlFor="stir"><Input id="stir" required inputMode="numeric" value={form.stir} disabled={ro} onChange={(e) => set({ stir: e.target.value })} /></Field>
+          <Field
+            label={t('clients.stir')}
+            htmlFor="stir"
+            hint={!q.data?.stir ? `${q.data?.stirRaw ? t('clients.taxFromFile', { raw: q.data.stirRaw }) + '. ' : ''}${t('clients.stirMissing')}` : undefined}
+          >
+            <Input id="stir" required={!!q.data?.stir} inputMode="numeric" value={form.stir} disabled={ro} onChange={(e) => set({ stir: e.target.value })} />
+          </Field>
           <Field label={t('clients.name')} htmlFor="name"><Input id="name" required value={form.name} disabled={ro} onChange={(e) => set({ name: e.target.value })} /></Field>
           <Field label={t('clients.contact')} htmlFor="contact"><Input id="contact" value={form.contactPerson} onChange={(e) => set({ contactPerson: e.target.value })} /></Field>
           <Field label={t('clients.phone')} htmlFor="phone" hint={t('clients.phoneHint')}><PhoneInput id="phone" value={form.phone} onChange={(v) => set({ phone: v })} /></Field>
@@ -262,77 +245,7 @@ export default function ClientCard() {
 
       {q.data && (
         <div className="space-y-4">
-          <Card>
-            <CardHeader title={t('clients.taxHistory')} />
-            {!q.data.taxHistory?.length && <Empty />}
-            <ul className="divide-y text-sm">
-              {q.data.taxHistory?.map((h) => (
-                <li key={h.id} className="flex justify-between px-4 py-2">
-                  <span><b>{h.taxType}</b> · {h.effectiveFrom === '2000-01-01' ? t('clients.fromStart') : `${fmtDate(h.effectiveFrom)} ${t('clients.since')}`}</span>
-                  <span className="text-xs text-gray-500">{h.createdByName ?? t('notif.system')}</span>
-                </li>
-              ))}
-            </ul>
-          </Card>
-          {events.length > 0 && (
-            <Card>
-              <CardHeader title={t('clients.events')} />
-              <div className="space-y-4 p-4 text-sm">
-                <p className="text-xs text-gray-500">{t('clients.eventsHint')}</p>
-                {events.map((e) => {
-                  const older = e.months.filter((m) => !eventMonths.includes(m));
-                  return (
-                    <div key={e.reportTypeId} className="space-y-1.5">
-                      <div className="font-medium">{t(`clients.eventLabel.${e.code}`, { defaultValue: i18n.language === 'ru' ? e.nameRu : e.name })}</div>
-                      <div className="flex flex-wrap gap-2">
-                        {eventMonths.map((m) => {
-                          const on = e.months.includes(m);
-                          return (
-                            <Button
-                              key={m}
-                              size="sm"
-                              variant={on ? 'default' : 'outline'}
-                              aria-pressed={on}
-                              disabled={eventMark.isPending}
-                              onClick={() => eventMark.mutate({ reportTypeId: e.reportTypeId, month: m, on: !on })}
-                            >
-                              {on && <Check className="h-3.5 w-3.5" />} {filingLabel(m, e.dueDay)}
-                            </Button>
-                          );
-                        })}
-                      </div>
-                      {older.length > 0 && (
-                        <div className="text-xs text-gray-500">{t('clients.eventsEarlier')}: {older.map((m) => monthLabel(shiftMonth(m, 1), months)).join(', ')}</div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </Card>
-          )}
-          {q.data.reportExclusions?.length > 0 && (
-            <Card>
-              <CardHeader title={t('clients.reportExclusions')} />
-              <div className="space-y-3 p-4 text-sm">
-                <p className="text-xs text-gray-500">{t('clients.reportExclusionsHint')}</p>
-                <ul className="space-y-1.5">
-                  {q.data.reportExclusions.map((e) => (
-                    <li key={e.reportTypeId} className="flex items-center justify-between gap-2">
-                      <span>
-                        {i18n.language === 'ru' ? e.nameRu : e.name}
-                        <span className="ml-2 text-xs text-gray-500">{t('clients.excludedSince', { month: monthLabel(e.effectiveFrom, months) })}</span>
-                      </span>
-                      {isLeader && (
-                        <Button size="sm" variant="outline" disabled={include.isPending} onClick={() => include.mutate(e.reportTypeId)}>
-                          {t('clients.includeReport')}
-                        </Button>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            </Card>
-          )}
+          <ClientReportCards client={q.data} isLeader={isLeader} />
         </div>
       )}
       <Card className="xl:col-span-2">
@@ -378,6 +291,7 @@ export default function ClientCard() {
   return (
     <div>
       <PageHeader crumbs={[{ to: '/clients', label: t('nav.clients') }]} title={q.data?.name ?? '…'} />
+      {isLeader && <ClientReviewBanner kind="WORKS" clientId={Number(id)} needs={q.data ? clientNeeds(q.data, t) : []} />}
       <QueryState
         q={q}
         skeleton={

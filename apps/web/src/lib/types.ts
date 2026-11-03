@@ -42,7 +42,9 @@ export interface AccountantOption {
 
 export interface Client {
   id: number;
-  stir: string;
+  /** null: importda STIR yo'q/noto'g'ri/takroriy (V26), fayldagi matn stirRaw'da */
+  stir: string | null;
+  stirRaw?: string | null;
   name: string;
   contactPerson: string | null;
   phone: string | null;
@@ -142,7 +144,9 @@ export interface GridColumn {
 
 export interface GridRow {
   clientId: number;
-  stir: string;
+  /** null: importda STIR yo'q/noto'g'ri/takroriy (V26), fayldagi matn stirRaw'da */
+  stir: string | null;
+  stirRaw?: string | null;
   name: string;
   taxType: TaxType | null;
   taxTypeRaw: string | null;
@@ -163,8 +167,8 @@ export interface Grid {
   rows: GridRow[];
 }
 
-/** Oylik ishlar ("Бухгалтер ишлари"): katakda "qaysi oygacha bajarilgan" (works.ts) */
-export type WorkTone = 'done' | 'waiting' | 'overdue' | 'soon';
+/** Oylik ishlar ("Бухгалтер ишлари"): katakda tanlangan oy ishining holati (works.ts, ?month=) */
+export type WorkState = 'done' | 'open' | 'soon' | 'waiting' | 'overdue' | 'na';
 
 export interface WorkColumn {
   routineTypeId: number;
@@ -179,20 +183,24 @@ export interface WorkColumn {
 }
 
 export interface WorkCell {
-  na: boolean;
-  /** 'YYYY-MM' */
-  doneThrough: string | null;
-  baseline: string | null;
-  lag: number;
-  tone: WorkTone | null;
+  state: WorkState;
+  /** Shu oy vazifasi (bajarilgani ham) */
+  taskId: number | null;
+  /** Vazifasi yo'q, tizimgacha bo'lgan oy (rahbar kiritgan nuqtadan) */
+  beforeSystem: boolean;
+  /** Bosilganda yopiladigan: shu oy vazifasi yoki tizimgacha bo'lgan navbatdagi oy */
   next: { kind: 'TASK'; taskId: number; status: TaskStatus; month: string } | { kind: 'BASELINE'; month: string } | null;
+  /** 'YYYY-MM': tizimgacha qaysi oygacha bajarilgan */
+  baseline: string | null;
   /** Fayldagi tanilmagan qiymat ("eri"): oy kiritilguncha boricha ko'rsatiladi */
-  raw?: string | null;
+  raw: string | null;
 }
 
 export interface WorksRow {
   clientId: number;
-  stir: string;
+  /** null: importda STIR yo'q/noto'g'ri/takroriy (V26), fayldagi matn stirRaw'da */
+  stir: string | null;
+  stirRaw?: string | null;
   name: string;
   taxType: TaxType | null;
   taxTypeRaw?: string | null;
@@ -212,7 +220,7 @@ export interface WorksRow {
 
 export interface Works extends Paged<WorksRow> {
   columns: WorkColumn[];
-  /** Joriy oy 'YYYY-MM' */
+  /** Tanlangan oy 'YYYY-MM' */
   month: string;
   sharePercent: number;
 }
