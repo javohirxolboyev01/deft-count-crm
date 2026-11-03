@@ -19,6 +19,7 @@ const clientCls: Record<ClientStatus, string> = {
   ACTIVE: 'border-green-200 bg-green-50 text-green-700',
   ZERO_REPORT: 'border-gray-300 bg-gray-50 text-gray-600',
   LIQUIDATING: 'border-red-200 bg-red-50 text-red-700',
+  ARCHIVED: 'border-gray-200 bg-gray-100 text-gray-500',
 };
 
 export function ClientStatusBadge({ status }: { status: ClientStatus }) {
@@ -26,7 +27,16 @@ export function ClientStatusBadge({ status }: { status: ClientStatus }) {
   return <Badge className={clientCls[status]}>{t(`clientStatus.${status}`)}</Badge>;
 }
 
-export function TaxBadge({ taxType }: { taxType: TaxType }) {
+/** taxType null: importda tanilmagan — fayldagi matn ("ЯТТ") sariq belgi bilan, kartada tanlanadi */
+export function TaxBadge({ taxType, raw }: { taxType: TaxType | null; raw?: string | null }) {
+  const { t } = useTranslation();
+  if (!taxType) {
+    return (
+      <span title={t('clients.taxNoneHint')}>
+        <Badge className="border-amber-300 bg-amber-50 text-amber-800">{raw || t('clients.taxNone')} ?</Badge>
+      </span>
+    );
+  }
   return (
     <Badge className={taxType === 'QQS' ? 'border-indigo-200 bg-indigo-50 text-indigo-700' : 'border-teal-200 bg-teal-50 text-teal-700'}>
       {taxType}

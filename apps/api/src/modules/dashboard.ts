@@ -26,6 +26,7 @@ dashboardRouter.get('/clients', async (req, res) => {
      FROM client c
      LEFT JOIN app_user a ON a.id = c.accountant_id
      LEFT JOIN task t ON t.client_id = c.id AND t.period = $1 AND t.status <> 'CANCELLED'
+     WHERE c.status <> 'ARCHIVED'
      GROUP BY c.id, a.id ORDER BY c.name_normalized`,
     [period],
   );
@@ -60,6 +61,8 @@ dashboardRouter.get('/clients', async (req, res) => {
       tasksDone: totals!.done,
       tasksOverdue: totals!.overdue,
       percent: totals!.total ? Math.round((totals!.done / totals!.total) * 100) : 0,
+      // Soliq turi aniqlanmagan (importda tanilmagan): vazifa chiqmaydi, rahbar kartada to'ldirishi kerak
+      incomplete: clients.filter((c: any) => !c.taxType).length,
     },
     clients,
     overdueTasks,

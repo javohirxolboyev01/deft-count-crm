@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Copy, Eye, EyeOff, Pencil, Plus, Search } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { NewClientDialog } from '@/components/NewClientDialog';
 import { NoteCell } from '@/components/NoteCell';
@@ -24,7 +24,7 @@ import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
 import { errorText } from '@/lib/errors';
 import { fmtDate, monthLabel } from '@/lib/time';
-import type { AdvanceResult, WorkCell, WorkColumn, WorkTone, Works, WorksRow } from '@/lib/types';
+import { type AdvanceResult, CLIENT_STATUSES, type WorkCell, type WorkColumn, type WorkTone, type Works, type WorksRow } from '@/lib/types';
 
 // "Oylik ishlar" ("Бухгалтер ишлари" fayli): qatorda mijoz, ustunda doimiy ish, katakda qaysi oygacha
 // uzluksiz bajarilgani va necha oy orqada. Holat serverda vazifalardan hisoblanadi (works.ts).
@@ -69,7 +69,9 @@ export default function Clients() {
   const [edit, setEdit] = useState<{ row: WorksRow; col: WorkColumn } | null>(null);
   const accountants = useAccountants();
   const months = t('months', { returnObjects: true }) as string[];
-  const [f, setF] = useState({ search: '', status: '', taxType: '', accountantId: '', page: 1, pageSize: 50 });
+  // ?taxType=NONE: Dashboard'dagi "soliq turi aniqlanmagan" havolasidan
+  const [params] = useSearchParams();
+  const [f, setF] = useState({ search: '', status: '', taxType: params.get('taxType') ?? '', accountantId: '', page: 1, pageSize: 50 });
   const set = (patch: Partial<typeof f>) => setF({ ...f, page: 1, ...patch });
   const q = useQuery({
     queryKey: ['works', f],
@@ -151,8 +153,8 @@ export default function Clients() {
               options={[{ value: 'none', label: t('clients.noAccountant') }, ...(accountants.data?.map((a) => ({ value: String(a.id), label: a.fullName })) ?? [])]}
             />
           )}
-          <Select className="w-auto min-w-44" value={f.taxType} onChange={(v) => set({ taxType: v })} aria-label={t('clients.taxType')} placeholder={t('clients.allTaxTypes')} clearable options={[{ value: 'AOS', label: 'AOS' }, { value: 'QQS', label: 'QQS' }]} />
-          <Select className="w-auto min-w-44" value={f.status} onChange={(v) => set({ status: v })} aria-label={t('clients.status')} placeholder={t('clients.allStatuses')} clearable options={['ACTIVE', 'ZERO_REPORT', 'LIQUIDATING'].map((s) => ({ value: s, label: t(`clientStatus.${s}`) }))} />
+          <Select className="w-auto min-w-44" value={f.taxType} onChange={(v) => set({ taxType: v })} aria-label={t('clients.taxType')} placeholder={t('clients.allTaxTypes')} clearable options={[{ value: 'AOS', label: 'AOS' }, { value: 'QQS', label: 'QQS' }, { value: 'NONE', label: t('clients.taxNone') }]} />
+          <Select className="w-auto min-w-44" value={f.status} onChange={(v) => set({ status: v })} aria-label={t('clients.status')} placeholder={t('clients.allStatuses')} clearable options={CLIENT_STATUSES.map((s) => ({ value: s, label: t(`clientStatus.${s}`) }))} />
           <div className="ml-auto flex flex-wrap gap-3 text-xs text-gray-600">
             {LEGEND.map((s) => (
               <span key={s} className="inline-flex items-center gap-1">
@@ -216,7 +218,7 @@ export default function Clients() {
                           {r.status !== 'ACTIVE' && <div className="text-[11px] text-gray-500">{t(`clientStatus.${r.status}`)}</div>}
                         </Link>
                       </td>
-                      <td className="border-b border-r px-2 text-center"><TaxBadge taxType={r.taxType} /></td>
+                      <td className="border-b border-r px-2 text-center"><TaxBadge taxType={r.taxType} raw={r.taxTypeRaw} /></td>
                       {isLeader && <td className={cn(TD, 'text-right tabular-nums')}>{fmtMoney(r.monthlyFee)}</td>}
                       <td className={cn(TD, 'text-right tabular-nums')}>{fmtMoney(r.accountantShare)}</td>
                       <td className={TD}>{r.accountantName ?? <span className="text-gray-400">{t('clients.noAccountant')}</span>}</td>
@@ -290,18 +292,21 @@ function WorkCellView({
   if (!cell) return <td className="border-b border-r" />;
   const tone = toneOf(cell);
   const next = cell.next;
-  const title = cell.na
-    ? t('works.legend.na')
-    : next
-      ? t('works.clickHint', { month: monthLabel(next.month, months) })
-      : t('works.allDone');
+  const title = cell.raw
+    ? t('works.rawHint', { raw: cell.raw })
+    : cell.na
+      ? t('works.legend.na')
+      : next
+        ? t('works.clickHint', { month: monthLabel(next.month, months) })
+        : t('works.allDone');
 
   return (
     <td className="group/cell relative border-b border-r p-0.5 text-center">
       <button
         className={cn(
           'flex h-10 w-full flex-col items-center justify-center rounded leading-tight transition-colors disabled:cursor-default',
-          TONE[tone],
+          // Fayldagi tanilmagan qiymat: boricha, sariq (rahbar oyni kiritguncha)
+          cell.raw ? 'bg-amber-50 text-amber-800 ring-1 ring-inset ring-amber-300' : TONE[tone],
           busy && 'opacity-60',
         )}
         disabled={!next || busy}
@@ -314,11 +319,17 @@ function WorkCellView({
           onOpenTask(next.taskId);
         }}
       >
-        <span className="text-xs font-semibold tabular-nums">
-          {/* Hali bajarilgan oy yo'q: "Hisobot topshirish" belgilari (○ ochiq, ! muddati o'tgan) */}
-          {cell.doneThrough ? fmtMonth(cell.doneThrough) : cell.na ? '—' : tone === 'overdue' ? '!' : '○'}
-        </span>
-        {cell.lag > 0 && <span className="text-[10px] font-medium">{t('works.behind', { n: cell.lag })}</span>}
+        {cell.raw ? (
+          <span className="line-clamp-2 break-all px-1 text-[11px] font-medium">{cell.raw}</span>
+        ) : (
+          <>
+            <span className="text-xs font-semibold tabular-nums">
+              {/* Hali bajarilgan oy yo'q: "Hisobot topshirish" belgilari (○ ochiq, ! muddati o'tgan) */}
+              {cell.doneThrough ? fmtMonth(cell.doneThrough) : cell.na ? '—' : tone === 'overdue' ? '!' : '○'}
+            </span>
+            {cell.lag > 0 && <span className="text-[10px] font-medium">{t('works.behind', { n: cell.lag })}</span>}
+          </>
+        )}
       </button>
       {onEdit && (
         <button
@@ -360,11 +371,12 @@ function BaselineDialog({ row, col, colName, onClose }: { row: WorksRow; col: Wo
       footer={
         <>
           <Button variant="outline" onClick={onClose}>{t('common.cancel')}</Button>
-          <Button onClick={() => save.mutate()} loading={save.isPending} disabled={month === (cell?.baseline ?? '')}>{t('common.save')}</Button>
+          <Button onClick={() => save.mutate()} loading={save.isPending} disabled={month === (cell?.baseline ?? '') && !cell?.raw}>{t('common.save')}</Button>
         </>
       }
     >
       <div className="space-y-3">
+        {cell?.raw && <p className="rounded bg-amber-50 px-2 py-1.5 text-sm text-amber-800">{t('works.rawHint', { raw: cell.raw })}</p>}
         {cell && !cell.na && (
           <p className="text-sm text-gray-600">
             {t('works.current')}: <span className="font-semibold text-ink">{cell.doneThrough ? monthLabel(cell.doneThrough, months) : t('works.notYet')}</span>

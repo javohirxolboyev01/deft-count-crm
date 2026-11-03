@@ -46,6 +46,8 @@ export interface WorkCell {
   tone: WorkTone | null;
   /** Katakni bosganda nima yopiladi: tizimdagi vazifa yoki tizimgacha bo'lgan oy */
   next: { kind: 'TASK'; taskId: number; status: string; month: string } | { kind: 'BASELINE'; month: string } | null;
+  /** Fayldagi tanilmagan qiymat ("eri", "28,02,2025(14)"): oy kiritilguncha boricha ko'rsatiladi (V24) */
+  raw?: string | null;
 }
 
 const monthOfPeriod = (period: string) => period.slice(0, 7);
@@ -121,12 +123,23 @@ export async function loadCells(db: Db, clientIds: number[], columns: WorkColumn
         [clientIds, typeIds],
       )
     : [];
+  const raws = clientIds.length
+    ? await q<{ clientId: number; routineTypeId: number; raw: string }>(
+        db,
+        `SELECT client_id AS "clientId", routine_type_id AS "routineTypeId", raw
+         FROM client_routine_raw WHERE client_id = ANY ($1::bigint[]) AND routine_type_id = ANY ($2::bigint[])`,
+        [clientIds, typeIds],
+      )
+    : [];
   const key = (c: number, r: number) => `${c}:${r}`;
   const aggMap = new Map(aggs.map((a) => [key(a.clientId, a.routineTypeId), a]));
   const baseMap = new Map(baselines.map((b) => [key(b.clientId, b.routineTypeId), b.doneThrough]));
+  const rawMap = new Map(raws.map((x) => [key(x.clientId, x.routineTypeId), x.raw]));
   const now = currentPeriod();
-  return (clientId: number, col: WorkColumn) =>
-    computeCell(col, aggMap.get(key(clientId, col.routineTypeId)), baseMap.get(key(clientId, col.routineTypeId)) ?? null, now);
+  return (clientId: number, col: WorkColumn): WorkCell => ({
+    ...computeCell(col, aggMap.get(key(clientId, col.routineTypeId)), baseMap.get(key(clientId, col.routineTypeId)) ?? null, now),
+    raw: rawMap.get(key(clientId, col.routineTypeId)) ?? null,
+  });
 }
 
 export function computeCell(col: WorkColumn, agg: Agg | undefined, baseline: string | null, now: string): WorkCell {
@@ -198,6 +211,7 @@ export async function loadWorks(db: Db, u: AuthUser, f: z.infer<typeof clientLis
       stir: c.stir,
       name: c.name,
       taxType: c.taxType,
+      taxTypeRaw: c.taxTypeRaw,
       status: c.status,
       note: c.note,
       accountantId: c.accountantId,
@@ -239,6 +253,8 @@ worksRouter.post('/:clientId/:routineTypeId/advance', async (req, res) => {
     const col = await loadColumn(db, routineTypeId);
     const cell = (await loadCells(db, [clientId], [col]))(clientId, col);
     if (!cell.next) throw new AppError(409, 'NOTHING_TO_ADVANCE', "Bu ish bo'yicha yopiladigan oy yo'q");
+    // Oy yopildi: fayldagi tanilmagan matn endi kerak emas
+    if (cell.raw) await db.query('DELETE FROM client_routine_raw WHERE client_id = $1 AND routine_type_id = $2', [clientId, routineTypeId]);
     if (cell.next.kind === 'TASK') {
       return { kind: 'TASK' as const, task: await markDone(db, cell.next.taskId, u, { source: 'WORKS' }) };
     }
@@ -342,6 +358,8 @@ worksRouter.put('/:clientId/:routineTypeId/baseline', requireLeader, async (req,
         [clientId, routineTypeId, period, u.id],
       );
     }
+    // Rahbar oyni aniqladi (yoki bo'shatdi): fayldagi tanilmagan matn o'rnini egalladi
+    await db.query('DELETE FROM client_routine_raw WHERE client_id = $1 AND routine_type_id = $2', [clientId, routineTypeId]);
     if ((before?.doneThrough ?? null) !== (month ? `${month}-01` : null)) {
       await audit(db, {
         actorId: u.id,

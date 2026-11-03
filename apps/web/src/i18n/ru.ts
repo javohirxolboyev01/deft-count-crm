@@ -22,7 +22,7 @@ const ru: Dict = {
   roles: { LEADER: 'Руководитель', ACCOUNTANT: 'Бухгалтер', OPERATOR: 'Оператор продаж' },
   taskStatus: { TODO: 'К выполнению', IN_PROGRESS: 'В работе', WAITING_CLIENT: 'Ждём клиента', DONE: 'Выполнено', CANCELLED: 'Отменено' },
   taskKind: { ROUTINE: 'Ежемесячная работа', REPORT: 'Отчёт', URGENT: 'Срочная', MANUAL: 'Ручная' },
-  clientStatus: { ACTIVE: 'Активный', ZERO_REPORT: 'Нулевая отчётность', LIQUIDATING: 'Ликвидируется' },
+  clientStatus: { ACTIVE: 'Активный', ZERO_REPORT: 'Нулевая отчётность', LIQUIDATING: 'Ликвидируется', ARCHIVED: 'Архив' },
   login: {
     title: 'Вход в систему', subtitle: 'Введите логин и пароль', login: 'Логин', password: 'Пароль', submit: 'Войти',
     showPassword: 'Показать пароль', hidePassword: 'Скрыть пароль',
@@ -88,7 +88,8 @@ const ru: Dict = {
     phone: 'Телефон', phoneHint: 'Только для связи: клиенту автоматические сообщения не отправляются', taxType: 'Налоговый режим',
     taxLeaderOnly: 'Налоговый режим меняет только руководитель', effectiveFrom: 'Режим действует с', effectiveFromHint: 'Пусто: с текущего месяца',
     accountant: 'Ответственный бухгалтер', status: 'Статус', note: 'Примечание', noAccountant: 'Не назначен',
-    allStatuses: 'Все статусы', allTaxTypes: 'Все режимы', allAccountants: 'Все бухгалтеры',
+    allStatuses: 'Все статусы', allTaxTypes: 'Все режимы', taxNone: 'Не определён', taxNoneHint: 'Налоговый режим не определён — задачи не создаются. Выберите: ячейки из файла применятся автоматически',
+    taxFromFile: 'В файле: «{{raw}}»', chooseTax: 'Выберите', allAccountants: 'Все бухгалтеры',
     searchPlaceholder: 'Поиск по названию или ИНН', openTasks: 'Открытые (месяц)', overdueTasks: 'Просрочено',
     taxHistory: 'История налогового режима', fromStart: 'с начала', since: 'с этой даты', history: 'История изменений', currentTasks: 'Задачи текущего месяца',
     events: 'Отчёты по событию', eventsHint: 'Отметьте месяц сдачи отчёта (например, работа с нерезидентом в сентябре — Октябрь).',
@@ -106,6 +107,7 @@ const ru: Dict = {
   },
   works: {
     title: 'Ежемесячные работы', no: '№', stir: 'ИНН', company: 'Название', note: 'Примечание',
+    rawHint: 'Значение из файла не распознано: «{{raw}}». Укажите месяц через карандаш',
     behind: 'отставание {{n}} мес.', notYet: 'Ещё нет', allDone: 'Все месяцы выполнены',
     clickHint: 'Нажмите, чтобы отметить {{month}} «Выполнено»',
     doneToast: '«{{work}}» — {{month}} выполнено ({{client}})',
@@ -127,6 +129,8 @@ const ru: Dict = {
     clickHint: 'Нажмите, чтобы отметить «Выполнено»',
     hint: 'Нажатие на ячейку отмечает задачу «Выполнено» (можно отменить в течение 5 секунд). Правая кнопка — открыть задачу. «—» — не сдаётся (режим или статус).',
     legend: { done: 'Сдано', open: 'Не сдано', overdue: 'Просрочено', na: 'Не сдаёт' },
+    rawHint: 'Значение из файла. Станет задачей после выбора налогового режима',
+    eventHint: 'Нажмите, чтобы отметить сдачу в этом месяце', eventMarked: 'Отмечено, задача создана',
   },
   settings: {
     title: 'Настройки', reportTypes: 'Типы отчётов', routineWorks: 'Ежемесячные работы', templates: 'Шаблоны для новой задачи',
@@ -173,6 +177,7 @@ const ru: Dict = {
   },
   dashboard: {
     title: 'Панель руководителя', percent: 'Общее выполнение', ready: 'Готовые клиенты', inProgress: 'В работе', overdueClients: 'С просрочкой',
+    incomplete: 'У {{n}} клиентов не определён налоговый режим: задачи для них не создаются', incompleteOpen: 'Показать',
     tasksDone: 'Задачи (выполнено/всего)', alerts: 'Просроченные задачи', accountants: 'Бухгалтеры',
     range: { day: 'День', week: 'Неделя', month: 'Месяц' }, accountant: 'Бухгалтер', done: 'Выполнил',
     doneTodayWeekMonth: 'День / неделя / месяц', onTime: 'Вовремя', overdue: 'Просрочено', waiting: 'Ждём клиента', openTasks: 'Нагрузка',
@@ -208,7 +213,7 @@ const ru: Dict = {
     noRows: 'В этом разделе строк нет', confirmTitle: 'Загрузить без проверки?', confirmApply: 'Всё равно загрузить',
     confirmText: 'Вы ещё не видели результат — данные сразу запишутся в CRM. Рекомендуется сначала нажать «Проверить» и посмотреть, что изменится.',
     imported: 'Импорт: новых {{created}}, обновлено {{updated}}', new: 'Новые', updated: 'Изменённые', unchanged: 'Без изменений',
-    skipped: 'Пропущено', review: 'Нужна проверка', cellsDone: 'Ячеек отмечено «Выполнено»', columns: 'Найденные столбцы',
+    skipped: 'Пропущено', review: 'Нужна проверка', cellsDone: 'Ячеек отмечено «Выполнено»', columns: 'Найденные столбцы', ignoredColumns: 'Нераспознанные столбцы (не загружены)',
     action: 'Результат', reviewNotes: 'Ручная проверка', actions: { NEW: 'Новый', UPDATED: 'Изменён', UNCHANGED: 'Без изменений', SKIPPED: 'Пропущен' },
     manualReview: 'Список ручной проверки', fixInCard: 'Исправить в карточке', resolve: 'Решено',
     alreadyImported: 'Этот файл уже загружен',

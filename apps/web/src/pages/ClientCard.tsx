@@ -20,14 +20,15 @@ import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
 import { errorText } from '@/lib/errors';
 import { currentMonth, fmtDate, fmtDateTime, fmtShortDue, monthLabel, shiftMonth } from '@/lib/time';
-import type { AuditItem, ClientCard as ClientCardData, ClientStatus, Task, TaxType } from '@/lib/types';
+import { type AuditItem, CLIENT_STATUSES, type ClientCard as ClientCardData, type ClientStatus, type Task, type TaxType } from '@/lib/types';
 
 interface Form {
   stir: string;
   name: string;
   contactPerson: string;
   phone: string;
-  taxType: TaxType;
+  /** '': importda tanilmagan, hali tanlanmagan */
+  taxType: TaxType | '';
   taxTypeEffectiveFrom: string;
   accountantId: string;
   status: ClientStatus;
@@ -54,7 +55,7 @@ function toForm(c: ClientCardData): Form {
     name: c.name,
     contactPerson: c.contactPerson ?? '',
     phone: c.phone ?? '',
-    taxType: c.taxType,
+    taxType: c.taxType ?? '',
     taxTypeEffectiveFrom: c.taxTypeEffectiveFrom ?? '',
     accountantId: c.accountantId ? String(c.accountantId) : '',
     status: c.status,
@@ -109,7 +110,7 @@ export default function ClientCard() {
       Object.assign(body, {
         stir: form.stir,
         name: form.name,
-        taxType: form.taxType,
+        ...(form.taxType && { taxType: form.taxType }),
         accountantId: form.accountantId ? Number(form.accountantId) : null,
         status: form.status,
         monthlyFee: numOrNull(form.monthlyFee),
@@ -157,7 +158,8 @@ export default function ClientCard() {
   };
   const events = q.data?.events?.filter((e) => e.applicable) ?? [];
 
-  const taxChanged = q.data && (form.taxType !== q.data.taxType || (form.taxTypeEffectiveFrom || '') !== (q.data.taxTypeEffectiveFrom ?? ''));
+  // Birinchi marta tanlash (aniqlanmagan tur) tasdiqsiz: o'zgaradigan eski tur yo'q
+  const taxChanged = q.data?.taxType && (form.taxType !== q.data.taxType || (form.taxTypeEffectiveFrom || '') !== (q.data.taxTypeEffectiveFrom ?? ''));
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     if (taxChanged) setConfirmTax(true);
@@ -175,8 +177,12 @@ export default function ClientCard() {
           <Field label={t('clients.name')} htmlFor="name"><Input id="name" required value={form.name} disabled={ro} onChange={(e) => set({ name: e.target.value })} /></Field>
           <Field label={t('clients.contact')} htmlFor="contact"><Input id="contact" value={form.contactPerson} onChange={(e) => set({ contactPerson: e.target.value })} /></Field>
           <Field label={t('clients.phone')} htmlFor="phone" hint={t('clients.phoneHint')}><PhoneInput id="phone" value={form.phone} onChange={(v) => set({ phone: v })} /></Field>
-          <Field label={t('clients.taxType')} htmlFor="tax" hint={ro ? t('clients.taxLeaderOnly') : undefined}>
-            <Select id="tax" value={form.taxType} disabled={ro} onChange={(v) => set({ taxType: v as TaxType })} options={[{ value: 'AOS', label: 'AOS' }, { value: 'QQS', label: 'QQS' }]} />
+          <Field
+            label={t('clients.taxType')}
+            htmlFor="tax"
+            hint={!q.data?.taxType ? `${q.data?.taxTypeRaw ? t('clients.taxFromFile', { raw: q.data.taxTypeRaw }) + '. ' : ''}${t('clients.taxNoneHint')}` : ro ? t('clients.taxLeaderOnly') : undefined}
+          >
+            <Select id="tax" value={form.taxType} disabled={ro} placeholder={t('clients.chooseTax')} onChange={(v) => set({ taxType: v as TaxType })} options={[{ value: 'AOS', label: 'AOS' }, { value: 'QQS', label: 'QQS' }]} />
           </Field>
           <Field label={t('clients.effectiveFrom')} htmlFor="eff" hint={t('clients.effectiveFromHint')}>
             <DatePicker id="eff" value={form.taxTypeEffectiveFrom} disabled={ro} onChange={(v) => set({ taxTypeEffectiveFrom: v })} />
@@ -193,7 +199,7 @@ export default function ClientCard() {
             />
           </Field>
           <Field label={t('clients.status')} htmlFor="status">
-            <Select id="status" value={form.status} disabled={ro} onChange={(v) => set({ status: v as ClientStatus })} options={(['ACTIVE', 'ZERO_REPORT', 'LIQUIDATING'] as const).map((s) => ({ value: s, label: t(`clientStatus.${s}`) }))} />
+            <Select id="status" value={form.status} disabled={ro} onChange={(v) => set({ status: v as ClientStatus })} options={CLIENT_STATUSES.map((s) => ({ value: s, label: t(`clientStatus.${s}`) }))} />
           </Field>
           <div className="sm:col-span-2">
             <Field label={t('clients.note')} htmlFor="note"><Textarea id="note" value={form.note} onChange={(e) => set({ note: e.target.value })} /></Field>

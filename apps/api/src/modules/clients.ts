@@ -8,9 +8,10 @@ import { decryptSecret, encryptSecret } from '../common/secretBox';
 import { addMonthsIso, currentPeriod, monthOf } from '../common/time';
 import { type Db, one, pool, q, tx } from '../db';
 import { reassignOpenTasks, reconcileClient } from './generator';
+import { applyPendingReportCells } from './sheets/reportCells';
 
 export const CLIENT = `c.id, c.stir, c.name, c.contact_person AS "contactPerson", c.phone, c.tax_type AS "taxType",
-  c.tax_type_effective_from AS "taxTypeEffectiveFrom", c.accountant_id AS "accountantId",
+  c.tax_type_raw AS "taxTypeRaw", c.tax_type_effective_from AS "taxTypeEffectiveFrom", c.accountant_id AS "accountantId",
   a.full_name AS "accountantName", c.status, c.note, c.created_at AS "createdAt", c.updated_at AS "updatedAt",
   c.monthly_fee AS "monthlyFee", c.bank_key AS "bankKey", c.employee_count AS "employeeCount",
   c.mehnat_checked_at AS "mehnatCheckedAt", c.mehnat_login AS "mehnatLogin",
@@ -39,10 +40,13 @@ function auditSafe<T extends { mehnatPassword?: string | null }>(body: T) {
 }
 
 /** Mijozlar ro'yxati filtri: /clients va /works bir xil qoidada (buxgalter faqat o'z mijozlari, serverda) */
+export const CLIENT_STATUSES = ['ACTIVE', 'ZERO_REPORT', 'LIQUIDATING', 'ARCHIVED'] as const;
+
 export const clientListQuery = z.object({
   search: z.string().trim().optional(),
-  status: z.enum(['ACTIVE', 'ZERO_REPORT', 'LIQUIDATING']).optional(),
-  taxType: z.enum(['AOS', 'QQS']).optional(),
+  status: z.enum(CLIENT_STATUSES).optional(),
+  // NONE: soliq turi aniqlanmagan ("to'ldirilmagan") mijozlar
+  taxType: z.enum(['AOS', 'QQS', 'NONE']).optional(),
   accountantId: z.union([z.coerce.number().int(), z.literal('none')]).optional(),
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(500).default(25),
@@ -56,8 +60,11 @@ export function clientListWhere(u: AuthUser, f: z.infer<typeof clientListQuery>,
     const digits = f.search.replace(/\D/g, '');
     where.push(`(c.name_normalized ILIKE ${p(`%${s}%`)} ${digits.length >= 3 ? `OR c.stir LIKE ${p(`${digits}%`)}` : ''})`);
   }
+  // Arxiv standart ro'yxatda ko'rinmaydi, faqat filtr bilan
   if (f.status) where.push(`c.status = ${p(f.status)}`);
-  if (f.taxType) where.push(`c.tax_type = ${p(f.taxType)}`);
+  else where.push(`c.status <> 'ARCHIVED'`);
+  if (f.taxType === 'NONE') where.push('c.tax_type IS NULL');
+  else if (f.taxType) where.push(`c.tax_type = ${p(f.taxType)}`);
   if (f.accountantId === 'none') where.push('c.accountant_id IS NULL');
   else if (f.accountantId) where.push(`c.accountant_id = ${p(f.accountantId)}`);
   return where.length ? `WHERE ${where.join(' AND ')}` : '';
@@ -79,7 +86,7 @@ export const clientInput = z.object({
   taxType: z.enum(['AOS', 'QQS']),
   taxTypeEffectiveFrom: isoDate.nullable().optional(),
   accountantId: z.number().int().positive().nullable().optional(),
-  status: z.enum(['ACTIVE', 'ZERO_REPORT', 'LIQUIDATING']).default('ACTIVE'),
+  status: z.enum(CLIENT_STATUSES).default('ACTIVE'),
   note: z.string().max(5000).nullable().optional(),
   // "Бухгалтер ишлари" fayli ustunlari
   monthlyFee: z.number().int().min(0).max(1_000_000_000_000).nullable().optional(),
@@ -114,14 +121,20 @@ export async function recordTaxType(db: Db, clientId: number, taxType: string, e
   );
 }
 
-export async function createClient(db: Db, input: z.infer<typeof clientInput>, actorId: number | null) {
+/**
+ * Import uchun soliq turi null bo'lishi mumkin (fayldagi qiymat tanilmadi, V24): mijoz "to'ldirilmagan",
+ * vazifa chiqmaydi, fayldagi matn tax_type_raw'da. Formadan qo'shishda tur majburiy (clientInput).
+ */
+type NewClient = Omit<z.infer<typeof clientInput>, 'taxType'> & { taxType: 'AOS' | 'QQS' | null; taxTypeRaw?: string | null };
+
+export async function createClient(db: Db, input: NewClient, actorId: number | null) {
   await assertAccountant(db, input.accountantId);
   const c = await one(
     db,
     `INSERT INTO client (stir, name, name_normalized, contact_person, phone, tax_type, tax_type_effective_from,
                          accountant_id, status, note, monthly_fee, bank_key, employee_count, mehnat_checked_at,
-                         mehnat_login, mehnat_password_enc)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING id`,
+                         mehnat_login, mehnat_password_enc, tax_type_raw)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) RETURNING id`,
     [
       input.stir,
       input.name,
@@ -139,10 +152,11 @@ export async function createClient(db: Db, input: z.infer<typeof clientInput>, a
       input.mehnatCheckedAt ?? null,
       input.mehnatLogin || null,
       input.mehnatPassword ? encryptSecret(input.mehnatPassword) : null,
+      input.taxType ? null : input.taxTypeRaw ?? null,
     ],
   );
   // Boshlang'ich tur: "qachondan" berilmasa, butun o'tmish uchun amal qiladi
-  await recordTaxType(db, c.id, input.taxType, input.taxTypeEffectiveFrom ?? '2000-01-01', actorId);
+  if (input.taxType) await recordTaxType(db, c.id, input.taxType, input.taxTypeEffectiveFrom ?? '2000-01-01', actorId);
   await audit(db, { actorId, entity: 'client', entityId: c.id, clientId: c.id, action: 'CREATE', after: auditSafe(input) });
   // Oy o'rtasida qo'shilgan mijozga joriy oy vazifalari darhol yaratiladi
   await reconcileClient(db, c.id, actorId);
@@ -237,7 +251,7 @@ clientsRouter.patch('/:id', async (req, res) => {
   const u = me(req);
   const id = parse(z.coerce.number().int(), req.params.id);
   const body = parse(clientInput.partial().omit({ status: true }).extend({
-    status: z.enum(['ACTIVE', 'ZERO_REPORT', 'LIQUIDATING']).optional(),
+    status: z.enum(CLIENT_STATUSES).optional(),
   }), req.body);
   // TODO(tasdiqlash): buxgalter aloqa ma'lumotlari, izoh, bank-kalit va my.mehnat.uz ma'lumotlarini o'zgartira oladi;
   // oylik to'lov, soliq turi, holat, buxgalter — faqat rahbar
@@ -254,8 +268,10 @@ clientsRouter.patch('/:id', async (req, res) => {
     if (body.accountantId !== undefined) await assertAccountant(db, body.accountantId);
 
     const taxChanged = body.taxType !== undefined && body.taxType !== before.taxType;
-    // Soliq turi o'zgarsa "qachondan" majburiy emas: berilmasa joriy oyning 1-kuni
-    const effectiveFrom = body.taxTypeEffectiveFrom ?? (taxChanged ? currentPeriod() : undefined);
+    // Soliq turi o'zgarsa "qachondan" majburiy emas: berilmasa joriy oyning 1-kuni. Birinchi marta aniqlanayotgan
+    // tur (import "to'ldirilmagan" mijozi) esa butun o'tmish uchun: fayldan saqlangan o'tgan oy kataklari ham qo'llansin
+    const firstTax = taxChanged && !before.taxType;
+    const effectiveFrom = body.taxTypeEffectiveFrom ?? (firstTax ? '2000-01-01' : taxChanged ? currentPeriod() : undefined);
 
     await db.query(
       `UPDATE client SET
@@ -263,6 +279,7 @@ clientsRouter.patch('/:id', async (req, res) => {
          contact_person = CASE WHEN $5 THEN $6 ELSE contact_person END,
          phone = CASE WHEN $7 THEN $8 ELSE phone END,
          tax_type = coalesce($9, tax_type),
+         tax_type_raw = CASE WHEN $9 IS NOT NULL THEN NULL ELSE tax_type_raw END,
          tax_type_effective_from = CASE WHEN $10 THEN $11::date ELSE tax_type_effective_from END,
          accountant_id = CASE WHEN $12 THEN $13::bigint ELSE accountant_id END,
          status = coalesce($14, status),
@@ -284,7 +301,8 @@ clientsRouter.patch('/:id', async (req, res) => {
         body.phone !== undefined,
         body.phone ?? null,
         body.taxType ?? null,
-        effectiveFrom !== undefined,
+        // Birinchi tur "boshidan": kartada sana ko'rinmasin (tarixda 2000-01-01 = "boshidan")
+        effectiveFrom !== undefined && !(firstTax && !body.taxTypeEffectiveFrom),
         effectiveFrom ?? null,
         body.accountantId !== undefined,
         body.accountantId ?? null,
@@ -327,6 +345,8 @@ clientsRouter.patch('/:id', async (req, res) => {
     if (taxChanged || body.taxTypeEffectiveFrom !== undefined || (body.status && body.status !== before.status)) {
       await reconcileClient(db, id, u.id);
     }
+    // Tur endi ma'lum: fayldan saqlangan kataklar (1 -> Bajarildi, X -> istisno) vazifalarga o'zi qo'llanadi
+    if (firstTax) await applyPendingReportCells(db, id, u.id);
   });
   res.json(presentClient(await loadClientForUser(pool, id, u), u, await sharePercent(pool)));
 });

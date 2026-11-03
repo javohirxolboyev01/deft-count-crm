@@ -242,7 +242,12 @@ function ImportDialog({ kind, open, onClose }: { kind: ImportKind; open: boolean
               </div>
 
               <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-gray-500">
-                <span>{t('sheets.columns')}: {report.columns.map((c) => c.code).join(', ')} · {t('sheets.cellsDone')}: {s.cellsDone}</span>
+                <span>
+                  {t('sheets.columns')}: {report.columns.map((c) => c.code).join(', ')} · {t('sheets.cellsDone')}: {s.cellsDone}
+                  {!!report.ignoredColumns?.length && (
+                    <span className="block text-amber-700">{t('sheets.ignoredColumns')}: {report.ignoredColumns.join(', ')}</span>
+                  )}
+                </span>
                 <Button size="sm" variant="ghost" onClick={downloadCsv}><Download className="h-4 w-4" /> CSV</Button>
               </div>
 

@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronLeft, ChevronRight, FileSpreadsheet, FileText } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -14,14 +14,14 @@ import { Select } from '@/components/ui/select';
 import { Empty, QueryState } from '@/components/ui/states';
 import { TableSkeleton } from '@/components/ui/skeleton';
 import { Logo } from '@/components/Logo';
-import { useAccountants, useMarkDone } from '@/hooks/tasks';
+import { invalidateTasks, useAccountants, useMarkDone } from '@/hooks/tasks';
 import { useOpenTask } from '@/hooks/outlet';
 import { api, qs } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
 import { errorText } from '@/lib/errors';
 import { currentMonth, fmtIsoDate, monthLabel, shiftMonth } from '@/lib/time';
-import type { CellState, Grid } from '@/lib/types';
+import { type CellState, CLIENT_STATUSES, type Grid } from '@/lib/types';
 
 const CELL: Record<CellState, { sym: string; cls: string }> = {
   '1': { sym: '✓', cls: 'bg-done-bg text-done font-semibold' },
@@ -39,6 +39,30 @@ export default function Monthly() {
   const accountants = useAccountants();
   const done = useMarkDone();
   const openTask = useOpenTask();
+  const qc = useQueryClient();
+  // Dividend/Norezident: "—" bosilsa holat belgisi qo'yiladi va vazifa chiqadi; xato bosilsa 5 soniya ichida bekor qilinadi
+  const markEvent = useMutation({
+    mutationFn: (url: string) => api.put(url).then(() => url),
+    onSuccess: (url) => {
+      invalidateTasks(qc);
+      toast.success(t('monthly.eventMarked'), {
+        duration: 5000,
+        action: {
+          label: t('task.undo'),
+          onClick: () => {
+            api
+              .del(url)
+              .then(() => {
+                invalidateTasks(qc);
+                toast.info(t('task.undone'));
+              })
+              .catch((e) => toast.error(errorText(e, t)));
+          },
+        },
+      });
+    },
+    onError: (e) => toast.error(errorText(e, t)),
+  });
   const [month, setMonth] = useState(currentMonth());
   const [f, setF] = useState({ accountantId: '', taxType: '', status: '', search: '' });
   const q = useQuery({
@@ -132,8 +156,8 @@ export default function Monthly() {
               options={accountants.data?.map((a) => ({ value: String(a.id), label: a.fullName })) ?? []}
             />
           )}
-          <Select className="w-auto min-w-44" value={f.taxType} onChange={(v) => setF({ ...f, taxType: v })} aria-label={t('clients.taxType')} placeholder={t('clients.allTaxTypes')} clearable options={[{ value: 'AOS', label: 'AOS' }, { value: 'QQS', label: 'QQS' }]} />
-          <Select className="w-auto min-w-44" value={f.status} onChange={(v) => setF({ ...f, status: v })} aria-label={t('clients.status')} placeholder={t('clients.allStatuses')} clearable options={['ACTIVE', 'ZERO_REPORT', 'LIQUIDATING'].map((s) => ({ value: s, label: t(`clientStatus.${s}`) }))} />
+          <Select className="w-auto min-w-44" value={f.taxType} onChange={(v) => setF({ ...f, taxType: v })} aria-label={t('clients.taxType')} placeholder={t('clients.allTaxTypes')} clearable options={[{ value: 'AOS', label: 'AOS' }, { value: 'QQS', label: 'QQS' }, { value: 'NONE', label: t('clients.taxNone') }]} />
+          <Select className="w-auto min-w-44" value={f.status} onChange={(v) => setF({ ...f, status: v })} aria-label={t('clients.status')} placeholder={t('clients.allStatuses')} clearable options={CLIENT_STATUSES.map((s) => ({ value: s, label: t(`clientStatus.${s}`) }))} />
           <div className="ml-auto flex flex-wrap gap-3 text-xs text-gray-600">
             {(['1', '0', '!', 'X'] as CellState[]).map((s) => (
               <span key={s} className="inline-flex items-center gap-1">
@@ -177,15 +201,35 @@ export default function Monthly() {
                           <div className="text-[11px] text-gray-500">{r.accountantName ?? '—'}{r.status !== 'ACTIVE' && ` · ${t(`clientStatus.${r.status}`)}`}</div>
                         </Link>
                       </td>
-                      <td className="border-b px-2 text-center text-xs">{r.taxType}</td>
+                      <td className="border-b px-2 text-center text-xs">
+                        {r.taxType ?? <span className="rounded bg-amber-50 px-1 font-medium text-amber-800" title={t('clients.taxNoneHint')}>{r.taxTypeRaw || t('clients.taxNone')} ?</span>}
+                      </td>
                       {g.columns.map((c) => {
                         const cell = r.cells[c.reportTypeId];
                         if (!cell) return <td key={c.reportTypeId} className="border-b" />;
+                        // Soliq turi aniqlanmagan: fayldagi qiymat boricha (vazifa yo'q, bosilmaydi)
+                        if (!r.taxType) {
+                          return (
+                            <td key={c.reportTypeId} className="border-b p-0.5 text-center" title={t('monthly.rawHint')}>
+                              <span className="flex h-8 w-full items-center justify-center rounded bg-amber-50/60 text-xs font-medium text-amber-800">{cell.raw ?? ''}</span>
+                            </td>
+                          );
+                        }
                         const meta = CELL[cell.state];
                         const clickable = cell.state !== 'X' && cell.state !== '1' && cell.taskId;
                         return (
                           <td key={c.reportTypeId} className="border-b p-0.5 text-center">
-                            {clickable ? (
+                            {cell.markable && g.eventMonth ? (
+                              <button
+                                className={cn('h-8 w-full rounded hover:bg-blue-50', meta.cls)}
+                                title={t('monthly.eventHint')}
+                                aria-label={`${r.name} — ${colName(c)}: ${t('monthly.eventHint')}`}
+                                disabled={markEvent.isPending}
+                                onClick={() => markEvent.mutate(`/clients/${r.clientId}/events/${c.reportTypeId}/${g.eventMonth}`)}
+                              >
+                                {meta.sym}
+                              </button>
+                            ) : clickable ? (
                               <button
                                 className={cn('h-8 w-full rounded', meta.cls)}
                                 title={t('monthly.clickHint')}
@@ -200,7 +244,7 @@ export default function Monthly() {
                                 className={cn('h-8 w-full cursor-default rounded', meta.cls, cell.taskId && 'cursor-pointer')}
                                 disabled={!cell.taskId}
                                 onClick={() => cell.taskId && openTask(cell.taskId)}
-                                aria-label={`${r.name} — ${colName(c)}: ${t(`monthly.legend.${cell.state === 'X' ? 'na' : 'done'}`)}`}
+                                aria-label={`${r.name} — ${colName(c)}: ${t(`monthly.legend.${cell.state === 'X' ? 'na' : cell.state === '1' ? 'done' : 'open'}`)}`}
                               >
                                 {meta.sym}
                               </button>
@@ -284,9 +328,10 @@ function PrintTable({
               <td className="c">{i + 1}</td>
               <td className="nowrap">{r.stir}</td>
               <td>{r.name}</td>
-              <td className="c nowrap">{r.taxType}</td>
+              <td className="c nowrap">{r.taxType ?? r.taxTypeRaw}</td>
               {g.columns.map((c) => {
                 const cell = r.cells[c.reportTypeId];
+                if (!r.taxType) return <td key={c.reportTypeId} className="c">{cell?.raw}</td>;
                 const m = cell ? PRINT_CELL[cell.state] : null;
                 return <td key={c.reportTypeId} className={cn('c', m?.cls)}>{m?.sym}</td>;
               })}

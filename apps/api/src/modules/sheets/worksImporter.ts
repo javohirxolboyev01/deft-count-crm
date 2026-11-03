@@ -4,11 +4,12 @@ import { normalizeName, normalizeStir, normalizeTaxType } from '../../common/nor
 import { decryptSecret, encryptSecret } from '../../common/secretBox';
 import { currentPeriod } from '../../common/time';
 import { type Db, one, q } from '../../db';
-import { createClient } from '../clients';
-import { reassignOpenTasks } from '../generator';
+import { createClient, recordTaxType } from '../clients';
+import { reassignOpenTasks, reconcileClient } from '../generator';
 import { markDone } from '../taskService';
 import { type ImportReport, type ImportRowResult, toCsv } from './importer';
-import { type RoutineTypeLite, type WorkColumnMap, cellText, detectWorkColumns, parseDate } from './parse';
+import { type RoutineTypeLite, type WorkColumnMap, cellText, detectWorkColumns, parseDate, sameCompany } from './parse';
+import { applyPendingReportCells } from './reportCells';
 
 // "Бухгалтер ишлари" faylini import qilish ("Buxgalter ishlari" sahifasi). Hisobot importi (importer.ts) kabi:
 // dry-run tranzaksiya ROLLBACK bilan, avtomatik ajratib bo'lmaganlar jim taxmin qilinmaydi -> review.
@@ -18,6 +19,9 @@ import { type RoutineTypeLite, type WorkColumnMap, cellText, detectWorkColumns, 
 //    soliq turi farq qilsa review.
 //  - Ish katagidagi sana = "shu oygacha bajarilgan" ish oyi. Tizimgacha bo'lgan oy -> client_routine_baseline;
 //    tizimda vazifasi bor oylar -> o'sha oygacha vazifalar "Bajarildi" (bildirishnomasiz).
+//  - V24 "boricha": tanilmagan ish katagi ("eri", "28,02,2025(14)") matni client_routine_raw'da saqlanib sahifada
+//    ko'rinadi; soliq turi tanilmagan yangi qator ham mijoz bo'ladi (tax_type NULL). Mavjud mijozda tur faqat
+//    aniqlanmagan bo'lsa fayldan to'ldiriladi.
 
 export async function loadRoutineTypes(db: Db): Promise<RoutineTypeLite[]> {
   return q(
@@ -34,21 +38,38 @@ export async function detectWorksFile(db: Db, rows: unknown[][]): Promise<WorkCo
 const month1 = (iso: string) => `${iso.slice(0, 7)}-01`;
 const addMonths = (period: string, n: number) => DateTime.fromISO(period).plus({ months: n }).toISODate()!;
 
-interface Accountant {
+export interface Accountant {
   id: number;
-  key: string;
-  first: string;
+  words: string[];
 }
 
-/** "Фазлиддин" -> faol buxgalter (to'liq ism yoki birinchi so'z bo'yicha, kirill/lotin farqisiz). Bitta bo'lsa */
-function matchAccountant(raw: string, list: Accountant[]): Accountant | null | 'AMBIGUOUS' {
-  const k = normalizeName(raw);
-  if (!k) return null;
-  const exact = list.filter((a) => a.key === k);
-  if (exact.length === 1) return exact[0];
-  const first = list.filter((a) => a.first === k.split(' ')[0]);
-  if (first.length === 1) return first[0];
-  return first.length > 1 ? 'AMBIGUOUS' : null;
+/** Ism so'zlari: kirill/lotin farqisiz, x/h ("Хошим" = "Xoshim" = "Hoshim") va boshdagi ye/e ("Ерқин" = "Yerqin") bir xil */
+const nameWords = (s: string) =>
+  normalizeName(s)
+    .replace(/x/g, 'h')
+    .replace(/\bye/g, 'e')
+    .split(' ')
+    .filter((w) => w.length > 1);
+
+export const toAccountant = (id: number, fullName: string): Accountant => ({ id, words: nameWords(fullName) });
+
+/**
+ * "Фазлиддин" / "Madaminov" / "Sanjar Madaminov" -> faol buxgalter: ism yoki familiya (tartib muhim emas).
+ * Eng ko'p so'zi mos kelgan bitta xodim tanlanadi; teng bo'lsa AMBIGUOUS.
+ */
+export function matchAccountant(raw: string, list: Accountant[]): Accountant | null | 'AMBIGUOUS' {
+  const words = nameWords(raw);
+  let best: Accountant[] = [];
+  let bestScore = 0;
+  for (const a of list) {
+    const score = words.filter((w) => a.words.includes(w)).length;
+    if (score === 0 || score < bestScore) continue;
+    if (score > bestScore) best = [];
+    bestScore = score;
+    best.push(a);
+  }
+  if (best.length === 0) return null;
+  return best.length === 1 ? best[0] : 'AMBIGUOUS';
 }
 
 function parseBool(raw: string): boolean | null | undefined {
@@ -73,14 +94,12 @@ export async function importWorks(
   const routines = await loadRoutineTypes(db);
   const accountants = (
     await q<{ id: number; fullName: string }>(db, `SELECT id, full_name AS "fullName" FROM app_user WHERE role = 'ACCOUNTANT' AND active`)
-  ).map((a) => {
-    const key = normalizeName(a.fullName);
-    return { id: a.id, key, first: key.split(' ')[0] };
-  });
+  ).map((a) => toAccountant(a.id, a.fullName));
   const now = currentPeriod();
   const F = map.fields;
   const get = (row: unknown[], f: keyof typeof F) => (F[f] === undefined ? '' : cellText(row[F[f]!]).trim());
   const results: ImportRowResult[] = [];
+  const seen = new Map<string, number>();
   let cellsDone = 0;
 
   for (let r = map.headerRow + 1; r < rows.length; r++) {
@@ -98,6 +117,12 @@ export async function importWorks(
       res.review.push(rawStir ? `STIR noto'g'ri: "${rawStir}"` : "STIR yo'q");
       continue;
     }
+    // Bir faylda bir STIR ikki marta: ikkinchisi boshqa mijozning ma'lumotini ustidan yozib yubormasin
+    if (seen.has(stir)) {
+      res.review.push(`STIR ${seen.get(stir)}-qatorda ham bor: qator yozilmadi, STIRni tekshiring`);
+      continue;
+    }
+    seen.set(stir, r + 1);
 
     // --- Mijoz maydonlari ---
     const upd: Record<string, unknown> = {};
@@ -138,26 +163,28 @@ export async function importWorks(
 
     const existing = await one<any>(
       db,
-      `SELECT id, tax_type AS "taxType", accountant_id AS "accountantId", note, monthly_fee AS "monthlyFee",
+      `SELECT id, name, tax_type AS "taxType", tax_type_raw AS "taxTypeRaw", accountant_id AS "accountantId", note, monthly_fee AS "monthlyFee",
               bank_key AS "bankKey", employee_count AS "employeeCount", to_char(mehnat_checked_at, 'YYYY-MM-DD') AS "mehnatCheckedAt",
               mehnat_login AS "mehnatLogin", mehnat_password_enc AS "mehnatPasswordEnc"
        FROM client WHERE stir = $1 FOR UPDATE`,
       [stir],
     );
+    if (existing && name && !sameCompany(name, existing.name)) {
+      res.review.push(`STIR tizimda boshqa mijozga tegishli ("${existing.name}"): qator yozilmadi. Nom o'zgargan bo'lsa kartada yangilang`);
+      continue;
+    }
     const taxRaw = get(row, 'taxType');
     const taxType = normalizeTaxType(taxRaw);
     let clientId: number;
     if (!existing) {
-      if (!taxType) {
-        res.review.push(`Soliq turi aniqlanmadi: "${taxRaw}" (mijoz qo'shilmadi)`);
-        continue;
-      }
+      if (!taxType) res.review.push(`Soliq turi aniqlanmadi${taxRaw ? `: "${taxRaw}"` : ''}. Mijoz qo'shildi, kartada tanlang — vazifalar o'zi chiqadi`);
       clientId = await createClient(
         db,
         {
           stir,
           name: name || stir,
           taxType,
+          taxTypeRaw: taxType ? null : taxRaw || null,
           status: 'ACTIVE',
           accountantId: accountantId ?? null,
           note: note || null,
@@ -173,8 +200,21 @@ export async function importWorks(
       res.action = 'NEW';
     } else {
       clientId = existing.id;
-      if (taxType && taxType !== existing.taxType) {
+      if (!existing.taxType && taxType) {
+        // "To'ldirilmagan" mijoz: tur fayldan aniqlandi (butun o'tmish uchun), saqlangan kataklar qo'llanadi
+        await db.query('UPDATE client SET tax_type = $2, tax_type_raw = NULL WHERE id = $1', [clientId, taxType]);
+        await recordTaxType(db, clientId, taxType, '2000-01-01', opts.actorId);
+        await audit(db, { actorId: opts.actorId, entity: 'client', entityId: clientId, clientId, action: 'IMPORT_UPDATE', before: { taxType: null }, after: { taxType } });
+        await reconcileClient(db, clientId, opts.actorId);
+        cellsDone += (await applyPendingReportCells(db, clientId, opts.actorId)).cellsDone;
+        res.changes.push('taxType');
+        res.action = 'UPDATED';
+      } else if (!existing.taxType) {
+        res.review.push(`Soliq turi hali aniqlanmagan${taxRaw ? `: "${taxRaw}"` : ''} — kartada tanlang`);
+      } else if (taxType && taxType !== existing.taxType) {
         res.review.push(`Soliq turi faylda ${taxType}, tizimda ${existing.taxType} (o'zgartirilmadi, mijoz kartasida tekshiring)`);
+      } else if (!taxType && taxRaw) {
+        res.review.push(`Soliq turi tanilmadi: "${taxRaw}" (tizimdagi ${existing.taxType} o'zgarmadi)`);
       }
       for (const k of Object.keys(upd)) {
         const before = k === 'monthlyFee' && existing[k] !== null ? Number(existing[k]) : existing[k];
@@ -224,8 +264,8 @@ export async function importWorks(
         // 6.8: buxgalter almashsa ochiq vazifalar yangisiga o'tadi
         if ('accountantId' in upd) await reassignOpenTasks(db, clientId, upd.accountantId as number, opts.actorId as number);
         res.action = 'UPDATED';
-        res.changes = keys;
-      } else {
+        res.changes.push(...keys);
+      } else if (res.action !== 'UPDATED') {
         res.action = 'UNCHANGED';
       }
     }
@@ -237,9 +277,18 @@ export async function importWorks(
       if (!raw) continue;
       const d = parseDate(raw);
       if (!d) {
+        // Fayldagi matn sahifada boricha ko'rinadi; rahbar oyni kiritsa yoki keyingi faylda sana kelsa o'chadi
         res.review.push(`${col.name}: sana tanilmadi "${raw}"`);
+        const saved = await db.query(
+          `INSERT INTO client_routine_raw (client_id, routine_type_id, raw, imported_by) VALUES ($1, $2, $3, $4)
+           ON CONFLICT (client_id, routine_type_id) DO UPDATE SET raw = EXCLUDED.raw, imported_by = EXCLUDED.imported_by, imported_at = now()
+           WHERE client_routine_raw.raw IS DISTINCT FROM EXCLUDED.raw`,
+          [clientId, col.routineTypeId, raw, opts.actorId],
+        );
+        if (saved.rowCount) cellsDone++;
         continue;
       }
+      await db.query('DELETE FROM client_routine_raw WHERE client_id = $1 AND routine_type_id = $2', [clientId, col.routineTypeId]);
       const rt = routines.find((x) => x.id === col.routineTypeId)!;
       const month = month1(d);
       // Hisobotga bog'langan ish (INPS) keyingi oyda topshiriladi: vazifa davri = ish oyi + 1 (works.ts workOffset)

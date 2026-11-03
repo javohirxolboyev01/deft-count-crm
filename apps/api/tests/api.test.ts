@@ -324,8 +324,38 @@ describe('oylik jadval', () => {
     expect(rows[0][col('QQS')]).toBe('X');
     expect(rows[0][col('JSHDS')]).toBe('1');
     expect(['0', '1']).toContain(rows[0][col('INPS')]);
+    // Holat ustuni ekranda "0", Excel'da esa import formatidagidek X (holat yo'q)
+    expect(rows[0][col('DIVIDEND')]).toBe('X');
     const all = await read(await bin(L.get('/api/monthly-grid/export.xlsx')));
     expect(all.rows.length).toBeGreaterThan(1);
+  });
+  it('Dividend: holat belgilanmagan katak "0" (qat\'iy "—" emas), bosilsa belgilanadi va vazifa chiqadi; bekor qilsa qaytadi', async () => {
+    const g = await A1.get('/api/monthly-grid');
+    const cols = Object.fromEntries(g.body.columns.map((c: any) => [c.code, c.reportTypeId]));
+    const cell = () => A1.get('/api/monthly-grid').then((r) => r.body.rows[0].cells[cols.DIVIDEND]);
+    expect(g.body.rows[0].cells[cols.DIVIDEND]).toMatchObject({ state: '0', taskId: null, noEvent: true, markable: true });
+    // AOS mijozga Norezident foyda soliq turi bo'yicha topshirilmaydi: qat'iy "—", bosib bo'lmaydi
+    expect(g.body.rows[0].cells[cols.NOREZIDENT_FOYDA]).toMatchObject({ state: 'X' });
+    expect(g.body.rows[0].cells[cols.NOREZIDENT_FOYDA].markable).toBeUndefined();
+
+    const url = `/api/clients/${aosClient}/events/${cols.DIVIDEND}/${g.body.eventMonth}`;
+    expect((await A1.put(url)).status).toBe(200);
+    const marked = await cell();
+    expect(marked.state).toBe('0');
+    expect(marked.taskId).toBeTruthy();
+    expect(marked.markable).toBeUndefined();
+    expect(marked.noEvent).toBeUndefined();
+
+    expect((await A1.del(url)).status).toBe(200);
+    expect(await cell()).toMatchObject({ state: '0', taskId: null, noEvent: true, markable: true });
+
+    // Ikki oy keyingi jadvalda belgilab bo'lmaydi (server faqat joriy va o'tgan holat oyini qabul qiladi)
+    const [y, m] = g.body.period.split('-').map(Number);
+    const later = new Date(Date.UTC(y, m + 1, 1)).toISOString().slice(0, 7);
+    const g3 = await A1.get(`/api/monthly-grid?month=${later}`);
+    expect(g3.body.eventMonth).toBeNull();
+    expect(g3.body.rows[0].cells[cols.DIVIDEND]).toMatchObject({ state: '0', noEvent: true });
+    expect(g3.body.rows[0].cells[cols.DIVIDEND].markable).toBeUndefined();
   });
 });
 

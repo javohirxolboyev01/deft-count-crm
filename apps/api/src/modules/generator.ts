@@ -61,10 +61,11 @@ export async function generatePeriod(db: Db, period: string, clientId: number | 
     [period, clientId, dueTime],
   );
 
-  // 2) Oylik doimiy ishlar: faqat ACTIVE. INPS kabi hisobotga bog'langan ish, hisobot qo'llansa
+  // 2) Oylik doimiy ishlar: faqat ACTIVE va soliq turi aniqlangan (V24: importda tanilmagan tur — mijoz
+  //    "to'ldirilmagan", vazifa chiqmaydi). INPS kabi hisobotga bog'langan ish, hisobot qo'llansa
   //    alohida yaratilmaydi (bitta vazifa). Muddat: oyning oxirgi kuni.
   //    TODO(tasdiqlash): doimiy ishlar muddati oy oxiri deb olindi.
-  const routineWhere = `c.status = 'ACTIVE' AND w.active AND w.effective_from <= $1
+  const routineWhere = `c.status = 'ACTIVE' AND c.tax_type IS NOT NULL AND w.active AND w.effective_from <= $1
        AND ($2::bigint IS NULL OR c.id = $2)
        AND NOT (w.report_type_id IS NOT NULL AND EXISTS (
          SELECT 1 FROM a WHERE a.client_id = c.id AND a.report_type_id = w.report_type_id))`;
@@ -134,7 +135,7 @@ export async function reconcileClient(db: Db, clientId: number, actorId: number 
             SELECT 1 FROM fn_report_applicability($2) a
             WHERE a.client_id = t.client_id AND a.report_type_id = t.report_type_id AND a.applicable))
          OR (t.kind = 'ROUTINE' AND (
-            c.status <> 'ACTIVE'
+            c.status <> 'ACTIVE' OR c.tax_type IS NULL
             OR EXISTS (SELECT 1 FROM routine_work_type w
                        JOIN fn_report_applicability($2) a ON a.report_type_id = w.report_type_id
                        WHERE w.id = t.routine_type_id AND a.client_id = t.client_id AND a.applicable)))

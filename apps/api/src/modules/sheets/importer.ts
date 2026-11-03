@@ -4,9 +4,8 @@ import { normalizeName, normalizeStir, normalizeTaxType } from '../../common/nor
 import { addMonthsIso, currentPeriod } from '../../common/time';
 import { type Db, one, q } from '../../db';
 import { createClient, recordTaxType } from '../clients';
-import { reconcileClient } from '../generator';
-import { markDone } from '../taskService';
-import { type ReportTypeLite, cellText, detectColumns, parseCell, parseNote } from './parse';
+import { type ReportTypeLite, cellText, detectColumns, hasSecret, parseCell, parseNote, sameCompany } from './parse';
+import { applyPendingReportCells, applyReportCells, reconcileThroughNow, saveRawReportCells } from './reportCells';
 
 export interface ImportRowResult {
   row: number;
@@ -23,6 +22,8 @@ export interface ImportReport {
   dryRun: boolean;
   period: string;
   columns: { header: string; code: string }[];
+  /** Sarlavhasi tanilmagan ustunlar (ma'lumoti yuklanmadi) */
+  ignoredColumns?: string[];
   summary: { total: number; created: number; updated: number; unchanged: number; skipped: number; review: number; cellsDone: number };
   rows: ImportRowResult[];
   csv: string;
@@ -48,6 +49,8 @@ export function toCsv(results: ImportRowResult[]) {
 /**
  * Bir martalik import (B9 1-qism). Dry-run'da chaqiruvchi tranzaksiyani ROLLBACK qiladi:
  * hisobot aynan haqiqiy yozishdagi natija bo'ladi.
+ * V24: jadval "boricha" — soliq turi tanilmagan qator ham mijoz bo'ladi (tax_type NULL, fayldagi matni va kataklari
+ * saqlanadi, vazifa chiqmaydi); tur aniqlanganda kataklar o'zi qo'llanadi (reportCells.ts). Taxmin qilinmaydi.
  */
 export async function importTable(
   db: Db,
@@ -58,11 +61,10 @@ export async function importTable(
   const map = detectColumns(rows, types);
   if (!map) throw new AppError(400, 'HEADER_NOT_FOUND', 'Jadval sarlavhasi topilmadi (STIR va hisobot ustunlari kerak)');
   const period = opts.period ?? map.period ?? currentPeriod();
+  const nextPeriod = addMonthsIso(period, 1);
   const results: ImportRowResult[] = [];
+  const seen = new Map<string, number>();
   let cellsDone = 0;
-  const eventTypes = new Set(
-    (await q<{ id: number }>(db, 'SELECT id FROM report_type WHERE requires_event_flag')).map((r) => Number(r.id)),
-  );
 
   for (let r = map.headerRow + 1; r < rows.length; r++) {
     const row = rows[r] ?? [];
@@ -74,28 +76,51 @@ export async function importTable(
     results.push(res);
 
     if (!/^(\d{9}|\d{14})$/.test(stir)) {
-      res.review.push(`STIR noto'g'ri: "${rawStir}"`);
+      res.review.push(rawStir ? `STIR noto'g'ri: "${rawStir}"` : "STIR yo'q");
       continue;
     }
-    const taxRaw = map.taxType !== null ? cellText(row[map.taxType]) : '';
+    // Bir faylda bir STIR ikki marta: qaysi biri to'g'riligi noma'lum, birinchisi yoziladi
+    if (seen.has(stir)) {
+      res.review.push(`STIR ${seen.get(stir)}-qatorda ham bor: qator yozilmadi, STIRni tekshiring`);
+      continue;
+    }
+    seen.set(stir, r + 1);
+
+    const taxRaw = map.taxType !== null ? cellText(row[map.taxType]).trim() : '';
     const taxType = normalizeTaxType(taxRaw);
-    if (!taxType) {
-      res.review.push(`Soliq turi aniqlanmadi: "${taxRaw}"`);
-      continue;
+    let noteText = map.note !== null ? cellText(row[map.note]).trim() : '';
+    if (hasSecret(noteText)) {
+      res.review.push("Izohda login/parol bor: xavfsizlik uchun izohga yozilmadi (kerak bo'lsa kartaga qo'lda kiriting)");
+      noteText = '';
     }
-    const note = parseNote(map.note !== null ? row[map.note] : '');
+    const note = parseNote(noteText);
     if (note.review) res.review.push(note.review);
-    if (note.taxType && note.taxType !== taxType) {
+    // "01.11.2026 dan QQS to'lovchisi", ustunda AOS: fayl oyida eski tur, ko'rsatilgan sanadan yangisi (rejalashtiriladi)
+    const planned =
+      taxType && note.taxType && note.effectiveFrom && note.taxType !== taxType && note.effectiveFrom >= nextPeriod
+        ? { taxType: note.taxType, from: note.effectiveFrom }
+        : null;
+    if (taxType && note.taxType && note.taxType !== taxType && !planned) {
       res.review.push(`Izohdagi soliq turi (${note.taxType}) "Soliq turi" ustunidagi (${taxType}) bilan mos emas`);
     }
 
     const existing = await one<any>(
       db,
-      `SELECT id, name, tax_type AS "taxType", tax_type_effective_from AS "taxTypeEffectiveFrom", status, note
+      `SELECT id, name, tax_type AS "taxType", tax_type_raw AS "taxTypeRaw",
+              to_char(tax_type_effective_from, 'YYYY-MM-DD') AS "taxTypeEffectiveFrom", status, note
        FROM client WHERE stir = $1 FOR UPDATE`,
       [stir],
     );
+    if (existing && name && !sameCompany(name, existing.name)) {
+      res.review.push(`STIR tizimda boshqa mijozga tegishli ("${existing.name}"): qator yozilmadi. Nom o'zgargan bo'lsa kartada yangilang`);
+      continue;
+    }
+    if (!taxType && taxRaw && existing?.taxType) {
+      res.review.push(`Soliq turi tanilmadi: "${taxRaw}" (tizimdagi ${existing.taxType} o'zgarmadi)`);
+    }
+
     let clientId: number;
+    let taxBecameKnown = false;
     if (!existing) {
       clientId = await createClient(
         db,
@@ -103,6 +128,7 @@ export async function importTable(
           stir,
           name: name || stir,
           taxType,
+          taxTypeRaw: taxType ? null : taxRaw || null,
           taxTypeEffectiveFrom: note.taxType === taxType ? note.effectiveFrom : null,
           status: note.status ?? 'ACTIVE',
           note: note.note,
@@ -113,11 +139,13 @@ export async function importTable(
         opts.actorId,
       );
       res.action = 'NEW';
+      if (!taxType) res.review.push(`Soliq turi aniqlanmadi${taxRaw ? `: "${taxRaw}"` : ''}. Mijoz qo'shildi, kartada tanlang — vazifalar o'zi chiqadi`);
     } else {
       clientId = existing.id;
       const upd: Record<string, unknown> = {};
       if (name && name !== existing.name) upd.name = name;
-      if (taxType !== existing.taxType) upd.taxType = taxType;
+      if (taxType && taxType !== existing.taxType) upd.taxType = taxType;
+      if (!taxType && !existing.taxType && (taxRaw || null) !== existing.taxTypeRaw && taxRaw) upd.taxTypeRaw = taxRaw;
       if (note.status && note.status !== existing.status) upd.status = note.status;
       if (note.note && note.note !== existing.note) upd.note = note.note;
       const eff = note.taxType === taxType ? note.effectiveFrom : null;
@@ -126,7 +154,8 @@ export async function importTable(
         await db.query(
           `UPDATE client SET name = coalesce($2, name), name_normalized = coalesce($3, name_normalized),
              tax_type = coalesce($4, tax_type), status = coalesce($5, status), note = coalesce($6, note),
-             tax_type_effective_from = coalesce($7, tax_type_effective_from)
+             tax_type_effective_from = coalesce($7, tax_type_effective_from),
+             tax_type_raw = CASE WHEN $4 IS NOT NULL THEN NULL ELSE coalesce($8, tax_type_raw) END
            WHERE id = $1`,
           [
             clientId,
@@ -136,18 +165,22 @@ export async function importTable(
             upd.status ?? null,
             upd.note ?? null,
             upd.taxTypeEffectiveFrom ?? null,
+            upd.taxTypeRaw ?? null,
           ],
         );
         if (upd.taxType || upd.taxTypeEffectiveFrom) {
-          await recordTaxType(db, clientId, taxType, (upd.taxTypeEffectiveFrom as string) ?? period, opts.actorId);
+          // Birinchi marta aniqlangan tur butun o'tmish uchun (createClient kabi)
+          const from = (upd.taxTypeEffectiveFrom as string) ?? (existing.taxType ? period : '2000-01-01');
+          await recordTaxType(db, clientId, taxType!, from, opts.actorId);
         }
+        taxBecameKnown = !existing.taxType && !!upd.taxType;
         await audit(db, {
           actorId: opts.actorId,
           entity: 'client',
           entityId: clientId,
           clientId,
           action: 'IMPORT_UPDATE',
-          before: Object.fromEntries(Object.keys(upd).map((k) => [k, existing[k]])),
+          before: Object.fromEntries(Object.keys(upd).map((k) => [k, existing[k] ?? null])),
           after: upd,
         });
         res.action = 'UPDATED';
@@ -155,97 +188,41 @@ export async function importTable(
       } else {
         res.action = 'UNCHANGED';
       }
+      if (!taxType && !existing.taxType) res.review.push(`Soliq turi hali aniqlanmagan${taxRaw ? `: "${taxRaw}"` : ''} — kartada tanlang`);
     }
-    // Import davri uchun vazifalar (joriy oydan farq qilishi mumkin)
-    await reconcileClient(db, clientId, opts.actorId, period);
-
-    // Katak qiymatlari: 1 = DONE, 0 = ochiq, X = qo'llanmaydi. Soliq turiga zid qiymatlar -> review
-    const loadCells = () =>
-      q<any>(
-        db,
-        `SELECT report_type_id AS "reportTypeId", applicable, task_id AS "taskId", task_status AS "taskStatus"
-         FROM fn_monthly_grid($1) WHERE client_id = $2`,
-        [period, clientId],
-      );
-    let cells = await loadCells();
-
-    // Rahbar qarori: soliq turi bo'yicha topshiriladigan katakda X -> mijoz bu hisobotni doimiy topshirmaydi
-    // (client_report_exclusion, shu davrdan). Belgilangan hisobotda 0/1 -> belgi olinadi. Keyin davr qayta moslanadi.
-    const excluded = new Set(
-      (await q<{ id: number }>(db, 'SELECT report_type_id AS id FROM client_report_exclusion WHERE client_id = $1', [clientId])).map((e) => Number(e.id)),
-    );
-    // Holat bo'yicha hisobot (dividend, norezident; V20): katakda 0/1 = holat bo'lgan -> o'tgan oy (holat oyi) belgisi
-    // qo'yiladi; X = holat yo'q -> belgi olinadi. Bunday ustundagi X doimiy "topshirmaydi" belgisi emas.
-    const eventMonth = addMonthsIso(period, -1).slice(0, 7);
-    const events = new Set(
-      (await q<{ id: number }>(db, 'SELECT report_type_id AS id FROM client_report_event WHERE client_id = $1 AND month = $2', [clientId, eventMonth])).map((e) => Number(e.id)),
-    );
-    let exclusionsChanged = false;
-    for (const col of map.reports) {
-      const v = parseCell(row[col.col]);
-      const cell = cells.find((c) => c.reportTypeId === col.reportTypeId);
-      if (!cell || v === null || v === '') continue;
-      if (eventTypes.has(col.reportTypeId)) {
-        if (v !== 'X' && !events.has(col.reportTypeId)) {
-          await db.query(
-            `INSERT INTO client_report_event (client_id, report_type_id, month, marked_by) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING`,
-            [clientId, col.reportTypeId, eventMonth, opts.actorId],
-          );
-          await audit(db, { actorId: opts.actorId, entity: 'client', entityId: clientId, clientId, action: 'EVENT_MARK', after: { report: col.code, month: eventMonth, source: 'IMPORT' } });
-          res.changes.push(`${col.code}:${eventMonth}`);
-          exclusionsChanged = true;
-        } else if (v === 'X' && events.has(col.reportTypeId)) {
-          await db.query('DELETE FROM client_report_event WHERE client_id = $1 AND report_type_id = $2 AND month = $3', [clientId, col.reportTypeId, eventMonth]);
-          await audit(db, { actorId: opts.actorId, entity: 'client', entityId: clientId, clientId, action: 'EVENT_UNMARK', before: { report: col.code, month: eventMonth }, after: { source: 'IMPORT' } });
-          res.changes.push(`${col.code}:X`);
-          exclusionsChanged = true;
-        }
-        continue;
-      }
-      if (v === 'X' && cell.applicable) {
-        await db.query(
-          `INSERT INTO client_report_exclusion (client_id, report_type_id, effective_from, created_by) VALUES ($1, $2, $3, $4)
-           ON CONFLICT (client_id, report_type_id) DO UPDATE SET effective_from = least(client_report_exclusion.effective_from, EXCLUDED.effective_from)`,
-          [clientId, col.reportTypeId, period, opts.actorId],
-        );
-        await audit(db, { actorId: opts.actorId, entity: 'client', entityId: clientId, clientId, action: 'REPORT_EXCLUDE', after: { report: col.code, from: period.slice(0, 7), source: 'IMPORT' } });
-        res.changes.push(`${col.code}=X`);
-        exclusionsChanged = true;
-      } else if (v !== 'X' && !cell.applicable && excluded.has(col.reportTypeId)) {
-        await db.query('DELETE FROM client_report_exclusion WHERE client_id = $1 AND report_type_id = $2', [clientId, col.reportTypeId]);
-        await audit(db, { actorId: opts.actorId, entity: 'client', entityId: clientId, clientId, action: 'REPORT_INCLUDE', before: { report: col.code }, after: { source: 'IMPORT' } });
-        res.changes.push(`${col.code}≠X`);
-        exclusionsChanged = true;
+    if (planned) {
+      const has = await one(db, 'SELECT 1 FROM client_tax_type_history WHERE client_id = $1 AND effective_from = $2 AND tax_type = $3', [clientId, planned.from, planned.taxType]);
+      if (!has) {
+        await recordTaxType(db, clientId, planned.taxType, planned.from, opts.actorId);
+        await db.query('UPDATE client SET tax_type = $2, tax_type_effective_from = $3 WHERE id = $1', [clientId, planned.taxType, planned.from]);
+        await audit(db, { actorId: opts.actorId, entity: 'client', entityId: clientId, clientId, action: 'IMPORT_TAX_PLANNED', after: { taxType: planned.taxType, from: planned.from } });
+        res.changes.push(`taxType→${planned.taxType}:${planned.from}`);
+        if (res.action === 'UNCHANGED') res.action = 'UPDATED';
       }
     }
-    if (exclusionsChanged) {
-      await reconcileClient(db, clientId, opts.actorId, period);
-      cells = await loadCells();
-      if (res.action === 'UNCHANGED') res.action = 'UPDATED';
-    }
 
-    for (const col of map.reports) {
-      const v = parseCell(row[col.col]);
-      const raw = cellText(row[col.col]).trim();
-      if (v === null) {
-        res.review.push(`${col.code}: tanib bo'lmaydigan qiymat "${raw}"`);
-        continue;
-      }
-      if (v === '') continue;
-      const cell = cells.find((c) => c.reportTypeId === col.reportTypeId);
-      if (!cell) {
-        if (v === '1') res.review.push(`${col.code}: hisobot turi faol emas, lekin "1" qo'yilgan`);
-        continue;
-      }
-      if (v !== 'X' && !cell.applicable) {
-        res.review.push(`${col.code}: jadvalda "${v}", lekin ${taxType} bo'yicha topshirilmaydi (X bo'lishi kerak)`);
-      } else if (v === '1' && cell.taskId && cell.taskStatus !== 'DONE') {
-        // Import paytida rahbarlarga ommaviy xabar yuborilmaydi
-        await markDone(db, cell.taskId, null, { notify: false, source: 'IMPORT' });
-        cellsDone++;
-      } else if (v === '0' && cell.taskStatus === 'DONE') {
-        res.review.push(`${col.code}: jadvalda 0, tizimda allaqachon bajarilgan`);
-      }
+    const values = map.reports.map((c) => ({ reportTypeId: c.reportTypeId, code: c.code, raw: cellText(row[c.col]).trim() }));
+    const known = await one<{ t: string | null }>(db, 'SELECT fn_client_tax_type($1, fn_period_end($2)) AS t', [clientId, period]);
+    if (!known?.t) {
+      // Tur noma'lum: kataklar jadvalda fayldagidek ko'rinadi, tur tanlanganda qo'llanadi
+      await saveRawReportCells(db, clientId, period, values, opts.actorId);
+      continue;
+    }
+    // Import davridan joriy oygacha vazifalar (joriy oydan farq qilishi mumkin)
+    await reconcileThroughNow(db, clientId, opts.actorId, period);
+    if (taxBecameKnown) cellsDone += (await applyPendingReportCells(db, clientId, opts.actorId)).cellsDone;
+    const applied = await applyReportCells(db, { clientId, period, taxType: known.t, actorId: opts.actorId }, values);
+    await db.query('DELETE FROM client_report_raw WHERE client_id = $1 AND period = $2', [clientId, period]);
+    cellsDone += applied.cellsDone;
+    res.changes.push(...applied.changes);
+    res.review.push(...applied.review);
+    if (applied.marksChanged && res.action === 'UNCHANGED') res.action = 'UPDATED';
+
+    // Hamma hisobot "X": mijoz amalda topshirmaydi — holatini rahbar hal qiladi (jim o'zgartirilmaydi)
+    const status = note.status ?? existing?.status ?? 'ACTIVE';
+    const filled = values.filter((v) => v.raw);
+    if (status === 'ACTIVE' && filled.length >= 3 && filled.every((v) => parseCell(v.raw) === 'X')) {
+      res.review.push("Barcha hisobotlar X: mijoz Nol hisobot yoki Arxiv emasmi? (holat o'zgartirilmadi, doimiy ishlar chiqaveradi)");
     }
   }
 
@@ -273,6 +250,7 @@ export async function importTable(
     dryRun: opts.dryRun,
     period: period.slice(0, 7),
     columns: map.reports.map((c) => ({ header: c.header, code: c.code })),
+    ignoredColumns: map.ignored,
     summary: {
       total: results.length,
       created: results.filter((r) => r.action === 'NEW').length,

@@ -68,6 +68,14 @@ export default function Dashboard() {
         {clients.data?.summary ? <DashboardKpis data={clients.data} /> : <Empty />}
       </QueryState>
 
+      {!!clients.data?.summary.incomplete && (
+        <Card className="flex flex-wrap items-center gap-3 border-l-4 border-l-amber-400 px-4 py-3 text-sm sm:px-5">
+          <AlertTriangle className="h-4 w-4 shrink-0 text-amber-500" />
+          <span className="flex-1">{t('dashboard.incomplete', { n: clients.data.summary.incomplete })}</span>
+          <Link className="font-medium text-brand-500 hover:text-ink dark:text-brand-400" to="/clients?taxType=NONE">{t('dashboard.incompleteOpen')}</Link>
+        </Card>
+      )}
+
       {!!clients.data?.overdueTasks.length && (
         <Card className="border-l-4 border-l-overdue">
           <CardHeader title={<span className="flex items-center gap-2 text-overdue"><AlertTriangle className="h-4 w-4" /> {t('dashboard.alerts')} ({clients.data.overdueTasks.length})</span>} />

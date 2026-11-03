@@ -1,4 +1,4 @@
-import { headerKey, transliterate } from '../../common/normalize';
+import { headerKey, normalizeName, transliterate } from '../../common/normalize';
 
 // Sarlavha MATNI bo'yicha ustun aniqlash (indeks bo'yicha emas): sanalar har oy o'zgaradi,
 // kirill/lotin aralash bo'lishi mumkin. Hisobot kalit so'zlari report_type.sheet_aliases'dan.
@@ -26,6 +26,8 @@ export interface ColumnMap {
   reports: ReportColumn[];
   /** Sarlavhadagi sanadan aniqlangan davr ('YYYY-MM-01') */
   period: string | null;
+  /** Tanilmagan sarlavhalar: ma'lumoti yuklanmaydi, import hisobotida ko'rsatiladi (jim yo'qolmasin) */
+  ignored: string[];
 }
 
 const has = (k: string, ...parts: string[]) => parts.some((p) => k.includes(p));
@@ -62,7 +64,9 @@ export function cellText(v: unknown): string {
     const o = v as any;
     if (Array.isArray(o.richText)) return o.richText.map((r: any) => r.text).join('');
     if (o.text !== undefined) return String(o.text);
-    if (o.result !== undefined) return String(o.result);
+    // Formula xatosi (#REF!, #N/A): natija { error: '#REF!' }
+    if (o.result !== undefined) return o.result && typeof o.result === 'object' && 'error' in o.result ? String(o.result.error) : String(o.result);
+    if (o.error !== undefined) return String(o.error);
     if (v instanceof Date) return v.toISOString().slice(0, 10);
   }
   return String(v);
@@ -71,11 +75,15 @@ export function cellText(v: unknown): string {
 export function detectColumns(rows: unknown[][], types: ReportTypeLite[]): ColumnMap | null {
   for (let r = 0; r < Math.min(rows.length, 20); r++) {
     const row = rows[r] ?? [];
-    const map: ColumnMap = { headerRow: r, stir: -1, name: null, taxType: null, note: null, reports: [], period: null };
+    const map: ColumnMap = { headerRow: r, stir: -1, name: null, taxType: null, note: null, reports: [], period: null, ignored: [] };
     row.forEach((raw, col) => {
       const header = cellText(raw).trim();
       const c = classify(header, types);
-      if (!c) return;
+      if (!c) {
+        // "№", "," va raqamli ustun sarlavhalari ma'lumot ustuni emas
+        if (/[A-Z]/.test(headerKey(header))) map.ignored.push(header);
+        return;
+      }
       if (c.kind === 'STIR' && map.stir < 0) map.stir = col;
       else if (c.kind === 'NAME' && map.name === null) map.name = col;
       else if (c.kind === 'TAX' && map.taxType === null) map.taxType = col;
@@ -107,7 +115,7 @@ export function parseCell(raw: unknown): SheetCell | null {
 }
 
 export interface ParsedNote {
-  status: 'LIQUIDATING' | 'ZERO_REPORT' | null;
+  status: 'LIQUIDATING' | 'ZERO_REPORT' | 'ARCHIVED' | null;
   taxType: 'AOS' | 'QQS' | null;
   effectiveFrom: string | null;
   note: string | null;
@@ -126,9 +134,13 @@ export function parseNote(raw: unknown): ParsedNote {
   let rest = transliterate(text).toLowerCase().replace(/[‘’ʻʼ`´]/g, "'");
   const original = rest;
 
-  if (/tugat|likvid|ликвид/.test(rest)) {
+  // TODO(tasdiqlash): "bankrot" = Tugatilmoqda, "Ketgan" / "Kerak emas" = Arxiv (firma bilan ishlamaydi)
+  if (/tugat|likvid|ликвид|bankrot/.test(rest)) {
     res.status = 'LIQUIDATING';
-    rest = rest.replace(/tugatishga\s*(berilgan|bergan|topshirilgan|topshirgan)?|tugatil\S*|likvidats\S*/g, ' ');
+    rest = rest.replace(/tugatishga\s*(berilgan|bergan|topshirilgan|topshirgan)?|tugatil\S*|likvidats\S*|bankrot\S*/g, ' ');
+  } else if (/\bketgan\b|\bkerak\s+emas\b/.test(rest)) {
+    res.status = 'ARCHIVED';
+    rest = rest.replace(/\bketgan\b|\bkerak\s+emas\b/g, ' ');
   } else if (/\bnol\b|\bnolga\b|nolev|nulev|nol hisobot/.test(rest)) {
     res.status = 'ZERO_REPORT';
     rest = rest.replace(/nol\s*(hisobot\S*)?|nulev\S*|nolev\S*/g, ' ');
@@ -139,8 +151,9 @@ export function parseNote(raw: unknown): ParsedNote {
     res.effectiveFrom = `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;
     res.taxType = /^(aos|aoc)$/.test(m[4]) ? 'AOS' : 'QQS';
     rest = rest.replace(m[0], ' ').replace(/to'?lovchi\S*|tolovchi\S*|platel\S*|bo'?ldi|o'?tdi|ga\b/g, ' ');
-  } else if (/\d{1,2}\.\d{1,2}\.\d{4}/.test(rest) || /\b(aos|aoc|qqs|kks)\b/.test(rest)) {
-    res.review = 'Izohda sana yoki soliq turi bor, lekin "dd.mm.yyyy dan AOS/QQS to\'lovchisi" naqshiga mos emas';
+  } else if (/\b(aos|aoc|qqs|kks)\b/.test(rest)) {
+    // Oddiy sana ("05.03.2026 da ochilgan") izoh bo'lib qoladi; faqat soliq turi tilga olinsa tekshirish kerak
+    res.review = 'Izohda soliq turi bor, lekin "dd.mm.yyyy dan AOS/QQS to\'lovchisi" naqshiga mos emas';
   }
 
   // Naqshlardan keyin mazmunli matn qolsa, izoh to'liq saqlanadi
@@ -238,14 +251,41 @@ export function detectWorkColumns(rows: unknown[][], types: RoutineTypeLite[]): 
   return null;
 }
 
-/** 'YYYY-MM-DD' | 'dd.mm.yyyy' | 'dd/mm/yyyy' -> 'YYYY-MM-DD'; tanib bo'lmasa null */
+/**
+ * 'YYYY-MM-DD' | 'dd.mm.yyyy' | 'dd/mm/yyyy' | 'dd,mm,yyyy' | Excel sana raqami (45900) -> 'YYYY-MM-DD'; tanib bo'lmasa null.
+ * 2000-yildan oldingi sana (Excel'da 0 -> 1899-12-30) sana emas: null (fayldagi matn saqlanadi, taxmin qilinmaydi).
+ */
 export function parseDate(raw: unknown): string | null {
   const s = cellText(raw).trim();
   let m = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(s);
   let y: number, mo: number, d: number;
   if (m) [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
-  else if ((m = /^(\d{1,2})[./](\d{1,2})[./](\d{4})$/.exec(s))) [d, mo, y] = [Number(m[1]), Number(m[2]), Number(m[3])];
-  else return null;
-  if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+  else if ((m = /^(\d{1,2})[./,](\d{1,2})[./,](\d{4})$/.exec(s))) [d, mo, y] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  else if (/^\d{5}$/.test(s) && Number(s) >= 36526 && Number(s) <= 73050) {
+    // Sana formatisiz katak: Excel kun raqami (1 = 1900-01-01, 1900-02-29 xatosi bilan: asos 1899-12-30)
+    return new Date(Date.UTC(1899, 11, 30) + Number(s) * 86400000).toISOString().slice(0, 10);
+  } else return null;
+  if (y < 2000 || mo < 1 || mo > 12 || d < 1 || d > 31) return null;
   return `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
 }
+
+// ---------- Qator tekshiruvlari (ikkala fayl uchun) ----------
+
+/** Shakl so'zlari (MChJ, OK, XK...) nom solishtirishda hisobga olinmaydi */
+const FORM_WORDS = new Set(['mchj', 'ok', 'xk', 'hk', 'ab', 'aj', 'qk', 'yatt', 'ooo', 'llc', 'yoki', 'group', 'groups']);
+const companyWords = (s: string) => normalizeName(s).split(' ').filter((w) => w.length >= 3 && !FORM_WORDS.has(w));
+
+/**
+ * Fayldagi nom tizimdagi mijozga tegishlimi: kamida bitta mazmunli so'z umumiy bo'lsa ha
+ * ("LABIN" = "KIMYO EXPRESS (LABIN)"). Umumiy so'z yo'q bo'lsa STIR noto'g'ri yozilgan bo'lishi mumkin
+ * ("GIPER GROUP" qatorida FREE WAY TRADE STIRi): boshqa mijozga yozib yubormaslik uchun qator o'tkaziladi.
+ */
+export function sameCompany(fileName: string, dbName: string): boolean {
+  const a = companyWords(fileName);
+  const b = new Set(companyWords(dbName));
+  if (!a.length || !b.size) return true;
+  return a.some((w) => b.has(w));
+}
+
+/** Izohda kirish ma'lumoti (login/parol): ochiq matn izohga yozilmaydi */
+export const hasSecret = (s: string) => /(login|логин|parol|пароль|password)\s*[:：]/i.test(s);

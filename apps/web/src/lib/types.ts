@@ -2,7 +2,8 @@
 export type Role = 'LEADER' | 'ACCOUNTANT' | 'OPERATOR';
 export type Lang = 'uz' | 'ru';
 export type TaxType = 'AOS' | 'QQS';
-export type ClientStatus = 'ACTIVE' | 'ZERO_REPORT' | 'LIQUIDATING';
+export type ClientStatus = 'ACTIVE' | 'ZERO_REPORT' | 'LIQUIDATING' | 'ARCHIVED';
+export const CLIENT_STATUSES: ClientStatus[] = ['ACTIVE', 'ZERO_REPORT', 'LIQUIDATING', 'ARCHIVED'];
 export type TaskStatus = 'TODO' | 'IN_PROGRESS' | 'WAITING_CLIENT' | 'DONE' | 'CANCELLED';
 export type TaskKind = 'ROUTINE' | 'REPORT' | 'URGENT' | 'MANUAL';
 export type NotificationKind = 'TASK_DONE' | 'TASK_OVERDUE' | 'CLIENTS_OVERDUE' | 'URGENT_TASK' | 'LEAD_WON';
@@ -45,7 +46,9 @@ export interface Client {
   name: string;
   contactPerson: string | null;
   phone: string | null;
-  taxType: TaxType;
+  /** null: importda tanilmagan ("to'ldirilmagan"), fayldagi matn taxTypeRaw'da; vazifa chiqmaydi */
+  taxType: TaxType | null;
+  taxTypeRaw: string | null;
   taxTypeEffectiveFrom: string | null;
   accountantId: number | null;
   accountantName: string | null;
@@ -141,16 +144,21 @@ export interface GridRow {
   clientId: number;
   stir: string;
   name: string;
-  taxType: TaxType;
+  taxType: TaxType | null;
+  taxTypeRaw: string | null;
   status: ClientStatus;
   note: string | null;
   accountantId: number | null;
   accountantName: string | null;
-  cells: Record<number, { state: CellState; taskId: number | null; taskStatus: TaskStatus | null }>;
+  /** noEvent: Dividend/Norezident holati belgilanmagan ("0", vazifa yo'q); markable: bosilsa holat belgisi qo'yiladi */
+  /** raw: soliq turi aniqlanmagan mijozda fayldagi qiymat (boricha ko'rsatiladi) */
+  cells: Record<number, { state: CellState; taskId: number | null; taskStatus: TaskStatus | null; noEvent?: boolean; markable?: boolean; raw?: string }>;
 }
 
 export interface Grid {
   period: string;
+  /** Holat belgisi yoziladigan oy (ko'rilayotgan oydan bir oy oldin); belgilab bo'lmaydigan oyda null */
+  eventMonth: string | null;
   columns: GridColumn[];
   rows: GridRow[];
 }
@@ -178,13 +186,16 @@ export interface WorkCell {
   lag: number;
   tone: WorkTone | null;
   next: { kind: 'TASK'; taskId: number; status: TaskStatus; month: string } | { kind: 'BASELINE'; month: string } | null;
+  /** Fayldagi tanilmagan qiymat ("eri"): oy kiritilguncha boricha ko'rsatiladi */
+  raw?: string | null;
 }
 
 export interface WorksRow {
   clientId: number;
   stir: string;
   name: string;
-  taxType: TaxType;
+  taxType: TaxType | null;
+  taxTypeRaw?: string | null;
   status: ClientStatus;
   note: string | null;
   accountantId: number | null;
@@ -279,13 +290,15 @@ export interface DashboardClients {
     tasksDone: number;
     tasksOverdue: number;
     percent: number;
+    /** Soliq turi aniqlanmagan mijozlar */
+    incomplete: number;
   };
   clients: {
     clientId: number;
     name: string;
     stir: string;
     status: ClientStatus;
-    taxType: TaxType;
+    taxType: TaxType | null;
     accountantId: number | null;
     accountantName: string | null;
     total: number;
@@ -333,6 +346,7 @@ export interface ImportReport {
   dryRun: boolean;
   period: string;
   columns: { header: string; code: string }[];
+  ignoredColumns?: string[];
   summary: { total: number; created: number; updated: number; unchanged: number; skipped: number; review: number; cellsDone: number };
   rows: { row: number; stir: string; name: string; action: 'NEW' | 'UPDATED' | 'UNCHANGED' | 'SKIPPED'; changes: string[]; review: string[] }[];
   csv: string;

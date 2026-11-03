@@ -23,7 +23,13 @@ function cellToText(cell: ExcelJS.Cell): string {
   if (v instanceof Date) return v.toISOString().slice(0, 10);
   if (typeof v !== 'object') return String(v);
   if (Array.isArray(v.richText)) return v.richText.map((r: any) => r.text).join('');
-  if ('result' in v) return v.result instanceof Date ? v.result.toISOString().slice(0, 10) : String(v.result ?? '');
+  if ('result' in v) {
+    if (v.result instanceof Date) return v.result.toISOString().slice(0, 10);
+    // Formula xatosi (#REF!): matni ko'rinsin, "[object Object]" emas
+    if (v.result && typeof v.result === 'object' && 'error' in v.result) return String(v.result.error);
+    return String(v.result ?? '');
+  }
+  if ('error' in v) return String(v.error);
   if ('text' in v) return String(v.text);
   return '';
 }

@@ -4,8 +4,9 @@ import { z } from 'zod';
 import { isLeader, me, requireAuth } from '../common/auth';
 import { parse } from '../common/errors';
 import { normalizeName } from '../common/normalize';
-import { periodFromMonth } from '../common/time';
+import { addMonthsIso, currentPeriod, monthOf, periodFromMonth } from '../common/time';
 import { type Db, pool, q, tx } from '../db';
+import { CLIENT_STATUSES } from './clients';
 import { getDueTime } from './generator';
 import { markDone } from './taskService';
 
@@ -33,14 +34,16 @@ export async function loadGrid(
   const params: unknown[] = [period];
   const p = (v: unknown) => (params.push(v), `$${params.length}`);
   if (f.accountantId) where.push(`c.accountant_id = ${p(f.accountantId)}`);
+  // Arxiv standart jadvalda ko'rinmaydi, faqat filtr bilan
   if (f.status) where.push(`c.status = ${p(f.status)}`);
+  else where.push(`c.status <> 'ARCHIVED'`);
   if (f.search) where.push(`(c.name_normalized ILIKE ${p(`%${normalizeName(f.search)}%`)} OR c.stir LIKE ${p(`${f.search.replace(/\D/g, '') || '#'}%`)})`);
   if (f.clientIds) where.push(`c.id = ANY (${p(f.clientIds)}::bigint[])`);
   const cells = await q(
     db,
     `SELECT g.client_id AS "clientId", g.report_type_id AS "reportTypeId", g.tax_type AS "taxType",
             g.task_id AS "taskId", g.task_status AS "taskStatus", g.cell AS state,
-            c.stir, c.name, c.status, c.note, c.accountant_id AS "accountantId", a.full_name AS "accountantName"
+            c.stir, c.name, c.status, c.note, c.tax_type_raw AS "taxTypeRaw", c.accountant_id AS "accountantId", a.full_name AS "accountantName"
      FROM fn_monthly_grid($1) g
      JOIN client c ON c.id = g.client_id
      LEFT JOIN app_user a ON a.id = c.accountant_id
@@ -50,8 +53,8 @@ export async function loadGrid(
   );
   const rows = new Map<number, any>();
   for (const c of cells) {
-    // Soliq turi filtri davrdagi tur bo'yicha (tarixdan)
-    if (f.taxType && c.taxType !== f.taxType) continue;
+    // Soliq turi filtri davrdagi tur bo'yicha (tarixdan); NONE = aniqlanmagan
+    if (f.taxType && (c.taxType ?? 'NONE') !== f.taxType) continue;
     let r = rows.get(c.clientId);
     if (!r) {
       r = {
@@ -59,17 +62,56 @@ export async function loadGrid(
         stir: c.stir,
         name: c.name,
         taxType: c.taxType,
+        taxTypeRaw: c.taxType ? null : c.taxTypeRaw,
         status: c.status,
         note: c.note,
         accountantId: c.accountantId,
         accountantName: c.accountantName,
-        cells: {} as Record<number, { state: CellState; taskId: number | null; taskStatus: string | null }>,
+        cells: {} as Record<number, { state: CellState; taskId: number | null; taskStatus: string | null; noEvent?: boolean; markable?: boolean; raw?: string }>,
       };
       rows.set(c.clientId, r);
     }
     r.cells[c.reportTypeId] = { state: c.state, taskId: c.taskId, taskStatus: c.taskStatus };
   }
-  return { period: period.slice(0, 7), columns, rows: [...rows.values()] };
+
+  // Soliq turi aniqlanmagan mijoz (V24): vazifa yo'q, katakda fayldagi qiymat (client_report_raw) boricha
+  const pendingIds = [...rows.values()].filter((r) => !r.taxType).map((r) => r.clientId);
+  if (pendingIds.length) {
+    const raws = await q<{ clientId: number; reportTypeId: number; raw: string }>(
+      db,
+      `SELECT client_id AS "clientId", report_type_id AS "reportTypeId", raw FROM client_report_raw
+       WHERE period = $1 AND client_id = ANY ($2::bigint[])`,
+      [period, pendingIds],
+    );
+    for (const x of raws) {
+      const cell = rows.get(x.clientId)?.cells[x.reportTypeId];
+      if (cell) cell.raw = x.raw;
+    }
+  }
+
+  // Qat'iy "—" faqat soliq turi / tugatilmoqda / mijoz istisnosi sabab. Holat bo'yicha hisobot (Dividend, Norezident)
+  // holati belgilanmagan bo'lsa (NO_EVENT) — topshirilishi mumkin, katakda "0"; bosilsa belgi qo'yiladi (markable).
+  // Ko'rilayotgan oy = topshirish oyi, belgi holat oyiga (bir oy oldin) yoziladi; server faqat joriy va o'tgan holat
+  // oyini qabul qiladi (clients.ts).
+  const eventMonth = monthOf(addMonthsIso(period, -1));
+  const cur = currentPeriod();
+  const eventEditable = eventMonth === monthOf(cur) || eventMonth === monthOf(addMonthsIso(cur, -1));
+  if (rows.size) {
+    const ev = await q<{ clientId: number; reportTypeId: number }>(
+      db,
+      `SELECT client_id AS "clientId", report_type_id AS "reportTypeId"
+       FROM fn_report_applicability($1) WHERE reason = 'NO_EVENT' AND client_id = ANY ($2::bigint[])`,
+      [period, [...rows.keys()]],
+    );
+    for (const e of ev) {
+      const cell = rows.get(e.clientId)?.cells[e.reportTypeId];
+      if (!cell || cell.state !== 'X' || cell.raw !== undefined) continue;
+      cell.state = '0';
+      cell.noEvent = true;
+      if (eventEditable) cell.markable = true;
+    }
+  }
+  return { period: period.slice(0, 7), eventMonth: eventEditable ? eventMonth : null, columns, rows: [...rows.values()] };
 }
 
 export const gridRouter = Router();
@@ -81,8 +123,8 @@ gridRouter.get('/', async (req, res) => {
     z.object({
       month: z.string().optional(),
       accountantId: z.coerce.number().int().optional(),
-      taxType: z.enum(['AOS', 'QQS']).optional(),
-      status: z.enum(['ACTIVE', 'ZERO_REPORT', 'LIQUIDATING']).optional(),
+      taxType: z.enum(['AOS', 'QQS', 'NONE']).optional(),
+      status: z.enum(CLIENT_STATUSES).optional(),
       search: z.string().trim().optional(),
     }),
     req.query,
@@ -141,15 +183,19 @@ gridRouter.get('/export.xlsx', async (req, res) => {
       i + 1,
       r.stir,
       r.name,
-      r.taxType,
+      r.taxType ?? r.taxTypeRaw ?? '',
       ...g.columns.map((c: any) => {
+        // Soliq turi aniqlanmagan: fayldagi qiymat boricha (qayta yuklansa o'sha natija)
+        if (!r.taxType) return r.cells[c.reportTypeId]?.raw ?? '';
         const st = r.cells[c.reportTypeId]?.state as CellState | undefined;
+        // Import formati: holat ustunida X = holat yo'q (0 qayta yuklansa belgi qo'yib yuboradi)
+        if (r.cells[c.reportTypeId]?.noEvent) return 'X';
         return st === '!' ? '0' : (st ?? '');
       }),
       r.note ?? '',
     ]);
     g.columns.forEach((c: any, j: number) => {
-      const st = r.cells[c.reportTypeId]?.state as CellState | undefined;
+      const st = (!r.taxType ? undefined : r.cells[c.reportTypeId]?.noEvent ? 'X' : r.cells[c.reportTypeId]?.state) as CellState | undefined;
       const cell = row.getCell(5 + j);
       cell.alignment = { horizontal: 'center' };
       const fill = st === '1' ? FILL.done : st === '!' ? FILL.overdue : st === 'X' ? FILL.na : null;

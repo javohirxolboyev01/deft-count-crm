@@ -19,7 +19,7 @@ const uz = {
   roles: { LEADER: 'Rahbar', ACCOUNTANT: 'Buxgalter', OPERATOR: 'Sotuv operatori' },
   taskStatus: { TODO: 'Bajarilishi kerak', IN_PROGRESS: 'Jarayonda', WAITING_CLIENT: 'Mijozdan kutilmoqda', DONE: 'Bajarildi', CANCELLED: 'Bekor qilingan' },
   taskKind: { ROUTINE: 'Oylik ish', REPORT: 'Hisobot', URGENT: 'Shoshilinch', MANUAL: "Qo'lda" },
-  clientStatus: { ACTIVE: 'Faol', ZERO_REPORT: 'Nol hisobot', LIQUIDATING: 'Tugatilmoqda' },
+  clientStatus: { ACTIVE: 'Faol', ZERO_REPORT: 'Nol hisobot', LIQUIDATING: 'Tugatilmoqda', ARCHIVED: 'Arxiv' },
   login: {
     title: 'Tizimga kirish', subtitle: 'Login va parolingizni kiriting', login: 'Login', password: 'Parol', submit: 'Kirish',
     showPassword: "Parolni ko'rsatish", hidePassword: 'Parolni yashirish',
@@ -85,7 +85,8 @@ const uz = {
     phone: 'Telefon', phoneHint: 'Faqat aloqa uchun: mijozga avtomatik xabar yuborilmaydi', taxType: 'Soliq turi',
     taxLeaderOnly: "Soliq turini faqat rahbar o'zgartiradi", effectiveFrom: 'Soliq turi qachondan', effectiveFromHint: "Bo'sh bo'lsa: joriy oydan",
     accountant: 'Javobgar buxgalter', status: 'Holati', note: 'Izoh', noAccountant: 'Biriktirilmagan',
-    allStatuses: 'Barcha holatlar', allTaxTypes: 'Barcha soliq turlari', allAccountants: 'Barcha buxgalterlar',
+    allStatuses: 'Barcha holatlar', allTaxTypes: 'Barcha soliq turlari', taxNone: 'Aniqlanmagan', taxNoneHint: 'Soliq turi aniqlanmagan — vazifalar chiqmaydi. Tanlang: fayldagi kataklar o\'zi qo\'llanadi',
+    taxFromFile: 'Faylda: «{{raw}}»', chooseTax: 'Tanlang', allAccountants: 'Barcha buxgalterlar',
     searchPlaceholder: 'Nomi yoki STIR bo\'yicha qidiruv', openTasks: 'Ochiq (shu oy)', overdueTasks: 'Kechikkan',
     taxHistory: 'Soliq turi tarixi', fromStart: 'boshidan', since: 'dan', history: "O'zgarishlar tarixi", currentTasks: 'Joriy oy vazifalari',
     events: "Holat bo'yicha hisobotlar", eventsHint: "Hisobot qaysi oyda topshirilishini belgilang (masalan, chet el bilan sentabrda ishlangan bo'lsa — Oktyabr).",
@@ -103,6 +104,7 @@ const uz = {
   },
   works: {
     title: 'Oylik ishlar', no: '№', stir: 'STIR', company: 'Nomi', note: 'Izoh',
+    rawHint: 'Fayldagi qiymat tanilmadi: «{{raw}}». Qalamcha orqali oyni kiriting',
     behind: '{{n}} oy orqada', notYet: "Hali yo'q", allDone: 'Hamma oylar bajarilgan',
     clickHint: '{{month}} ishini "Bajarildi" qilish uchun bosing',
     doneToast: '«{{work}}» — {{month}} bajarildi ({{client}})',
@@ -124,6 +126,8 @@ const uz = {
     clickHint: '"Bajarildi" qilish uchun bosing',
     hint: 'Katakni bosish vazifani "Bajarildi" qiladi (5 soniya ichida bekor qilish mumkin). O\'ng tugma — vazifani ochish. "—" katak topshirilmaydi (soliq turi yoki holat sabab).',
     legend: { done: 'Topshirildi', open: 'Topshirilmagan', overdue: "Muddati o'tdi", na: 'Topshirmaydi' },
+    rawHint: 'Fayldagi qiymat. Soliq turi tanlanganda vazifaga aylanadi',
+    eventHint: "Shu oyda topshiriladi deb belgilash uchun bosing", eventMarked: 'Belgilandi, vazifa yaratildi',
   },
   settings: {
     title: 'Sozlamalar', reportTypes: 'Hisobot turlari', routineWorks: 'Oylik doimiy ishlar', templates: 'Yangi vazifa uchun shablonlar',
@@ -170,6 +174,7 @@ const uz = {
   },
   dashboard: {
     title: 'Rahbar paneli', percent: 'Umumiy bajarilish', ready: 'Tayyor mijozlar', inProgress: 'Jarayonda', overdueClients: 'Kechikkan mijozlar',
+    incomplete: '{{n}} ta mijozning soliq turi aniqlanmagan: ularga vazifa chiqmayapti', incompleteOpen: "Ko'rish",
     tasksDone: 'Vazifalar (bajarildi/jami)', alerts: "Muddati o'tgan vazifalar", accountants: 'Buxgalterlar',
     range: { day: 'Kun', week: 'Hafta', month: 'Oy' }, accountant: 'Buxgalter', done: 'Bajardi',
     doneTodayWeekMonth: 'Kun / hafta / oy', onTime: "O'z vaqtida", overdue: 'Kechikkan', waiting: 'Kutilmoqda', openTasks: 'Yuklama',
@@ -205,7 +210,7 @@ const uz = {
     noRows: "Bu bo'limda qator yo'q", confirmTitle: 'Tekshirmasdan yuklaysizmi?', confirmApply: 'Baribir yuklash',
     confirmText: "Siz natijani hali ko'rmadingiz — ma'lumotlar darhol CRM'ga yoziladi. Avval «Tekshirish» bilan nima o'zgarishini ko'rib chiqish tavsiya etiladi.",
     imported: 'Import: {{created}} yangi, {{updated}} yangilandi', new: 'Yangi', updated: "O'zgargan", unchanged: "O'zgarmagan",
-    skipped: "O'tkazib yuborildi", review: 'Tekshirish kerak', cellsDone: 'Bajarildi deb belgilangan katak', columns: 'Topilgan ustunlar',
+    skipped: "O'tkazib yuborildi", review: 'Tekshirish kerak', cellsDone: 'Bajarildi deb belgilangan katak', columns: 'Topilgan ustunlar', ignoredColumns: 'Tanilmagan ustunlar (yuklanmadi)',
     action: 'Natija', reviewNotes: "Qo'lda tekshirish", actions: { NEW: 'Yangi', UPDATED: "O'zgardi", UNCHANGED: "O'zgarmadi", SKIPPED: "O'tkazildi" },
     manualReview: "Qo'lda tekshirish ro'yxati", fixInCard: 'Kartada tuzatish', resolve: 'Hal qilindi',
     alreadyImported: 'Bu fayl allaqachon yuklangan',

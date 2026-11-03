@@ -3,7 +3,7 @@ import request from 'supertest';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { dryTx, tx } from '../src/db';
 import { importTable } from '../src/modules/sheets/importer';
-import { detectWorksFile, importWorks } from '../src/modules/sheets/worksImporter';
+import { detectWorksFile, importWorks, matchAccountant, toAccountant } from '../src/modules/sheets/worksImporter';
 import { generatePeriod } from '../src/modules/generator';
 import { app, one, pool, q, reportCodes, resetDb, seedTeam, token } from './helpers';
 
@@ -17,7 +17,7 @@ function sheet(): unknown[][] {
     ['2', '306234567', 'INSAR MIX TRADE', 'ҚҚС', '0', '0', 'X', '1', '0', '0', '0', ''],
     ['3', '307345678', 'ESKI QURILISH', 'AOS', 'X', 'X', 'X', 'X', 'X', 'X', 'X', 'Tugatishga bergan'],
     ['4', '308456789', 'YANGI TUR', 'AOS', '0', '0', '0', 'X', 'X', '0', '0', "01.01.2026 dan AOS to'lovchisi"],
-    ['5', '309567890', 'NOANIQ', 'AOS', '0', '0', 'X', 'X', 'X', '0', 'ha', '15.03.2026 da tekshiruv'],
+    ['5', '309567890', 'NOANIQ', 'AOS', '0', '0', 'X', 'X', 'X', '0', 'ha', "QQS ga o'tishi mumkin"],
   ];
 }
 
@@ -135,6 +135,39 @@ const WORKS_SUB = [...WORKS_TOP];
 WORKS_SUB.splice(8, 4, 'ходим сони', 'сана', 'логин', 'парол');
 WORKS_SUB.splice(15, 2, 'кирим', 'Чиқим');
 
+describe('Buxgalterni ism bo\'yicha topish', () => {
+  const list = [
+    toAccountant(1, 'Madaminov Sanjar'),
+    toAccountant(2, "Uralov G'ulomjon"),
+    toAccountant(3, 'Mustofaqulov Hoshim'),
+    toAccountant(4, 'Mustofaqulov Abbos'),
+    toAccountant(5, 'Ерқинов Ali'),
+  ];
+  const id = (raw: string) => {
+    const a = matchAccountant(raw, list);
+    return a && a !== 'AMBIGUOUS' ? a.id : a;
+  };
+
+  it('ism yoki familiya, kirill/lotin farqisiz', () => {
+    expect(id('Санжар')).toBe(1);
+    expect(id('Madaminov')).toBe(1);
+    expect(id('Мадаминов Санжар')).toBe(1);
+    expect(id('Sanjar Madaminov')).toBe(1);
+    expect(id('Ғуломжон')).toBe(2);
+    expect(id('Gʻulomjon')).toBe(2);
+    expect(id('Хошим')).toBe(3);
+    expect(id('Xoshim')).toBe(3);
+    expect(id('Yerqinov')).toBe(5);
+  });
+
+  it('bir nechtasiga mos kelsa: ko\'proq so\'zi mos kelgani, teng bo\'lsa AMBIGUOUS', () => {
+    expect(id('Mustofaqulov')).toBe('AMBIGUOUS');
+    expect(id('Mustofaqulov Abbos')).toBe(4);
+    expect(id('Номаълум')).toBeNull();
+    expect(id('')).toBeNull();
+  });
+});
+
 describe('"Бухгалтер ишлари" fayli importi', () => {
   let team: Awaited<ReturnType<typeof seedTeam>>;
   beforeAll(async () => {
@@ -158,7 +191,9 @@ describe('"Бухгалтер ишлари" fayli importi', () => {
     // Hisobot importi uni o'zi tanimaydi, yo'naltirish routes.ts'da
     const r = await tx((db) => importWorks(db, works(), map!, { actorId: team.leader, dryRun: false }));
     expect(r.kind).toBe('WORKS');
-    expect(r.summary).toMatchObject({ total: 3, created: 1, skipped: 2 });
+    // V24: YaTT ham mijoz bo'ladi (soliq turi aniqlanmagan), faqat STIRsiz qator o'tkaziladi
+    expect(r.summary).toMatchObject({ total: 3, created: 2, skipped: 1 });
+    expect(await one(pool, `SELECT tax_type, tax_type_raw FROM client WHERE stir = '63003046290049'`)).toEqual({ tax_type: null, tax_type_raw: 'YaTT' });
     const c = await one(
       pool,
       `SELECT id, accountant_id, monthly_fee::int AS fee, bank_key, employee_count, to_char(mehnat_checked_at, 'YYYY-MM-DD') AS checked,
@@ -209,5 +244,112 @@ describe('Import: holat bo\'yicha hisobot ustunlari (Norezident foyda / QQS, V20
     );
     expect(t.status).toBe('DONE');
     expect((await one(pool, 'SELECT count(*)::int AS n FROM client_report_exclusion')).n).toBe(0);
+  });
+});
+
+describe('Import "boricha" (V24)', () => {
+  let tok: string;
+  beforeAll(async () => {
+    await resetDb();
+    await seedTeam();
+    tok = await token('leader');
+  });
+  const H = ['№', 'STIR', 'Korxona nomi', 'Soliq turi', 'JSHDS 15.10.2026', 'AOS 15.10.2026', 'QQS 20.10.2026', 'FOYDA 20.10.2026', 'INPS', 'Қилиниши лозим бўлган ишлар'];
+  const rows = () => [
+    H,
+    ['1', '51506076290041', 'ESHMURODOV BEKZOD YATT', 'ЯТТ', 'X', '1', 'X', 'X', 'X', ''],
+    ['2', '310286184', '"FREE WAY TRADE" MCHJ', 'ҚҚС', '1', 'X', '1', '1', 'X', ''],
+    ['3', '310286184', '"GIPER GROUP" МЧЖ', 'ҚҚС', '1', 'X', '1', '1', '0', ''],
+    ['4', '313255030', '"SIBAUTO PARTS" MCHJ', 'АОС', '1', '1', 'X', 'X', '0', "01.11.2026 dan QQS to'lovchisi"],
+    ['5', '310263388', '"MEGA LINK" МЧЖ', 'АОС', 'X', 'X', 'X', 'X', 'X', 'Login: emitent Parol: secret1'],
+    ['6', '311463375', 'AMRULLO TOWN XK', 'АОС', 'X', 'X', 'X', 'X', 'X', 'Ketgan'],
+    ['7', '#REF!', '"QIBRAY FARM" MCHJ', 'ҚҚС', '', '', '', '', '', ''],
+  ];
+  const cid = async (stir: string) => (await one(pool, 'SELECT id FROM client WHERE stir = $1', [stir])).id as number;
+
+  it('tanilmagan tur: mijoz qo\'shiladi, vazifa yo\'q, kataklar jadvalda fayldagidek', async () => {
+    const r = await tx((db) => importTable(db, rows(), { actorId: null, dryRun: false }));
+    const yatt = r.rows.find((x) => x.stir === '51506076290041')!;
+    expect(yatt.action).toBe('NEW');
+    const c = await cid('51506076290041');
+    expect(await one(pool, 'SELECT tax_type, tax_type_raw FROM client WHERE id = $1', [c])).toEqual({ tax_type: null, tax_type_raw: 'ЯТТ' });
+    expect((await one(pool, 'SELECT count(*)::int AS n FROM task WHERE client_id = $1', [c])).n).toBe(0);
+    const g = await request(app).get('/api/monthly-grid?month=2026-10').set('Authorization', `Bearer ${tok}`);
+    const row = g.body.rows.find((x: any) => x.clientId === c);
+    expect(row.taxType).toBeNull();
+    expect(row.taxTypeRaw).toBe('ЯТТ');
+    const byCode = Object.fromEntries(g.body.columns.map((col: any) => [col.code, row.cells[col.reportTypeId]?.raw]));
+    expect(byCode).toMatchObject({ JSHDS: 'X', AOS: '1', QQS: 'X', INPS: 'X' });
+  });
+
+  it('takroriy STIR va #REF! qatorlari yozilmaydi, sababi ko\'rsatiladi', async () => {
+    const r = await dryTx((db) => importTable(db, rows(), { actorId: null, dryRun: true }));
+    expect(r.rows.find((x) => x.name.includes('GIPER'))!.review[0]).toContain('3-qatorda ham bor');
+    expect(r.rows.find((x) => x.name.includes('QIBRAY'))!.review[0]).toContain('#REF!');
+    // Boshqa nomli qator mavjud STIRga yozilmaydi
+    const other = rows().slice(0, 1).concat([['1', '310286184', '"GIPER GROUP" МЧЖ', 'ҚҚС', '1', 'X', '1', '1', '0', '']]);
+    const r2 = await dryTx((db) => importTable(db, other, { actorId: null, dryRun: true }));
+    expect(r2.rows[0]).toMatchObject({ action: 'SKIPPED' });
+    expect(r2.rows[0].review[0]).toContain('FREE WAY TRADE');
+  });
+
+  it('X istisnolari joriy oy vazifalariga ham qo\'llanadi', async () => {
+    const c = await cid('310286184');
+    const now = (await one(pool, `SELECT to_char(date_trunc('month', now() AT TIME ZONE 'Asia/Tashkent'), 'YYYY-MM-DD') AS p`)).p;
+    expect(await reportCodes(c, now)).not.toContain('AOS');
+    expect(await reportCodes(c, now)).not.toContain('INPS');
+  });
+
+  it('izohdagi kelajak sana bilan soliq turi rejalashtiriladi; parol izohga yozilmaydi; Ketgan -> Arxiv', async () => {
+    const sib = await cid('313255030');
+    const hist = await q(pool, `SELECT tax_type, to_char(effective_from, 'YYYY-MM-DD') AS f FROM client_tax_type_history WHERE client_id = $1 ORDER BY effective_from`, [sib]);
+    expect(hist).toEqual([{ tax_type: 'AOS', f: '2000-01-01' }, { tax_type: 'QQS', f: '2026-11-01' }]);
+    expect((await one(pool, `SELECT fn_client_tax_type($1, '2026-10-31') AS t`, [sib])).t).toBe('AOS');
+    expect((await one(pool, `SELECT fn_client_tax_type($1, '2026-11-30') AS t`, [sib])).t).toBe('QQS');
+    expect((await one(pool, 'SELECT note FROM client WHERE id = $1', [await cid('310263388')])).note).toBeNull();
+    const amr = await cid('311463375');
+    expect((await one(pool, 'SELECT status FROM client WHERE id = $1', [amr])).status).toBe('ARCHIVED');
+    expect((await one(pool, `SELECT count(*)::int AS n FROM task WHERE client_id = $1 AND status IN ('TODO','IN_PROGRESS','WAITING_CLIENT')`, [amr])).n).toBe(0);
+    // Arxiv standart ro'yxatda ko'rinmaydi
+    const list = await request(app).get('/api/clients?pageSize=100').set('Authorization', `Bearer ${tok}`);
+    expect(list.body.items.some((x: any) => x.id === amr)).toBe(false);
+  });
+
+  it('kartada soliq turi tanlanganda fayldagi kataklar o\'zi qo\'llanadi', async () => {
+    const c = await cid('51506076290041');
+    const r = await request(app).patch(`/api/clients/${c}`).set('Authorization', `Bearer ${tok}`).send({ taxType: 'AOS' });
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({ taxType: 'AOS', taxTypeRaw: null, taxTypeEffectiveFrom: null });
+    // Oktyabr: AOS = 1 -> Bajarildi; JSHDS/INPS = X -> istisno, vazifa yo'q
+    const oct = await q(
+      pool,
+      `SELECT rt.code, t.status FROM task t JOIN report_type rt ON rt.id = t.report_type_id
+       WHERE t.client_id = $1 AND t.period = '2026-10-01' AND t.kind = 'REPORT' AND t.status <> 'CANCELLED'`,
+      [c],
+    );
+    expect(oct.find((x) => x.code === 'AOS')?.status).toBe('DONE');
+    expect(oct.map((x) => x.code)).not.toContain('JSHDS');
+    expect(oct.map((x) => x.code)).not.toContain('INPS');
+    expect((await one(pool, 'SELECT count(*)::int AS n FROM client_report_raw WHERE client_id = $1', [c])).n).toBe(0);
+  });
+
+  it('"Бухгалтер ишлари": tanilmagan ish katagi saqlanadi va oy kiritilganda o\'chadi', async () => {
+    const c = await cid('310286184');
+    const rows = [
+      WORKS_TOP,
+      WORKS_SUB,
+      ['1', '310286184', '"FREE WAY TRADE" MCHJ', 'ҚҚС', '', '', '', '', '', '', '', '', 'eri', '1899-12-30', '', '28,02,2025(14)', '', '', '', '', ''],
+    ];
+    const map = await detectWorksFile(pool, rows);
+    await tx((db) => importWorks(db, rows, map!, { actorId: null, dryRun: false }));
+    const raw = await q(pool, `SELECT w.name, r.raw FROM client_routine_raw r JOIN routine_work_type w ON w.id = r.routine_type_id WHERE r.client_id = $1 ORDER BY w.sort_order`, [c]);
+    expect(raw.map((x) => x.raw)).toEqual(['eri', '1899-12-30', '28,02,2025(14)']);
+    expect((await one(pool, 'SELECT count(*)::int AS n FROM client_routine_baseline WHERE client_id = $1', [c])).n).toBe(0);
+    const works = await request(app).get('/api/works?search=FREE').set('Authorization', `Bearer ${tok}`);
+    const ishHaqi = works.body.columns.find((x: any) => x.name === 'Ish haqi hisoblash');
+    expect(works.body.items[0].cells[ishHaqi.routineTypeId].raw).toBe('1899-12-30');
+    const put = await request(app).put(`/api/works/${c}/${ishHaqi.routineTypeId}/baseline`).set('Authorization', `Bearer ${tok}`).send({ month: '2025-06' });
+    expect(put.status).toBe(200);
+    expect(put.body.raw).toBeNull();
   });
 });

@@ -46,7 +46,7 @@ Bu fayl loyiha ildizida `CLAUDE.md` nomi bilan turadi. Har bosqichda shu konteks
 
 - `user` (role: LEADER | ACCOUNTANT | OPERATOR, til, telegram_chat_id)
 - `lead` (operator bazasi, `client`dan alohida): stir (unique), name, director, phone, address, registered_at, status (NEW | NO_ANSWER | CALL_LATER | MEETING | HAS_ACCOUNTANT | REJECTED | WON | CONVERTED), next_call_date, converted_client_id; `lead_call`: har qo'ng'iroq natijasi + izoh. Rahbar Excel yuklaydi (STIR bo'yicha takror va mavjud mijozlar o'tkaziladi). HAS_ACCOUNTANT/REJECTED — yopiladi. WON — rahbarga bildirishnoma (`LEAD_WON`), operatorga ko'rinmaydi. Rahbar mijozga aylantiradi (CONVERTED). Qayta qo'ng'iroq eslatmasi faqat ilovada ("Bugun qo'ng'iroq" ro'yxati).
-- `client`: stir (unique), name, name_normalized, contact_person, phone, tax_type (AOS | QQS), tax_type_effective_from, accountant_id, status (ACTIVE | ZERO_REPORT | LIQUIDATING), note
+- `client`: stir (unique), name, name_normalized, contact_person, phone, tax_type (AOS | QQS | NULL = importda tanilmagan, fayldagi matn `tax_type_raw`), tax_type_effective_from, accountant_id, status (ACTIVE | ZERO_REPORT | LIQUIDATING | ARCHIVED), note
 - `client_tax_type_history`: client_id, tax_type, effective_from (rejim o'zgarsa hisobotlar shu sanadan almashadi)
 - `report_type`: code, name, frequency (MONTHLY | QUARTERLY | YEARLY), due_day, applies_to (AOS/QQS), active, creates_accountant_task (INPS = true, qolganlari = false, `TODO(tasdiqlash)`), generation_months (chorak: 1,4,7,10; yillik: 2)
 - `routine_work_type`: name, order, active (ko'pi bilan 10 ta; boshlang'ich 8 ta)
@@ -179,6 +179,7 @@ Haqiqiy jadval ustunlari:
 - Kirill/lotin aralashmasi: `AOC`/`AOS`, `ҚҚС`/`QQS` → `tax_type` enumga normallashtiriladi; `name_normalized` (kirill→lotin, kichik harf, MChJ/МЧЖ bir xil) qidiruv uchun.
 - Sarlavhadagi sanalar har oyda o'zgaradi (yangi ustun/varaq); ustunni sarlavha matnidan aniqlang, indeksdan emas.
 - Import fayl turini sarlavhadan o'zi aniqlaydi: kamida 3 ta doimiy ish ustuni (`routine_work_type.sheet_aliases`) bo'lsa "Бухгалтер ишлари" fayli → Buxgalter ishlari sahifasi (mijoz maydonlari, buxgalter, my.mehnat.uz, har ish uchun "qaysi oygacha bajarilgan"); aks holda hisobot jadvali → Hisobot topshirish sahifasi.
+- Jadval **boricha** yuklanadi (V24): tanilmagan qiymat tashlanmaydi va taxmin qilinmaydi. Soliq turi tanilmagan qator (ЯТТ, "Қ АОС", bo'sh) mijoz bo'ladi (`tax_type` NULL, vazifa chiqmaydi), kataklari `client_report_raw`da saqlanib jadvalda fayldagidek ko'rinadi; rahbar kartada turni tanlasa (yoki keyingi faylda kelsa) kataklar o'zi qo'llanadi. Tanilmagan ish katagi (`eri`, `28,02,2025(14)`) `client_routine_raw`da, oy kiritilganda o'chadi. Izohdagi "Ketgan"/"Kerak emas" → ARCHIVED, "bankrot" → LIQUIDATING. Bir faylda takroriy STIR yoki nomi tizimdagidan butunlay farqli STIR qatori yozilmaydi (review). Izohdagi login/parol izohga yozilmaydi.
 - Har sahifada "Excel yuklash" (faqat rahbar): avval dry-run + hisobot, keyin yuklash. Buxgalter ishlari sahifasi faqat «Бухгалтер ишлари» faylini, Hisobot topshirish faqat hisobot jadvalini qabul qiladi (`kind`, mos kelmasa `WRONG_FILE_KIND`). Bir xil fayl (SHA-256) qayta yozilmaydi. Davriy sinxron yo'q.
 
 ## 8. Tizimda yo'q (qilmang)

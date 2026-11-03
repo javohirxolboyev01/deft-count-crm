@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { normalizeName, normalizeStir, normalizeTaxType } from '../src/common/normalize';
-import { detectColumns, parseCell, parseNote } from '../src/modules/sheets/parse';
+import { cellText, detectColumns, hasSecret, parseCell, parseDate, parseNote, sameCompany } from '../src/modules/sheets/parse';
 
 describe('normalizatsiya', () => {
   it('kirill/lotin va MChJ/МЧЖ bir xil shaklga keladi', () => {
@@ -41,10 +41,42 @@ describe('izohni ajratish', () => {
   it('oddiy matn -> note', () => {
     expect(parseNote('Direktor bilan gaplashish kerak')).toMatchObject({ note: 'Direktor bilan gaplashish kerak', review: null });
   });
-  it('noaniq sana -> qo\'lda tekshirish', () => {
-    const r = parseNote('15.03.2026 da tekshiruv');
+  it('soliq turi tilga olingan, lekin naqshga mos emas -> qo\'lda tekshirish', () => {
+    const r = parseNote("QQS ga o'tishi mumkin");
     expect(r.review).not.toBeNull();
     expect(r.effectiveFrom).toBeNull();
+  });
+  it('oddiy sana ("da ochilgan") -> izoh, tekshirish shart emas', () => {
+    expect(parseNote('05.03.2026 da ochilgan')).toMatchObject({ note: '05.03.2026 da ochilgan', review: null, status: null });
+  });
+  it('Ketgan / Керак эмас -> Arxiv, bankrot -> Tugatilmoqda', () => {
+    expect(parseNote('Ketgan')).toMatchObject({ status: 'ARCHIVED', note: null });
+    expect(parseNote('Керак эмас')).toMatchObject({ status: 'ARCHIVED' });
+    expect(parseNote('ketgan  ferma')).toMatchObject({ status: 'ARCHIVED', note: 'ketgan  ferma' });
+    expect(parseNote('bankrot')).toMatchObject({ status: 'LIQUIDATING' });
+    expect(parseNote('Нол')).toMatchObject({ status: 'ZERO_REPORT' });
+  });
+});
+
+describe('fayl qiymatlari (V24)', () => {
+  it('sana: vergulli, Excel raqami; Excel "0" (1899) va izohli matn sana emas', () => {
+    expect(parseDate('13,02,2026')).toBe('2026-02-13');
+    expect(parseDate('45900')).toBe('2025-08-31');
+    expect(parseDate('1899-12-30')).toBeNull();
+    expect(parseDate('28,02,2025(14)')).toBeNull();
+    expect(parseDate('eri')).toBeNull();
+  });
+  it('formula xatosi matn bo\'lib chiqadi', () => {
+    expect(cellText({ formula: 'A1', result: { error: '#REF!' } })).toBe('#REF!');
+  });
+  it('nom bir mijozga tegishlimi', () => {
+    expect(sameCompany('"LABIN" МЧЖ', '"KIMYO EXPRESS" МЧЖ (LABIN)')).toBe(true);
+    expect(sameCompany('"GIPER GROUP" МЧЖ', '"FREE WAY TRADE" MCHJ')).toBe(false);
+  });
+  it('izohdagi login/parol aniqlanadi', () => {
+    expect(hasSecret('Login: abc Parol: xyz')).toBe(true);
+    expect(hasSecret('Логин: sales пароль: 1')).toBe(true);
+    expect(hasSecret('Ishchilarni olish kerak')).toBe(false);
   });
 });
 
