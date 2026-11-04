@@ -24,7 +24,7 @@ import { api, qs } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
 import { errorText } from '@/lib/errors';
-import { currentMonth, fmtIsoDate, monthLabel, shiftMonth } from '@/lib/time';
+import { fmtIsoDate, monthLabel, shiftMonth, workMonth } from '@/lib/time';
 import { type CellState, CLIENT_STATUSES, type Grid, TAX_TYPE_OPTIONS, type Task, type TaxType, taxTypeLabel } from '@/lib/types';
 
 const CELL = REPORT_CELL;
@@ -40,7 +40,7 @@ export default function Monthly() {
   const reviews = useReviewByClient('REPORTS');
   const openTask = useOpenTask();
   const qc = useQueryClient();
-  const [month, setMonth] = useState(currentMonth());
+  const [month, setMonth] = useState(workMonth());
   // Excel kabi katak (V30): istalgan katakka 1 / 0 / X. "1" — Bajarildi, 5 soniya ichida bekor qilish mumkin
   const setCell = useMutation({
     mutationFn: (c: { clientId: number; reportTypeId: number; value: '1' | '0' | 'X' }) =>

@@ -14,6 +14,8 @@ export const fmtIsoDate = (isoDate?: string | null) => (isoDate ? DateTime.fromI
 export const currentMonth = () => DateTime.now().setZone(TZ).toFormat('yyyy-MM');
 export const shiftMonth = (month: string, delta: number) =>
   DateTime.fromFormat(month, 'yyyy-MM').plus({ months: delta }).toFormat('yyyy-MM');
+/** Belgilanadigan oy (rahbar qarori): noyabrda oktyabr ishi/hisoboti topshiriladi — jadvallar shu oydan ochiladi */
+export const workMonth = () => shiftMonth(currentMonth(), -1);
 /** Oy nomlari lug'atdan (brauzerda uz locale ma'lumoti bo'lmasligi mumkin) */
 /** Oy ishining muddati (V34/V36): keyingi oyning dueDay-kuni (oy qisqa bo'lsa oxirgi kuni; null — oy oxiri) */
 export const workDueDate = (month: string, dueDay: number | null) => {

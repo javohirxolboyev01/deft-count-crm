@@ -25,7 +25,7 @@ import { api, qs } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
 import { errorText } from '@/lib/errors';
-import { currentMonth, monthLabel, shiftMonth, workDueDate } from '@/lib/time';
+import { monthLabel, shiftMonth, workDueDate, workMonth } from '@/lib/time';
 import { type AdvanceResult, CLIENT_STATUSES, TAX_TYPE_OPTIONS, type Task, type WorkCell, type WorkColumn, type WorkState, type Works, type WorksRow } from '@/lib/types';
 
 // "Oylik ishlar" ("Бухгалтер ишлари" fayli): qatorda mijoz, ustunda doimiy ish, katakda tanlangan oy ishining
@@ -65,7 +65,7 @@ export default function Clients() {
   const qc = useQueryClient();
   const openTask = useOpenTask();
   const [newOpen, setNewOpen] = useState(false);
-  const [month, setMonth] = useState(currentMonth());
+  const [month, setMonth] = useState(workMonth());
   const [edit, setEdit] = useState<{ row: WorksRow; col: WorkColumn } | null>(null);
   const accountants = useAccountants();
   const reviews = useReviewByClient('WORKS');
