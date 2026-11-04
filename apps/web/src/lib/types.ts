@@ -127,7 +127,7 @@ export interface MyDay {
   period: string;
   groups: { today: Task[]; urgent: Task[]; overdue: Task[] };
   columns: Record<'TODO' | 'IN_PROGRESS' | 'WAITING_CLIENT' | 'DONE', Task[]>;
-  stats: { done: number; doneOnTime: number; doneToday: number; open: number; overdue: number };
+  stats: { done: number; doneOnTime: number; doneToday: number; open: number; monthOpen: number; overdue: number };
 }
 
 export type CellState = '1' | '0' | '!' | 'X';

@@ -1,8 +1,9 @@
 import { useQuery } from '@tanstack/react-query';
-import { AlertTriangle, CalendarDays, Siren } from 'lucide-react';
+import { CalendarDays, Siren } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { MyDayKpis } from '@/components/MyDayKpis';
+import { OverdueMatrix } from '@/components/OverdueMatrix';
 import { TaskCard } from '@/components/TaskCard';
 import { Card, CardHeader, PageHeader } from '@/components/ui/card';
 import { QueryState } from '@/components/ui/states';
@@ -63,7 +64,7 @@ export default function MyDay() {
             <MyDayKpis d={d} />
 
             <Group title={t('myDay.urgent')} icon={<Siren className="h-4 w-4 text-red-600" />} tasks={d.groups?.urgent} tone="border-l-red-600" onOpen={openTask} onDone={onDone} />
-            <Group title={t('myDay.overdue')} icon={<AlertTriangle className="h-4 w-4 text-overdue" />} tasks={d.groups?.overdue} tone="border-l-overdue" onOpen={openTask} onDone={onDone} />
+            <OverdueMatrix tasks={d.groups?.overdue} onOpen={openTask} onDone={onDone} />
             <Group title={t('myDay.today')} icon={<CalendarDays className="h-4 w-4 text-soon" />} tasks={d.groups?.today} tone="border-l-soon" onOpen={openTask} onDone={onDone} />
 
             <p className="text-xs text-gray-500">{t('myDay.dragHint')}</p>

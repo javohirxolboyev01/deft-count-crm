@@ -53,7 +53,7 @@ export const clientListQuery = z.object({
   pageSize: z.coerce.number().int().min(1).max(500).default(25),
 });
 
-export function clientListWhere(u: AuthUser, f: z.infer<typeof clientListQuery>, p: (v: unknown) => string) {
+export function clientListWhere(u: AuthUser, f: z.infer<typeof clientListQuery>, p: (v: unknown) => string, opts: { includeArchived?: boolean } = {}) {
   const where: string[] = [];
   if (!isLeader(u)) where.push(`c.accountant_id = ${p(u.id)}`); // serverda cheklov
   if (f.search) {
@@ -63,7 +63,7 @@ export function clientListWhere(u: AuthUser, f: z.infer<typeof clientListQuery>,
   }
   // Arxiv standart ro'yxatda ko'rinmaydi, faqat filtr bilan
   if (f.status) where.push(`c.status = ${p(f.status)}`);
-  else where.push(`c.status <> 'ARCHIVED'`);
+  else if (!opts.includeArchived) where.push(`c.status <> 'ARCHIVED'`);
   if (f.taxType === 'NONE') where.push('c.tax_type IS NULL');
   else if (f.taxType) where.push(`c.tax_type = ${p(f.taxType)}`);
   if (f.accountantId === 'none') where.push('c.accountant_id IS NULL');

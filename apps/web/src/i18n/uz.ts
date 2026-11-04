@@ -69,6 +69,10 @@ const uz = {
     title: 'Mening kunim', myTasks: 'Mening vazifalarim', today: 'Bugungi', urgent: 'Shoshilinch', overdue: 'Kechikkan', emptyColumn: "Vazifa yo'q",
     dragHint: "Kartani sudrab boshqa ustunga o'tkazing yoki vazifani ochib holatni tanlang.",
     stats: { open: 'Ochiq vazifalar', overdue: 'Kechikkan', doneToday: 'Bugun bajarildi', done: 'Shu oy bajarildi', onTime: "O'z vaqtida" },
+    matrix: {
+      client: 'Korxona', late: 'Kechikish', days: '{{n}} kun', clients: '{{n}} ta korxona',
+      hint: "Katakda eng eski muddat (+n — yana shuncha oy). Sanani bosing — vazifa ochiladi, ✓ — Bajarildi. To'q sariq — mijozdan kutilmoqda.",
+    },
     kpi: { todayLeft: 'Bugun qoldi', late: 'Kechikib', noDue: 'Muddatsiz', ofOpen: 'ochiq vazifalardan', noDoneYet: "Hali bajarilgan vazifa yo'q" },
   },
   task: {

@@ -33,11 +33,20 @@ const BRAND = {
   950: '#0e323a',
 };
 
+// Yorug' rejim: matn, chegara va holat ranglari (200..800) yarim pog'ona to'qroq — oq fonda aniqroq o'qilsin.
+// Fon tonlari (50/100) o'zgarmaydi; qorong'i rejimga ta'sir qilmaydi
+const DARKEN = 0.5;
+const mix = (a, b, t) => {
+  const [x, y] = [a, b].map((h) => parseInt(h.slice(1), 16));
+  const ch = (sh) => Math.round(((x >> sh) & 255) * (1 - t) + ((y >> sh) & 255) * t);
+  return `${ch(16)} ${ch(8)} ${ch(0)}`;
+};
+
 const light = { '--c-white': rgb('#ffffff') };
 const dark = { '--c-white': rgb(colors.gray[800]) };
 for (const p of PALETTES) {
   SHADES.forEach((s, i) => {
-    light[`--c-${p}-${s}`] = rgb(colors[p][s]);
+    light[`--c-${p}-${s}`] = +s >= 200 && +s <= 800 ? mix(colors[p][s], colors[p][SHADES[i + 1]], DARKEN) : rgb(colors[p][s]);
     dark[`--c-${p}-${s}`] = rgb(colors[p][SHADES[SHADES.length - 1 - i]]);
   });
 }
@@ -49,7 +58,7 @@ Object.assign(dark, {
   '--c-gray-950': rgb('#ffffff'),
 });
 Object.assign(light, {
-  '--c-page': rgb('#f1f7ff'), // WinPro --background (#dbeafe66 oq ustida)
+  '--c-page': rgb('#e8f0fb'), // WinPro --background (#f1f7ff) biroz to'qroq: oq kartalar ajralib tursin
   '--c-ink': rgb('#1a344d'), // WinPro --text-primary
   '--c-foreground': rgb('#35496d'), // WinPro --foreground (sarlavhalar)
   '--c-brand': rgb(BRAND[500]),

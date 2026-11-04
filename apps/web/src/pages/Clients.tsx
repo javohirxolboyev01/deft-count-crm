@@ -73,7 +73,8 @@ export default function Clients() {
   const months = t('months', { returnObjects: true }) as string[];
   // ?taxType=NONE: Dashboard'dagi "soliq turi aniqlanmagan" havolasidan
   const [params] = useSearchParams();
-  const [f, setF] = useState({ search: '', status: '', taxType: params.get('taxType') ?? '', accountantId: '', page: 1, pageSize: 50 });
+  // Jadval Excel faylidagidek: standart hammasi bitta varaqda (500 = server chegarasi), qidiruvsiz ham hamma korxona ko'rinadi
+  const [f, setF] = useState({ search: '', status: '', taxType: params.get('taxType') ?? '', accountantId: '', page: 1, pageSize: 500 });
   const set = (patch: Partial<typeof f>) => setF({ ...f, page: 1, ...patch });
   const q = useQuery({
     queryKey: ['works', f, month],
@@ -286,6 +287,7 @@ export default function Clients() {
             total={q.data?.total ?? 0}
             onPage={(page) => setF({ ...f, page })}
             onPageSize={(pageSize) => set({ pageSize })}
+            pageSizes={[50, 100, 500]}
           />
         </QueryState>
       </Card>

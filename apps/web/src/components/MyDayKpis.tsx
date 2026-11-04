@@ -7,16 +7,16 @@ import type { MyDay } from '@/lib/types';
 
 /**
  * Buxgalterning "Mening kunim" tepasidagi 5 ta ko'rsatkich — rahbar dashboard kartalari uslubida.
- * Sonlar d.stats'dan (joriy davr); diagramma bo'linmalari ustunlardagi joriy davr vazifalaridan hisoblanadi,
- * shunda yig'indi kartadagi son bilan mos keladi.
+ * Ochiq / kechikkan — barcha oylar (o'tgan oydan qolgan qarz ham, pastdagi ro'yxatlar bilan bir xil);
+ * "Shu oy bajarildi" va "O'z vaqtida" — joriy davr. Bo'linmalar ustunlardagi vazifalardan, yig'indi kartadagi son bilan mos.
  */
 export function MyDayKpis({ d }: { d: MyDay }) {
   const { t } = useTranslation();
-  const s = d.stats ?? { done: 0, doneOnTime: 0, doneToday: 0, open: 0, overdue: 0 };
+  const s = d.stats ?? { done: 0, doneOnTime: 0, doneToday: 0, open: 0, monthOpen: 0, overdue: 0 };
   const cur = <T extends { period: string }>(list?: T[]) => (list ?? []).filter((x) => x.period === d.period);
-  const todo = cur(d.columns?.TODO);
-  const inProgress = cur(d.columns?.IN_PROGRESS);
-  const waiting = cur(d.columns?.WAITING_CLIENT);
+  const todo = d.columns?.TODO ?? [];
+  const inProgress = d.columns?.IN_PROGRESS ?? [];
+  const waiting = d.columns?.WAITING_CLIENT ?? [];
   const doneList = cur(d.columns?.DONE);
   const open = [...todo, ...inProgress, ...waiting];
 
@@ -29,8 +29,8 @@ export function MyDayKpis({ d }: { d: MyDay }) {
   const todayLeft = d.groups?.today?.length ?? 0;
   const todayShare = pct(s.doneToday, s.doneToday + todayLeft);
 
-  // 4. Shu oy: bajarildi / jami (bajarildi + ochiq)
-  const monthTotal = s.done + s.open;
+  // 4. Shu oy: bajarildi / jami (bajarildi + shu oyning ochiqlari)
+  const monthTotal = s.done + s.monthOpen;
   const monthShare = pct(s.done, monthTotal);
 
   // 5. O'z vaqtida: d.stats bilan bir xil formula (done_at <= due_at); bo'linma — o'z vaqtida / kechikib / muddatsiz

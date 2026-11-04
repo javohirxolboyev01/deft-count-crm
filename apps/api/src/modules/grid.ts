@@ -37,9 +37,8 @@ export async function loadGrid(
   const params: unknown[] = [period];
   const p = (v: unknown) => (params.push(v), `$${params.length}`);
   if (f.accountantId) where.push(`c.accountant_id = ${p(f.accountantId)}`);
-  // Arxiv standart jadvalda ko'rinmaydi, faqat filtr bilan
+  // Jadval Excel faylidagidek: yuklangan har bir korxona ko'rinadi, Arxiv ham (holati katakda; rahbar qarori)
   if (f.status) where.push(`c.status = ${p(f.status)}`);
-  else where.push(`c.status <> 'ARCHIVED'`);
   if (f.search) where.push(`(c.name_normalized ILIKE ${p(`%${normalizeName(f.search)}%`)} OR c.stir LIKE ${p(`${f.search.replace(/\D/g, '') || '#'}%`)})`);
   if (f.clientIds) where.push(`c.id = ANY (${p(f.clientIds)}::bigint[])`);
   const cells = await q(

@@ -25,25 +25,36 @@ tasksRouter.use(requireAuth);
 const id = z.coerce.number().int().positive();
 
 // ---------- Mening kunim ----------
+/**
+ * Bosh sahifa = Buxgalter ishlari sahifasidagi ishlar (rahbar qarori): bo'limdagi mijozning doimiy ishlari va
+ * ish ustuni bor hisobot (INPS, routine_work_type.report_type_id) + rahbar bergan shoshilinch/qo'lda vazifalar.
+ * Hisobot topshirish vazifalari bu yerga kirmaydi — buxgalter u jadvalni faqat ko'radi.
+ */
+const WORKS_SCOPE = `(t.kind IN ('URGENT','MANUAL') OR (c.in_works AND (t.kind = 'ROUTINE' OR (t.kind = 'REPORT' AND t.report_type_id IN (
+  SELECT report_type_id FROM routine_work_type WHERE active AND report_type_id IS NOT NULL)))))`;
+
 tasksRouter.get('/my-day', async (req, res) => {
   const u = me(req);
   const period = currentPeriod();
   const tasks = await listTasks(
     pool,
-    [`t.assignee_id = $1`, `(t.status IN ('TODO','IN_PROGRESS','WAITING_CLIENT') OR (t.status = 'DONE' AND t.period = $2))`],
+    [`t.assignee_id = $1`, WORKS_SCOPE, `(t.status IN ('TODO','IN_PROGRESS','WAITING_CLIENT') OR (t.status = 'DONE' AND t.period = $2))`],
     [u.id, period],
   );
   const today = nowTz().toISODate();
   const open = tasks.filter((t: any) => t.status !== 'DONE');
   const isToday = (d: Date | null) => !!d && DateTime.fromJSDate(d).setZone(TZ).toISODate() === today;
+  // Ochiq / kechikkan / bugun bajarildi — barcha oylar (o'tgan oydan qolgan qarz ham, pastdagi ro'yxatlar bilan bir xil);
+  // done / doneOnTime / monthOpen — faqat joriy oy ("Shu oy bajarildi", "O'z vaqtida")
   const stats = await one(
     pool,
-    `SELECT count(*) FILTER (WHERE status = 'DONE')::int AS done,
-            count(*) FILTER (WHERE status = 'DONE' AND due_at IS NOT NULL AND done_at <= due_at)::int AS "doneOnTime",
-            count(*) FILTER (WHERE status = 'DONE' AND done_at >= date_trunc('day', now()))::int AS "doneToday",
-            count(*) FILTER (WHERE status IN ('TODO','IN_PROGRESS','WAITING_CLIENT'))::int AS open,
-            count(*) FILTER (WHERE status IN ('TODO','IN_PROGRESS','WAITING_CLIENT') AND due_at < now())::int AS overdue
-     FROM task WHERE assignee_id = $1 AND period = $2`,
+    `SELECT count(*) FILTER (WHERE t.status = 'DONE' AND t.period = $2)::int AS done,
+            count(*) FILTER (WHERE t.status = 'DONE' AND t.period = $2 AND t.due_at IS NOT NULL AND t.done_at <= t.due_at)::int AS "doneOnTime",
+            count(*) FILTER (WHERE t.status = 'DONE' AND t.done_at >= date_trunc('day', now()))::int AS "doneToday",
+            count(*) FILTER (WHERE t.status IN ('TODO','IN_PROGRESS','WAITING_CLIENT'))::int AS open,
+            count(*) FILTER (WHERE t.status IN ('TODO','IN_PROGRESS','WAITING_CLIENT') AND t.period = $2)::int AS "monthOpen",
+            count(*) FILTER (WHERE t.status IN ('TODO','IN_PROGRESS','WAITING_CLIENT') AND t.due_at < now())::int AS overdue
+     FROM task t JOIN client c ON c.id = t.client_id WHERE t.assignee_id = $1 AND ${WORKS_SCOPE}`,
     [u.id, period],
   );
   res.json({

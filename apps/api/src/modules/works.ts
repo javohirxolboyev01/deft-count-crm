@@ -304,8 +304,9 @@ export async function loadWorks(db: Db, u: AuthUser, f: z.infer<typeof clientLis
   const columns = await loadColumns(db);
   const params: unknown[] = [];
   const p = (v: unknown) => (params.push(v), `$${params.length}`);
-  // Faqat Buxgalter ishlari bo'limidagi mijozlar (V25: hisobot jadvalidan yuklanganlar bu yerda ko'rinmaydi)
-  const w = `${clientListWhere(u, f, p) || 'WHERE true'} AND c.in_works`;
+  // Faqat Buxgalter ishlari bo'limidagi mijozlar (V25: hisobot jadvalidan yuklanganlar bu yerda ko'rinmaydi).
+  // Jadval Excel faylidagidek: yuklangan har bir korxona ko'rinadi, Arxiv ham (rahbar qarori)
+  const w = `${clientListWhere(u, f, p, { includeArchived: true }) || 'WHERE true'} AND c.in_works`;
   const total = (await one<{ n: number }>(db, `SELECT count(*) AS n FROM client c ${w}`, params))!.n;
   const clients = await q(
     db,
