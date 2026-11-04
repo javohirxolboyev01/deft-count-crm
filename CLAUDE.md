@@ -48,7 +48,7 @@ Bu fayl loyiha ildizida `CLAUDE.md` nomi bilan turadi. Har bosqichda shu konteks
 - `lead` (operator bazasi, `client`dan alohida): stir (unique), name, director, phone, address, registered_at, status (NEW | NO_ANSWER | CALL_LATER | MEETING | HAS_ACCOUNTANT | REJECTED | WON | CONVERTED), next_call_date, converted_client_id; `lead_call`: har qo'ng'iroq natijasi + izoh. Rahbar Excel yuklaydi (STIR bo'yicha takror va mavjud mijozlar o'tkaziladi). HAS_ACCOUNTANT/REJECTED — yopiladi. WON — rahbarga bildirishnoma (`LEAD_WON`), operatorga ko'rinmaydi. Rahbar mijozga aylantiradi (CONVERTED). Qayta qo'ng'iroq eslatmasi faqat ilovada ("Bugun qo'ng'iroq" ro'yxati).
 - `client`: stir (unique), name, name_normalized, contact_person, phone, tax_type (AOS | QQS | NULL = importda tanilmagan, fayldagi matn `tax_type_raw`), tax_type_effective_from, accountant_id, status (ACTIVE | ZERO_REPORT | LIQUIDATING | ARCHIVED), note, in_reports / in_works (qaysi bo'limda, V25)
 - `client_tax_type_history`: client_id, tax_type, effective_from (rejim o'zgarsa hisobotlar shu sanadan almashadi)
-- `report_type`: code, name, frequency (MONTHLY | QUARTERLY | YEARLY), due_day, applies_to (AOS/QQS), active, creates_accountant_task (INPS = true, qolganlari = false, `TODO(tasdiqlash)`), generation_months (chorak: 1,4,7,10; yillik: 2)
+- `report_type`: code, name, frequency (MONTHLY | QUARTERLY | YEARLY), due_day, applies_to (AOS/QQS), active, creates_accountant_task (INPS = true, qolganlari = false — rahbar tasdiqlagan), generation_months (Foyda choraklik: 1,4,7,10 — V32, rahbar tasdiqlagan)
 - `routine_work_type`: name, order, active (ko'pi bilan 10 ta; boshlang'ich 8 ta)
 - `task`: client_id, kind (ROUTINE | REPORT | URGENT | MANUAL), type_id, period (YYYY-MM), title, note, assignee_id, due_at, status (TODO | IN_PROGRESS | WAITING_CLIENT | DONE), done_at, created_by
   - Unique: (client_id, kind, type_id, period) — takroriy generatsiyadan himoya.
@@ -89,14 +89,14 @@ Mas'ul shaxs telefoni faqat aloqa ma'lumoti (mijozga avtomatik xabar **yuborilma
 | AOS | oylik | 15-sana | ha | yo'q |
 | QQS | oylik | 20-sana | yo'q | ha |
 | INPS | oylik | hisobot oyidan keyingi oyning 15-kuni | ha | ha |
-| Poruchenya JShDS (to'lov topshiriqnomasi) | oylik, hamma mijoz | `TODO(tasdiqlash)`: muddat kuni | ha | ha |
-| Foyda solig'i | oylik | 20-sana | yo'q | ha |
+| Poruchenya JShDS (to'lov topshiriqnomasi) | oylik, hamma mijoz | rahbar sozlamadan kiritadi | ha | ha |
+| Foyda solig'i | choraklik (1,4,7,10-oylar), ustun jadvalda har oy — chorak oralig'ida oxirgi chorak vazifasi ko'rinadi (V32) | 20-sana | yo'q | ha |
 | Dividend hisoboti | holat bo'yicha: dividend to'langan oydan keyingi oyda | 20-sana (sozlamadan) | ha | ha |
 | Norezident foyda (norezident daromadidan to'lov manbaida ushlanadigan foyda solig'i) | holat bo'yicha: norezidentga daromad to'langan oydan keyingi oyda | 20-sana | yo'q | ha |
 | Norezident QQS (chet ellik shaxslardan olingan tovar/xizmat bo'yicha QQS) | holat bo'yicha: chet eldan tovar/xizmat olingan oydan keyingi oyda | 20-sana | yo'q | ha |
-| Moliyaviy natijalar | oylik | 15-sana | ha | ha |
-| Buxgalteriya balansi | oylik | 15-sana | ha | ha |
-| Statistika hisoboti | oylik | 15-sana | ha | ha |
+| Moliyaviy natijalar (yillik) | har oy chiqadi (rahbar qarori) | muddatsiz | ha | ha |
+| Buxgalteriya balansi (yillik) | har oy chiqadi (rahbar qarori) | muddatsiz | ha | ha |
+| Statistika hisoboti (yillik) | har oy chiqadi (rahbar qarori) | muddatsiz | ha | ha |
 
 #### Asosiy qoida: soliq turi va "X"
 
@@ -119,7 +119,7 @@ Korxonalar 2 sinfga bo'linadi: **QQS to'lovchi** va **AOS to'lovchi**. QQS to'lo
 
 - Generatsiya har oyning 1-kuni; muddat shu oy ichida (Oktyabrda INPS = 15.10, dividend = 20.10).
 - Muddat kunlari va "qaysi soliq turiga qaysi hisobot" qoidasi **ma'lumot sifatida** (`report_type`), kodga qotirilmaydi. Qonun o'zgarsa rahbar sozlamadan tuzatadi.
-- Holat bo'yicha hisobotlar (`report_type.requires_event_flag`: Dividend, Norezident foyda, Norezident QQS): mijoz kartasida har biri uchun alohida belgi — holat bo'lgan oy (`client_report_event`, faqat joriy yoki o'tgan oy). Hisobot **keyingi** oyda chiqadi ("hisobot oyidan keyingi oyning 20 kunigacha"). Kartada esa **topshirish oyi** ko'rsatiladi ("Oktyabr · 20.10 gacha" = sentabr holati): sahifa va Excel ham topshirish oyi bo'yicha. Belgini rahbar ham, buxgalter ham qo'yadi. Importda shu ustunda 0/1 = holat bo'lgan (belgi qo'yiladi), X = holat yo'q.
+- Holat bo'yicha hisobotlar (`report_type.requires_event_flag`: Dividend, Norezident foyda, Norezident QQS): kartada belgi yo'q — Hisobot topshirish jadvalida topshirish oyi katagiga **faqat rahbar** 1 / 0 / X qo'yadi (V30, faqat o'z oyi; buxgalter faqat ko'radi). Hisobot holat oyidan **keyingi** oyda topshiriladi ("hisobot oyidan keyingi oyning 20 kunigacha"); `client_report_event` (holat oyi) import va eski belgilar uchun qoladi. Importda shu ustunda 0/1 = holat bo'lgan (belgi qo'yiladi), X = holat yo'q.
 - Soliq turi o'zgarsa (`effective_from`), hisobotlar ro'yxati shu sanadan almashadi; o'tgan davrlar o'zgarmaydi.
 
 ### 6.4 Vazifa holatlari
@@ -201,6 +201,4 @@ Haqiqiy jadval ustunlari:
 
 ## 10. Hali ochiq masalalar (`TODO(tasdiqlash)`)
 
-1. Poruchenya JShDS muddat kuni.
-2. "Qolgan hisobotlarni o'zimiz topshiramiz": hozircha faqat INPS buxgalterga vazifa (`creates_accountant_task`), qolganlari oylik jadvalda ko'rinadi. Tasdiqlansa bayroq o'zgartiriladi.
-3. JShDS/To'lov manbai/AOS/QQS muddati oy: jadvaldagi sarlavha (15.10, 20.10) bo'yicha joriy oyda deb olingan.
+1. JShDS/To'lov manbai/AOS/QQS muddati oy: jadvaldagi sarlavha (15.10, 20.10) bo'yicha joriy oyda deb olingan.

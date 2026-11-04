@@ -53,7 +53,7 @@ describe('vazifa generatori', () => {
       (await one(pool, `SELECT count(*)::int AS n FROM task WHERE client_id = $1 AND period = '2026-11-01' AND kind = $2`, [id, kind])).n;
     expect(await count(active, 'ROUTINE')).toBe(7);
     expect(await count(zero, 'ROUTINE')).toBe(0);
-    expect(await count(zero, 'REPORT')).toBe(9); // QQS: dividend (belgisiz) va AOS'dan tashqari hammasi
+    expect(await count(zero, 'REPORT')).toBe(8); // QQS: dividend (belgisiz), AOS va Foyda (noyabr chorak oyi emas, V32) dan tashqari hammasi
     expect(await count(liq, 'ROUTINE') + (await count(liq, 'REPORT'))).toBe(0);
     const inps = await one(
       pool,
@@ -76,10 +76,13 @@ describe('vazifa generatori', () => {
     for (const r of rows) expect(r.assignee_id).toBe(r.code === 'INPS' ? team.acc1 : null);
   });
 
-  it('Foyda va yillik hisobotlar har oy; yillik hisobotda muddat yo\'q (V13, V16)', async () => {
+  it('yillik hisobotlar har oy, muddatsiz (V16); Foyda faqat chorak oyida (V32)', async () => {
     const c = await client('306234567', 'QQS');
+    await gen('2026-10-01');
     await gen('2026-11-01');
-    expect(await reportCodes(c, '2026-11-01')).toEqual(expect.arrayContaining(['FOYDA', 'MOLIYAVIY_NATIJA', 'BALANS', 'STATISTIKA']));
+    expect(await reportCodes(c, '2026-11-01')).toEqual(expect.arrayContaining(['MOLIYAVIY_NATIJA', 'BALANS', 'STATISTIKA']));
+    expect(await reportCodes(c, '2026-11-01')).not.toContain('FOYDA');
+    expect(await reportCodes(c, '2026-10-01')).toContain('FOYDA');
     const t = await one<any>(
       pool,
       `SELECT t.due_at, rt.frequency FROM task t JOIN report_type rt ON rt.id = t.report_type_id
@@ -90,8 +93,7 @@ describe('vazifa generatori', () => {
   });
 
   it('jadvalda choraklik/yillik ustunlar har oy: katak oxirgi generatsiya davri vazifasidan', async () => {
-    // Seed'da hammasi oylik (V13); mexanizm choraklik/yillik tur uchun tekshiriladi
-    await pool.query(`UPDATE report_type SET frequency = 'QUARTERLY', generation_months = '{1,4,7,10}' WHERE code = 'FOYDA'`);
+    // Foyda seed'da choraklik (V32); yillik hisobotlar har oy (V16), mexanizm yillik tur uchun ham tekshiriladi
     await pool.query(`UPDATE report_type SET frequency = 'YEARLY', generation_months = '{2}', due_day = 15 WHERE code = 'BALANS'`);
     const c = await client('306234567', 'QQS');
     await gen('2026-10-01');
