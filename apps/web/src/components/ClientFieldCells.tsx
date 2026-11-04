@@ -9,6 +9,7 @@ import { Select, type SelectOption } from '@/components/ui/select';
 import { api } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { errorText } from '@/lib/errors';
+import type { TaxType } from '@/lib/types';
 
 /**
  * "Buxgalter ishlari" jadvalidagi mijoz maydonlari Excel'dagidek katak ichida tahrirlanadi.
@@ -18,7 +19,7 @@ import { errorText } from '@/lib/errors';
 export type ClientPatch = Partial<{
   stir: string;
   name: string;
-  taxType: 'AOS' | 'QQS';
+  taxType: TaxType;
   status: string;
   monthlyFee: number | null;
   accountantId: number | null;

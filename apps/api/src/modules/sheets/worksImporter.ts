@@ -319,8 +319,7 @@ export async function importWorks(
       await db.query('DELETE FROM client_routine_raw WHERE client_id = $1 AND routine_type_id = $2', [clientId, col.routineTypeId]);
       const rt = routines.find((x) => x.id === col.routineTypeId)!;
       const month = month1(d);
-      // Hisobotga bog'langan ish (INPS) keyingi oyda topshiriladi: vazifa davri = ish oyi + 1 (works.ts workOffset)
-      const off = rt.reportTypeId ? 1 : 0;
+      // Vazifa davri = ish oyi (V36: INPS ham)
       const first = await one<{ p: string | null }>(
         db,
         `SELECT to_char(min(period), 'YYYY-MM-DD') AS p FROM task
@@ -328,7 +327,7 @@ export async function importWorks(
            AND ((kind = 'ROUTINE' AND routine_type_id = $2) OR (kind = 'REPORT' AND report_type_id = $3))`,
         [clientId, rt.id, rt.reportTypeId],
       );
-      const firstWork = first?.p ? addMonths(first.p, -off) : null;
+      const firstWork = first?.p ?? null;
       // Tizimgacha bo'lgan oxirgi oy: fayldagi oy yoki (tizim davriga kirsa) birinchi vazifadan oldingi oy
       const baseline = firstWork && month >= firstWork ? addMonths(firstWork, -1) : month;
       if (baseline <= addMonths(now, -1)) {
@@ -364,7 +363,7 @@ export async function importWorks(
            WHERE client_id = $1 AND status IN ('TODO', 'IN_PROGRESS', 'WAITING_CLIENT') AND period <= $4
              AND ((kind = 'ROUTINE' AND routine_type_id = $2) OR (kind = 'REPORT' AND report_type_id = $3))
            ORDER BY period`,
-          [clientId, rt.id, rt.reportTypeId, addMonths(month, off)],
+          [clientId, rt.id, rt.reportTypeId, month],
         );
         for (const t of open) {
           // Import paytida rahbarlarga ommaviy xabar yuborilmaydi

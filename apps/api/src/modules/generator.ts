@@ -50,9 +50,9 @@ export async function generatePeriod(db: Db, period: string, clientId: number | 
      INSERT INTO task (client_id, kind, report_type_id, period, title, assignee_id, due_at, status, overdue_notified_at)
      SELECT a.client_id, 'REPORT', a.report_type_id, $1, rt.name,
             CASE WHEN rt.creates_accountant_task THEN c.accountant_id END,
-            fn_due_at($1, rt.due_day, $3), 'TODO',
+            fn_report_due_at($1, rt.due_day, $3), 'TODO',
             -- oy o'rtasida yaratilib muddati allaqachon o'tgan bo'lsa (yangi hisobot turi, kech generatsiya) xabar yuborilmaydi
-            CASE WHEN fn_due_at($1, rt.due_day, $3) < now() THEN now() END
+            CASE WHEN fn_report_due_at($1, rt.due_day, $3) < now() THEN now() END
      FROM a
      JOIN report_type rt ON rt.id = a.report_type_id
      JOIN client c ON c.id = a.client_id
@@ -63,8 +63,8 @@ export async function generatePeriod(db: Db, period: string, clientId: number | 
 
   // 2) Oylik doimiy ishlar: qo'llanishi fn_routine_applicability'da (V31) — ACTIVE, soliq turi aniqlangan (V24),
   //    Buxgalter ishlari bo'limidagi (V25 in_works), rahbarning qo'lda tanlovi (V31) ustun. INPS kabi hisobotga
-  //    bog'langan ish, hisobot qo'llansa alohida yaratilmaydi (bitta vazifa). Muddat: oyning oxirgi kuni.
-  //    TODO(tasdiqlash): doimiy ishlar muddati oy oxiri deb olindi.
+  //    bog'langan ish, hisobot qo'llansa alohida yaratilmaydi (bitta vazifa). Muddat: buxgalteriya 1 oy orqada (V34) —
+  //    ish oyidan keyingi oyning due_day-kuni (fn_work_due_at; belgilanmagan bo'lsa keyingi oy oxiri, INPS — hisobot muddati).
   const RA = `WITH ra AS (SELECT client_id, routine_type_id FROM fn_routine_applicability($1)
                          WHERE applicable AND ($2::bigint IS NULL OR client_id = $2))`;
   const reopenedRoutines = await q(
@@ -81,7 +81,7 @@ export async function generatePeriod(db: Db, period: string, clientId: number | 
     db,
     `${RA}
      INSERT INTO task (client_id, kind, routine_type_id, period, title, assignee_id, due_at, status)
-     SELECT c.id, 'ROUTINE', w.id, $1, w.name, c.accountant_id, fn_due_at($1, 31, $3), 'TODO'
+     SELECT c.id, 'ROUTINE', w.id, $1, w.name, c.accountant_id, fn_work_due_at($1, w.id, $3), 'TODO'
      FROM ra
      JOIN client c ON c.id = ra.client_id
      JOIN routine_work_type w ON w.id = ra.routine_type_id
@@ -105,8 +105,8 @@ export async function generatePeriod(db: Db, period: string, clientId: number | 
      INSERT INTO task (client_id, kind, report_type_id, period, title, assignee_id, due_at, status, overdue_notified_at)
      SELECT a.client_id, 'REPORT', a.report_type_id, a.period, rt.name,
             CASE WHEN rt.creates_accountant_task THEN c.accountant_id END,
-            fn_due_at(a.period, rt.due_day, $3), 'TODO',
-            CASE WHEN fn_due_at(a.period, rt.due_day, $3) < now() THEN now() END
+            fn_report_due_at(a.period, rt.due_day, $3), 'TODO',
+            CASE WHEN fn_report_due_at(a.period, rt.due_day, $3) < now() THEN now() END
      FROM a
      JOIN report_type rt ON rt.id = a.report_type_id
      JOIN client c ON c.id = a.client_id

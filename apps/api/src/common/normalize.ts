@@ -34,12 +34,13 @@ export function headerKey(s: string): string {
   return transliterate(s).toUpperCase().replace(/[^A-Z0-9]/g, '');
 }
 
-/** AOC/AOS/АОС/ҚҚС/QQS/НДС -> 'AOS' | 'QQS' | null */
-export function normalizeTaxType(raw: string | null | undefined): 'AOS' | 'QQS' | null {
+/** AOC/AOS/АОС/ҚҚС/QQS/НДС/ЯТТ/YaTT -> 'AOS' | 'QQS' | 'YATT' | null */
+export function normalizeTaxType(raw: string | null | undefined): 'AOS' | 'QQS' | 'YATT' | null {
   if (!raw) return null;
   const k = headerKey(raw);
   if (['AOS', 'AOC', 'AOSTOLOVCHI', 'AOCTOLOVCHI'].includes(k) || k.startsWith('AOS') || k.startsWith('AOC')) return 'AOS';
   if (['QQS', 'KKS', 'NDS'].includes(k) || k.startsWith('QQS') || k.startsWith('KKS')) return 'QQS';
+  if (['YATT', 'IP'].includes(k)) return 'YATT';
   return null;
 }
 

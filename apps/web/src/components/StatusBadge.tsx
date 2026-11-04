@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next';
 import { Badge } from './ui/card';
-import type { CellState, ClientStatus, TaskStatus, TaxType } from '@/lib/types';
+import { type CellState, type ClientStatus, type TaskStatus, type TaxType, taxTypeLabel } from '@/lib/types';
 
 const taskCls: Record<TaskStatus, string> = {
   TODO: 'border-gray-300 bg-gray-50 text-gray-700',
@@ -38,8 +38,8 @@ export function TaxBadge({ taxType, raw }: { taxType: TaxType | null; raw?: stri
     );
   }
   return (
-    <Badge className={taxType === 'QQS' ? 'border-indigo-200 bg-indigo-50 text-indigo-700' : 'border-teal-200 bg-teal-50 text-teal-700'}>
-      {taxType}
+    <Badge className={taxType === 'QQS' ? 'border-indigo-200 bg-indigo-50 text-indigo-700' : taxType === 'YATT' ? 'border-violet-200 bg-violet-50 text-violet-700' : 'border-teal-200 bg-teal-50 text-teal-700'}>
+      {taxTypeLabel(taxType)}
     </Badge>
   );
 }

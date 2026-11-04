@@ -28,7 +28,7 @@ describe('vazifa generatori', () => {
     expect(await reportCodes(qqs, '2026-10-01')).toEqual(['JSHDS', 'TOLOV_MANBAI', 'QQS', 'FOYDA', 'INPS', 'PORUCHENYA_JSHDS', 'MOLIYAVIY_NATIJA', 'BALANS', 'STATISTIKA']);
   });
 
-  it('muddatlar: INPS 15.10, QQS 20.10, Poruchenya NULL (TODO)', async () => {
+  it('muddatlar keyingi oyda (V36): oktyabr INPS 25.11, QQS 20.11, Foyda 20.11, Poruchenya NULL (TODO)', async () => {
     const qqs = await client('306234567', 'QQS');
     await gen('2026-10-01');
     const rows = await q(
@@ -38,10 +38,30 @@ describe('vazifa generatori', () => {
       [qqs],
     );
     const due = Object.fromEntries(rows.map((r) => [r.code, r.due]));
-    expect(due.INPS).toBe('15.10.2026 18:00');
-    expect(due.QQS).toBe('20.10.2026 18:00');
-    expect(due.FOYDA).toBe('20.10.2026 18:00');
+    expect(due.INPS).toBe('25.11.2026 18:00');
+    expect(due.QQS).toBe('20.11.2026 18:00');
+    expect(due.FOYDA).toBe('20.11.2026 18:00');
     expect(due.PORUCHENYA_JSHDS).toBeNull();
+  });
+
+  it("doimiy ish muddati (V34): ish oyidan keyingi oyda (Ish haqi 5, Bank 10, Kirim 15, Chiqim 10, Debitor 20, Oyni yopish 20)", async () => {
+    const id = await client('305123460', 'AOS');
+    await gen('2026-10-01');
+    const rows = await q(
+      pool,
+      `SELECT w.name, to_char(t.due_at, 'DD.MM.YYYY') AS due FROM task t JOIN routine_work_type w ON w.id = t.routine_type_id
+       WHERE t.client_id = $1 AND t.period = '2026-10-01' AND t.kind = 'ROUTINE'`,
+      [id],
+    );
+    expect(Object.fromEntries(rows.map((r) => [r.name, r.due]))).toMatchObject({
+      'Ish haqi hisoblash': '05.11.2026',
+      'Bank aylanmalarini kiritish': '10.11.2026',
+      'Kirim hisobvaraq-fakturalarini kiritish': '15.11.2026',
+      'Chiqim hisobvaraq-fakturalarini kiritish': '10.11.2026',
+      'Debitor-kreditorlar bilan ishlash': '20.11.2026',
+      'Oyni yopish': '20.11.2026',
+      'Boshqa ishlar': '30.11.2026',
+    });
   });
 
   it('ACTIVE: 7 ta doimiy ish (INPS bitta vazifa), ZERO_REPORT: faqat hisobot, LIQUIDATING: hech narsa', async () => {
@@ -101,8 +121,8 @@ describe('vazifa generatori', () => {
     const g = await loadGrid(pool, '2026-11-01', {});
     const col = (code: string) => g.columns.find((x: any) => x.code === code) as any;
     const cell = (code: string) => g.rows[0].cells[col(code).reportTypeId];
-    expect(col('FOYDA').dueDate).toBe('2026-10-20');
-    expect(col('BALANS').dueDate).toBe('2026-02-15');
+    expect(col('FOYDA').dueDate).toBe('2026-11-20'); // oktyabr choragi, muddat keyingi oyda (V36)
+    expect(col('BALANS').dueDate).toBe('2026-03-15');
     const src = async (taskId: number | null) =>
       one<any>(pool, `SELECT to_char(period, 'YYYY-MM-DD') AS period, overdue_notified_at FROM task WHERE id = $1`, [taskId]);
     expect((await src(cell('FOYDA').taskId))!.period).toBe('2026-10-01');
@@ -113,9 +133,9 @@ describe('vazifa generatori', () => {
     expect(cell('BALANS').state).toBe('!');
   });
 
-  it('holat bo\'yicha hisobot: belgi holat oyiga, hisobot keyingi oyda (V20)', async () => {
+  it('holat bo\'yicha hisobot: holat oyi katagida, muddat keyingi oyda (V36)', async () => {
     const c = await client('306234567', 'QQS');
-    // Oktyabrda norezidentga daromad to'landi -> noyabr vazifasi, muddat 20.11
+    // Oktyabrda norezidentga daromad to'landi -> oktyabr vazifasi, muddat noyabrda
     await pool.query(
       `INSERT INTO client_report_event (client_id, report_type_id, month)
        SELECT $1, id, '2026-10' FROM report_type WHERE code IN ('NOREZIDENT_FOYDA', 'DIVIDEND')`,
@@ -124,10 +144,9 @@ describe('vazifa generatori', () => {
     await gen('2026-10-01');
     await gen('2026-11-01');
     await gen('2026-12-01');
-    expect(await reportCodes(c, '2026-10-01')).not.toContain('NOREZIDENT_FOYDA');
-    expect(await reportCodes(c, '2026-11-01')).toEqual(expect.arrayContaining(['NOREZIDENT_FOYDA', 'DIVIDEND']));
-    expect(await reportCodes(c, '2026-11-01')).not.toContain('NOREZIDENT_QQS'); // alohida belgi
-    expect(await reportCodes(c, '2026-12-01')).not.toContain('NOREZIDENT_FOYDA');
+    expect(await reportCodes(c, '2026-10-01')).toEqual(expect.arrayContaining(['NOREZIDENT_FOYDA', 'DIVIDEND']));
+    expect(await reportCodes(c, '2026-10-01')).not.toContain('NOREZIDENT_QQS'); // alohida belgi
+    expect(await reportCodes(c, '2026-11-01')).not.toContain('NOREZIDENT_FOYDA');
     const t = await one<any>(
       pool,
       `SELECT to_char(t.due_at AT TIME ZONE 'Asia/Tashkent', 'DD.MM.YYYY') AS due FROM task t

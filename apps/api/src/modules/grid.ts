@@ -25,7 +25,7 @@ export async function loadGrid(
     db,
     `SELECT rt.id AS "reportTypeId", rt.code, rt.name, rt.name_ru AS "nameRu", rt.due_day AS "dueDay",
             rt.creates_accountant_task AS "createsAccountantTask",
-            to_char(fn_due_at(g.source_period, rt.due_day, $2) AT TIME ZONE 'Asia/Tashkent', 'YYYY-MM-DD') AS "dueDate"
+            to_char(fn_report_due_at(g.source_period, rt.due_day, $2) AT TIME ZONE 'Asia/Tashkent', 'YYYY-MM-DD') AS "dueDate"
      FROM fn_grid_columns($1) g
      JOIN report_type rt ON rt.id = g.report_type_id
      WHERE g.source_period IS NOT NULL
@@ -95,9 +95,9 @@ export async function loadGrid(
 
   // Qat'iy "—" faqat soliq turi / tugatilmoqda / mijoz istisnosi sabab. Holat bo'yicha hisobot (Dividend, Norezident)
   // holati belgilanmagan bo'lsa (NO_EVENT) — topshirilishi mumkin, katakda "0"; bosilsa belgi qo'yiladi (markable).
-  // Ko'rilayotgan oy = topshirish oyi, belgi holat oyiga (bir oy oldin) yoziladi; server faqat joriy va o'tgan holat
-  // oyini qabul qiladi (clients.ts).
-  const eventMonth = monthOf(addMonthsIso(period, -1));
+  // Holat belgisi o'z oyi katagida (V36: holat oyi = hisobot oyi, muddat keyingi oyda); server faqat joriy va o'tgan
+  // holat oyini qabul qiladi (clients.ts).
+  const eventMonth = monthOf(period);
   const cur = currentPeriod();
   const eventEditable = eventMonth === monthOf(cur) || eventMonth === monthOf(addMonthsIso(cur, -1));
   if (rows.size) {
@@ -126,7 +126,7 @@ gridRouter.get('/', async (req, res) => {
     z.object({
       month: z.string().optional(),
       accountantId: z.coerce.number().int().optional(),
-      taxType: z.enum(['AOS', 'QQS', 'NONE']).optional(),
+      taxType: z.enum(['AOS', 'QQS', 'YATT', 'NONE']).optional(),
       status: z.enum(CLIENT_STATUSES).optional(),
       search: z.string().trim().optional(),
     }),
@@ -186,7 +186,7 @@ gridRouter.get('/export.xlsx', async (req, res) => {
       i + 1,
       r.stir ?? r.stirRaw ?? '',
       r.name,
-      r.taxType ?? r.taxTypeRaw ?? '',
+      (r.taxType === 'YATT' ? 'YaTT' : r.taxType) ?? r.taxTypeRaw ?? '',
       ...g.columns.map((c: any) => {
         // Soliq turi aniqlanmagan: fayldagi qiymat boricha (qayta yuklansa o'sha natija)
         if (!r.taxType || r.cells[c.reportTypeId]?.raw !== undefined) return r.cells[c.reportTypeId]?.raw ?? '';
@@ -337,9 +337,9 @@ async function syncReportTask(db: Db, clientId: number, reportTypeId: number, pe
       db,
       `INSERT INTO task (client_id, kind, report_type_id, period, title, assignee_id, due_at, status, overdue_notified_at)
        SELECT c.id, 'REPORT', rt.id, $3, rt.name, CASE WHEN rt.creates_accountant_task THEN c.accountant_id END,
-              fn_due_at($3, rt.due_day, $4), 'TODO',
+              fn_report_due_at($3, rt.due_day, $4), 'TODO',
               -- muddati allaqachon o'tgan bo'lsa "muddat o'tdi" xabari yuborilmaydi (generator bilan bir xil)
-              CASE WHEN fn_due_at($3, rt.due_day, $4) < now() THEN now() END
+              CASE WHEN fn_report_due_at($3, rt.due_day, $4) < now() THEN now() END
        FROM client c, report_type rt WHERE c.id = $1 AND rt.id = $2
        RETURNING id, title`,
       [clientId, reportTypeId, period, dueTime],
@@ -378,4 +378,42 @@ gridRouter.put('/cell', requireLeader, async (req, res) => {
     req.body,
   );
   res.json(await tx((db) => setGridCell(db, me(req), body)));
+});
+
+/**
+ * Shartnoma tugadi: mijoz Hisobot topshirish va Buxgalter ishlari jadvallaridan olib tashlanadi (faqat rahbar).
+ * Qaror: mijoz o'chirilmaydi — in_reports = in_works = false (V25). Ma'lumot, tarix va audit qoladi; keyingi Excel
+ * faylida yoki "Yangi mijoz"da shu STIR kelsa o'sha bo'limga qaytadi.
+ * Ochiq vazifalari (barcha oylar, barcha turlar) bekor qilinadi, bajarilganlari tegilmaydi.
+ * TODO(tasdiqlash): jadvallarning o'tgan oylarida ham ko'rinmaydi (bo'lim belgisi davrga bog'liq emas).
+ */
+gridRouter.delete('/clients/:clientId', requireLeader, async (req, res) => {
+  const clientId = parse(z.coerce.number().int().positive(), req.params.clientId);
+  const actorId = me(req).id;
+  res.json(
+    await tx(async (db) => {
+      const client = await one<{ inWorks: boolean }>(db, 'SELECT in_works AS "inWorks" FROM client WHERE id = $1 AND in_reports FOR UPDATE', [clientId]);
+      if (!client) throw notFound('Mijoz');
+      await db.query('UPDATE client SET in_reports = false, in_works = false WHERE id = $1', [clientId]);
+      await audit(db, {
+        actorId, entity: 'client', entityId: clientId, clientId, action: 'CONTRACT_ENDED',
+        before: { inReports: true, inWorks: client.inWorks }, after: { inReports: false, inWorks: false },
+      });
+      const cancelled = await q<{ id: number; title: string; prevStatus: string }>(
+        db,
+        `UPDATE task SET prev_status = status, status = 'CANCELLED', cancel_reason = 'CONTRACT_ENDED'
+         WHERE client_id = $1 AND status IN ('TODO', 'IN_PROGRESS', 'WAITING_CLIENT')
+         RETURNING id, title, prev_status AS "prevStatus"`,
+        [clientId],
+      );
+      for (const t of cancelled) {
+        await stopTimersForTask(db, t.id);
+        await audit(db, {
+          actorId, entity: 'task', entityId: t.id, clientId, action: 'CANCEL_CONTRACT_ENDED',
+          before: { status: t.prevStatus }, after: { status: 'CANCELLED', title: t.title },
+        });
+      }
+      return { clientId, cancelled: cancelled.length };
+    }),
+  );
 });

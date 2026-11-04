@@ -79,7 +79,7 @@ export default function Dashboard() {
 
       {!!clients.data?.overdueTasks.length && (
         <Card className="border-l-4 border-l-overdue">
-          <CardHeader title={<span className="flex items-center gap-2 text-overdue"><AlertTriangle className="h-4 w-4" /> {t('dashboard.alerts')} ({clients.data.overdueTasks.length})</span>} />
+          <CardHeader title={<span className="flex items-center gap-2 text-overdue"><AlertTriangle className="h-4 w-4" /> {t('dashboard.alerts')} ({clients.data.summary.tasksOverdue})</span>} />
           <ul className="max-h-72 divide-y overflow-y-auto text-sm">
             {clients.data.overdueTasks.map((o) => (
               <li key={o.id}>

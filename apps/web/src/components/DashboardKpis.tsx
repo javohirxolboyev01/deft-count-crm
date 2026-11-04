@@ -144,17 +144,18 @@ export function TopBars({ items, total, dot = 'bg-overdue' }: { items: [string, 
 /** 2. Tayyor mijozlar: donut (tayyor / qolgan), markazda ulush */
 function ReadyCard({ s }: { s: DashboardClients['summary'] }) {
   const { t } = useTranslation();
-  const share = pct(s.ready, s.clients);
+  // Maxraj — vazifasi bor mijozlar (vazifasizlar hech qachon "tayyor" bo'lmaydi)
+  const share = pct(s.ready, s.withTasks);
   return (
     <KpiCard title={t('dashboard.ready')}>
-      <BigValue value={s.ready} unit={`/ ${s.clients}`} className="text-done" />
+      <BigValue value={s.ready} unit={`/ ${s.withTasks}`} className="text-done" />
       <div className="mt-auto flex items-center gap-3 pt-3">
-        <Donut share={share} tip={<Tip label={t('dashboard.kpi.readyShort')} value={`${s.ready} / ${s.clients}`} dot="bg-done" share={share} />} />
+        <Donut share={share} tip={<Tip label={t('dashboard.kpi.readyShort')} value={`${s.ready} / ${s.withTasks}`} dot="bg-done" share={share} />} />
         <div className="min-w-0 flex-1">
           <Legend
             items={[
               { label: t('dashboard.kpi.readyShort'), value: s.ready, dot: 'bg-done' },
-              { label: t('dashboard.kpi.rest'), value: s.clients - s.ready, dot: 'bg-gray-200' },
+              { label: t('dashboard.kpi.rest'), value: s.withTasks - s.ready, dot: 'bg-gray-200' },
             ]}
           />
         </div>
@@ -220,7 +221,7 @@ function OverdueCard({ data }: { data: DashboardClients }) {
   }
   const top = [...by.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3);
   return (
-    <KpiCard title={t('dashboard.overdueClients')} pill={s.overdue ? <Pill tone="overdue" icon={AlertTriangle} tip={<Tip label={t('dashboard.alerts')} value={s.tasksOverdue} />}><CountUp value={pct(s.overdue, s.clients)} />%</Pill> : undefined}>
+    <KpiCard title={t('dashboard.overdueClients')} pill={s.overdue ? <Pill tone="overdue" icon={AlertTriangle} tip={<Tip label={t('dashboard.alerts')} value={s.tasksOverdue} />}><CountUp value={pct(s.overdue, s.withTasks)} />%</Pill> : undefined}>
       <BigValue value={s.overdue} unit={t('dashboard.kpi.clientsUnit')} className={s.overdue ? 'text-overdue' : undefined} />
       {top.length ? (
         <div className="mt-auto pt-3"><TopBars items={top} total={s.overdue} /></div>
@@ -233,13 +234,13 @@ function OverdueCard({ data }: { data: DashboardClients }) {
   );
 }
 
-/** 5. Vazifalar: bajarildi / kechikkan / ochiq — bo'lakli chiziq + legenda */
+/** 5. Vazifalar (joriy oy): bajarildi / kechikkan / ochiq — bo'lakli chiziq + legenda */
 function TasksCard({ s }: { s: DashboardClients['summary'] }) {
   const { t } = useTranslation();
-  const open = Math.max(0, s.tasksTotal - s.tasksDone - s.tasksOverdue);
+  const open = Math.max(0, s.tasksTotal - s.tasksDone - s.tasksOverdueMonth);
   const parts = [
     { label: t('dashboard.kpi.doneShort'), value: s.tasksDone, dot: 'bg-done' },
-    { label: t('dashboard.overdue'), value: s.tasksOverdue, dot: 'bg-overdue' },
+    { label: t('dashboard.overdue'), value: s.tasksOverdueMonth, dot: 'bg-overdue' },
     { label: t('dashboard.kpi.open'), value: open, dot: 'bg-gray-300' },
   ];
   return (

@@ -14,10 +14,10 @@ import { getOverdueReminder, overdueReminderSchema, reminderDays } from './overd
 // istisno — hisobot muddat kuni: joriy va keyingi davrlarning ochiq vazifalari ham yangi muddatga o'tadi.
 
 const REPORT = `id, code, name, name_ru AS "nameRu", frequency, due_day AS "dueDay", generation_months AS "generationMonths",
-  applies_to_aos AS "appliesToAos", applies_to_qqs AS "appliesToQqs", creates_accountant_task AS "createsAccountantTask",
+  applies_to_aos AS "appliesToAos", applies_to_qqs AS "appliesToQqs", applies_to_yatt AS "appliesToYatt", creates_accountant_task AS "createsAccountantTask",
   requires_event_flag AS "requiresEventFlag", sheet_aliases AS "sheetAliases", active, sort_order AS "sortOrder"`;
 const ROUTINE = `id, name, name_ru AS "nameRu", sort_order AS "sortOrder", active, report_type_id AS "reportTypeId",
-  is_free_text AS "isFreeText", effective_from AS "effectiveFrom"`;
+  is_free_text AS "isFreeText", effective_from AS "effectiveFrom", due_day AS "dueDay"`;
 
 export const settingsRouter = Router();
 settingsRouter.use(requireAuth);
@@ -40,6 +40,7 @@ settingsRouter.patch('/report-types/:id', requireLeader, async (req, res) => {
       generationMonths: z.array(z.number().int().min(1).max(12)).min(1).nullable().optional(),
       appliesToAos: z.boolean().optional(),
       appliesToQqs: z.boolean().optional(),
+      appliesToYatt: z.boolean().optional(),
       createsAccountantTask: z.boolean().optional(),
       requiresEventFlag: z.boolean().optional(),
       sheetAliases: z.array(z.string().trim().min(2).max(50)).optional(),
@@ -61,7 +62,8 @@ settingsRouter.patch('/report-types/:id', requireLeader, async (req, res) => {
          creates_accountant_task = coalesce($10, creates_accountant_task),
          requires_event_flag = coalesce($11, requires_event_flag),
          sheet_aliases = coalesce($12, sheet_aliases),
-         active = coalesce($13, active), sort_order = coalesce($14, sort_order)
+         active = coalesce($13, active), sort_order = coalesce($14, sort_order),
+         applies_to_yatt = coalesce($15, applies_to_yatt)
        WHERE id = $1 RETURNING ${REPORT}`,
       [
         id,
@@ -78,6 +80,7 @@ settingsRouter.patch('/report-types/:id', requireLeader, async (req, res) => {
         body.sheetAliases ? body.sheetAliases.map((a) => a.toUpperCase()) : null,
         body.active ?? null,
         body.sortOrder ?? null,
+        body.appliesToYatt ?? null,
       ],
     );
     const d = diff(before, body);
@@ -87,13 +90,22 @@ settingsRouter.patch('/report-types/:id', requireLeader, async (req, res) => {
     let retimed = 0;
     if (body.dueDay !== undefined && body.dueDay !== before.dueDay) {
       const moved = await db.query(
-        `UPDATE task SET due_at = fn_due_at(period, $2, $4),
-                overdue_notified_at = CASE WHEN fn_due_at(period, $2, $4) < now() THEN coalesce(overdue_notified_at, now()) END
+        `UPDATE task SET due_at = fn_report_due_at(period, $2, $4),
+                overdue_notified_at = CASE WHEN fn_report_due_at(period, $2, $4) < now() THEN coalesce(overdue_notified_at, now()) END
          WHERE kind = 'REPORT' AND report_type_id = $1 AND period >= $3
            AND status IN ('TODO', 'IN_PROGRESS', 'WAITING_CLIENT')`,
         [id, body.dueDay, currentPeriod(), await getDueTime(db)],
       );
-      retimed = moved.rowCount ?? 0;
+      // Hisobotga bog'langan doimiy ish (INPS, mijoz faqat Buxgalter ishlarida) ham shu muddatda
+      const linked = await db.query(
+        `UPDATE task t SET due_at = fn_work_due_at(t.period, t.routine_type_id, $3),
+                overdue_notified_at = CASE WHEN fn_work_due_at(t.period, t.routine_type_id, $3) < now() THEN coalesce(t.overdue_notified_at, now()) END
+         FROM routine_work_type w
+         WHERE w.id = t.routine_type_id AND w.report_type_id = $1 AND t.kind = 'ROUTINE' AND t.period >= $2
+           AND t.status IN ('TODO', 'IN_PROGRESS', 'WAITING_CLIENT')`,
+        [id, currentPeriod(), await getDueTime(db)],
+      );
+      retimed = (moved.rowCount ?? 0) + (linked.rowCount ?? 0);
     }
     if (d.changed) {
       await audit(db, { actorId: u.id, entity: 'report_type', entityId: id, action: 'UPDATE', before: d.before, after: retimed ? { ...d.after, tasksRetimed: retimed } : d.after });
@@ -157,6 +169,8 @@ settingsRouter.patch('/routine-works/:id', requireLeader, async (req, res) => {
       sortOrder: z.number().int().optional(),
       active: z.boolean().optional(),
       isFreeText: z.boolean().optional(),
+      // Keyingi oyning nechanchi kunigacha (V34); null — keyingi oy oxiri
+      dueDay: z.number().int().min(1).max(31).nullable().optional(),
     }),
     req.body,
   );
@@ -170,14 +184,27 @@ settingsRouter.patch('/routine-works/:id', requireLeader, async (req, res) => {
       db,
       `UPDATE routine_work_type SET name = coalesce($2, name), name_ru = coalesce($3, name_ru),
          sort_order = coalesce($4, sort_order), active = coalesce($5, active), is_free_text = coalesce($6, is_free_text),
+         due_day = CASE WHEN $7 THEN $8::int ELSE due_day END,
          -- Qayta yoqilgan ish ham keyingi oydan chiqadi
          effective_from = CASE WHEN $5 IS TRUE AND NOT active
                                THEN (date_trunc('month', now()) + interval '1 month')::date ELSE effective_from END
        WHERE id = $1 RETURNING ${ROUTINE}`,
-      [id, body.name ?? null, body.nameRu ?? null, body.sortOrder ?? null, body.active ?? null, body.isFreeText ?? null],
+      [id, body.name ?? null, body.nameRu ?? null, body.sortOrder ?? null, body.active ?? null, body.isFreeText ?? null, body.dueDay !== undefined, body.dueDay ?? null],
     );
     const d = diff(before, body);
-    if (d.changed) await audit(db, { actorId: u.id, entity: 'routine_work_type', entityId: id, action: 'UPDATE', before: d.before, after: d.after });
+    // Muddat kuni hisobotdagidek darhol: ochiq vazifalar (bajarilmagan barcha oylar) yangi muddatga o'tadi
+    let retimed = 0;
+    if (body.dueDay !== undefined && body.dueDay !== before.dueDay) {
+      const dueTime = await getDueTime(db);
+      const moved = await db.query(
+        `UPDATE task SET due_at = fn_work_due_at(period, $1, $2),
+                overdue_notified_at = CASE WHEN fn_work_due_at(period, $1, $2) < now() THEN coalesce(overdue_notified_at, now()) END
+         WHERE kind = 'ROUTINE' AND routine_type_id = $1 AND status IN ('TODO', 'IN_PROGRESS', 'WAITING_CLIENT')`,
+        [id, dueTime],
+      );
+      retimed = moved.rowCount ?? 0;
+    }
+    if (d.changed) await audit(db, { actorId: u.id, entity: 'routine_work_type', entityId: id, action: 'UPDATE', before: d.before, after: retimed ? { ...d.after, tasksRetimed: retimed } : d.after });
     return r;
   });
   res.json(row);

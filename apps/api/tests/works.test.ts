@@ -16,6 +16,8 @@ const ids: Record<string, number> = {};
 
 const P = currentPeriod();
 const month = (n: number) => DateTime.fromISO(P).plus({ months: n }).toFormat('yyyy-MM');
+// O'tgan oy ishining muddati joriy oyning 5–20-sanasida (V34): test sanaga bog'liq bo'lmasin — muddat o'tgan deb olinadi
+const pastDue = () => pool.query(`UPDATE task SET due_at = now() - interval '1 hour' WHERE kind = 'ROUTINE' AND period = $1`, [`${month(-1)}-01`]);
 const cell = async (who: ReturnType<typeof api>, clientId: number, work: string) => {
   const r = await who.get('/api/works?pageSize=100');
   return r.body.items.find((i: any) => i.clientId === clientId).cells[ids[work]];
@@ -32,6 +34,7 @@ beforeAll(async () => {
   zero = await tx((db) => createClient(db, { stir: '307345678', name: 'NOL MCHJ', taxType: 'AOS', status: 'ZERO_REPORT', accountantId: team.acc1 }, team.leader));
   // O'tgan oy vazifalari ham bor (muddati o'tgan), joriy oy createClient'da yaratilgan
   await tx((db) => generatePeriod(db, `${month(-1)}-01`));
+  await pastDue();
   for (const [k, name] of [['inps', 'INPS hisoboti'], ['salary', 'Ish haqi hisoblash'], ['bank', 'Bank aylanmalarini kiritish']]) {
     ids[k] = (await one(pool, 'SELECT id FROM routine_work_type WHERE name = $1', [name])).id;
   }
@@ -49,14 +52,14 @@ describe('oylik ishlar (/api/works)', () => {
     expect(a.body.items.map((i: any) => i.clientId).sort()).toEqual([aos, zero].sort());
   });
 
-  it('o\'tgan oy ochiq: orqada 1 oy, qizil; INPS ustuni hisobot vazifasidan (ish oyi = davr - 1)', async () => {
+  it('o\'tgan oy ochiq: orqada 1 oy, qizil; INPS ustuni hisobot vazifasidan (ish oyi = davr, V36)', async () => {
     const salary = await cell(A1, aos, 'salary');
     expect(salary).toMatchObject({ na: false, doneThrough: null, lag: 1, tone: 'overdue' });
     expect(salary.next).toMatchObject({ kind: 'TASK', month: month(-1) });
     const inps = await cell(A1, aos, 'inps');
     const t = await one(pool, `SELECT kind, to_char(period, 'YYYY-MM') AS period FROM task WHERE id = $1`, [inps.next.taskId]);
     expect(t).toEqual({ kind: 'REPORT', period: month(-1) });
-    expect(inps.next.month).toBe(month(-2));
+    expect(inps.next.month).toBe(month(-1));
   });
 
   it('nol hisobot mijozda doimiy ishlar chiqmaydi (—), INPS hisoboti esa bor', async () => {
@@ -181,6 +184,7 @@ describe("tanlangan oy ko'rinishi (/api/works?month=)", () => {
   beforeAll(async () => {
     c = await tx((db) => createClient(db, { stir: '309111222', name: 'OY MCHJ', taxType: 'AOS', status: 'ACTIVE', accountantId: team.acc1 }, team.leader));
     await tx((db) => generatePeriod(db, `${month(-1)}-01`));
+    await pastDue();
   });
 
   it("katakda shu oy vazifasi: o'tgan oy muddati o'tgan, joriy oy ochiq; bajarilsa done", async () => {
@@ -194,11 +198,11 @@ describe("tanlangan oy ko'rinishi (/api/works?month=)", () => {
     expect((await at(month(1), 'salary')).state).toBe('na');
   });
 
-  it("INPS ish oyi bo'yicha: o'tgan oy ishi = joriy oy vazifasi, joriy oy hali chiqmagan", async () => {
+  it("INPS ish oyi bo'yicha (V36): oy ishi = shu oy vazifasi, muddat keyingi oyning 25-kuni", async () => {
     const prev = await at(month(-1), 'inps');
-    const task = await one(pool, `SELECT to_char(period, 'YYYY-MM') AS p FROM task WHERE id = $1`, [prev.taskId]);
-    expect(task.p).toBe(month(0));
-    expect((await at(month(0), 'inps')).state).toBe('na');
+    const task = await one(pool, `SELECT to_char(period, 'YYYY-MM') AS p, to_char(due_at AT TIME ZONE 'Asia/Tashkent', 'YYYY-MM-DD') AS due FROM task WHERE id = $1`, [prev.taskId]);
+    expect(task).toEqual({ p: month(-1), due: `${month(0)}-25` });
+    expect((await at(month(0), 'inps')).taskId).toBeTruthy();
   });
 
   it("tizimgacha bo'lgan oylar boshlang'ich nuqtadan: faqat navbatdagi oy bosiladi", async () => {
@@ -243,14 +247,14 @@ describe("Excel kabi ish katagi: PUT /api/works/cell (V31)", () => {
     expect((await one(pool, 'SELECT status FROM task WHERE id = $1', [open.taskId])).status).toBe('CANCELLED');
   });
 
-  it("tanlov keyingi oyga o'tadi; INPS ish oyi bo'yicha (joriy oy ishi = keyingi oy vazifasi)", async () => {
+  it("tanlov keyingi oyga o'tadi; INPS ish oyi bo'yicha (joriy oy ishi = joriy oy vazifasi, V36)", async () => {
     await put(L, 'bank', month(-1), '0');
     expect(['overdue', 'open']).toContain((await at(month(-1), 'bank')).state);
     expect(['open', 'soon']).toContain((await at(month(0), 'bank')).state);
     const r = await put(L, 'inps', month(0), '1');
     expect(r.status).toBe(200);
     const task = await one(pool, `SELECT to_char(period, 'YYYY-MM') AS p, status FROM task WHERE id = $1`, [r.body.task.id]);
-    expect(task).toMatchObject({ p: month(1), status: 'DONE' });
+    expect(task).toMatchObject({ p: month(0), status: 'DONE' });
     expect((await at(month(0), 'inps')).state).toBe('done');
   });
 

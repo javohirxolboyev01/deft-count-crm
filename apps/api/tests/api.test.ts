@@ -1,5 +1,6 @@
 import request from 'supertest';
 import { beforeAll, describe, expect, it } from 'vitest';
+import { addMonthsIso, currentPeriod, monthOf } from '../src/common/time';
 import { dispatchDue, remindOverdue } from '../src/modules/notifications';
 import { api, app, createUser, one, pool, q, resetDb, seedTeam, token } from './helpers';
 
@@ -123,6 +124,35 @@ describe('mijozlar', () => {
   it('qidiruv: kirillcha so\'rov lotin nomni topadi', async () => {
     const r = await L.get('/api/clients?search=' + encodeURIComponent('шерпром'));
     expect(r.body.items.map((c: any) => c.id)).toContain(aosClient);
+  });
+
+  it("oy joyida, muddat keyingi oyda (V36): oktyabr katagi = oktyabr vazifasi, sarlavhada 15.11 / 20.11 / 25.11", async () => {
+    const cur = currentPeriod();
+    const next = monthOf(addMonthsIso(cur, 1));
+    const g = await L.get('/api/monthly-grid');
+    expect(g.body.period).toBe(monthOf(cur));
+    const col = (code: string) => g.body.columns.find((c: any) => c.code === code);
+    expect(col('JSHDS').dueDate).toBe(`${next}-15`);
+    expect(col('QQS').dueDate).toBe(`${next}-20`);
+    expect(col('INPS').dueDate).toBe(`${next}-25`);
+    const cell = g.body.rows.find((r: any) => r.clientId === aosClient).cells[col('JSHDS').reportTypeId];
+    const t = await one(pool, `SELECT to_char(period, 'YYYY-MM') AS p, to_char(due_at AT TIME ZONE 'Asia/Tashkent', 'YYYY-MM-DD') AS due FROM task WHERE id = $1`, [cell.taskId]);
+    expect(t).toEqual({ p: monthOf(cur), due: `${next}-15` });
+  });
+
+  it("doimiy ish muddati Sozlamadan (keyingi oyning N-kuni); ochiq vazifalar yangi muddatga o'tadi", async () => {
+    const w = (await L.get('/api/settings/routine-works')).body.find((x: any) => x.name === 'Ish haqi hisoblash');
+    expect(w.dueDay).toBe(5);
+    expect((await A1.patch(`/api/settings/routine-works/${w.id}`, { dueDay: 7 })).status).toBe(403);
+    expect((await L.patch(`/api/settings/routine-works/${w.id}`, { dueDay: 7 })).status).toBe(200);
+    const t = await one(
+      pool,
+      `SELECT to_char(due_at AT TIME ZONE 'Asia/Tashkent', 'YYYY-MM-DD') AS due, to_char(period, 'YYYY-MM') AS p FROM task
+       WHERE kind = 'ROUTINE' AND routine_type_id = $1 AND status = 'TODO' ORDER BY period DESC LIMIT 1`,
+      [w.id],
+    );
+    expect(t.due).toBe(`${monthOf(addMonthsIso(`${t.p}-01`, 1))}-07`);
+    await L.patch(`/api/settings/routine-works/${w.id}`, { dueDay: 5 });
   });
 
   it('soliq turi o\'zgarishi tarixga yoziladi va oylik jadval yangilanadi', async () => {
@@ -430,6 +460,42 @@ describe("yangi mijoz sahifaning o'z bo'limiga qo'shiladi", () => {
     expect((await one(pool, `SELECT count(*)::int AS n FROM task WHERE client_id = $1 AND kind = 'ROUTINE'`, [id])).n).toBeGreaterThan(0);
     expect((await A1.post('/api/clients', { ...body, stir: '402000002', section: 'WORKS' })).status).toBe(403);
   });
+
+  it("YaTT: faqat applies_to_yatt hisobotlari chiqadi (boshlang'ich: AOS), qolgani X", async () => {
+    const r = await L.post('/api/clients', { stir: '402000004', name: 'YATT TADBIRKOR', taxType: 'YATT', status: 'ACTIVE', section: 'REPORTS' });
+    expect(r.status).toBe(201);
+    expect(r.body.taxType).toBe('YATT');
+    const g = await L.get('/api/monthly-grid?search=402000004&taxType=YATT');
+    const cols = Object.fromEntries(g.body.columns.map((c: any) => [c.code, c.reportTypeId]));
+    const cells = g.body.rows[0].cells;
+    expect(['0', '!']).toContain(cells[cols.AOS].state);
+    for (const code of ['QQS', 'JSHDS', 'TOLOV_MANBAI', 'INPS']) expect(cells[cols[code]].state).toBe('X');
+  });
+
+  it("shartnoma tugadi: rahbar mijozni olib tashlaydi — Hisobot topshirish va Buxgalter ishlaridan, ochiq vazifalar bekor, bajarilgani qoladi", async () => {
+    const body = { stir: '402000003', name: 'KETADI MCHJ', taxType: 'AOS', status: 'ACTIVE' };
+    const id = (await L.post('/api/clients', { ...body, section: 'REPORTS' })).body.id;
+    await L.post('/api/clients', { ...body, section: 'WORKS' });
+    expect((await one(pool, `SELECT count(*)::int AS n FROM task WHERE client_id = $1 AND kind = 'ROUTINE'`, [id])).n).toBeGreaterThan(0);
+    const [done] = await q(pool, `SELECT id FROM task WHERE client_id = $1 AND kind = 'REPORT' ORDER BY id LIMIT 1`, [id]);
+    await pool.query(`UPDATE task SET status = 'DONE', done_at = now() WHERE id = $1`, [done.id]);
+
+    // Faqat rahbar
+    expect((await A1.del(`/api/monthly-grid/clients/${id}`)).status).toBe(403);
+    const del = await L.del(`/api/monthly-grid/clients/${id}`);
+    expect(del.status).toBe(200);
+    expect(del.body.cancelled).toBeGreaterThan(0);
+    expect((await L.get('/api/monthly-grid?search=402000003')).body.rows).toHaveLength(0);
+    expect((await L.get('/api/works?search=402000003')).body.items).toHaveLength(0);
+    // Mijoz o'chirilmaydi; ochiq vazifa qolmaydi, bajarilgani DONE
+    expect(await one(pool, 'SELECT in_reports, in_works FROM client WHERE id = $1', [id])).toEqual({ in_reports: false, in_works: false });
+    expect((await one(pool, `SELECT count(*)::int AS n FROM task WHERE client_id = $1 AND status IN ('TODO', 'IN_PROGRESS', 'WAITING_CLIENT')`, [id])).n).toBe(0);
+    expect((await one(pool, 'SELECT status FROM task WHERE id = $1', [done.id])).status).toBe('DONE');
+    expect((await one(pool, `SELECT count(*)::int AS n FROM audit_log WHERE client_id = $1 AND action = 'CONTRACT_ENDED'`, [id])).n).toBe(1);
+    // Takror — 404; "Yangi mijoz"da shu STIR qayta kelsa o'sha bo'limga qaytadi
+    expect((await L.del(`/api/monthly-grid/clients/${id}`)).status).toBe(404);
+    expect((await L.post('/api/clients', { ...body, section: 'REPORTS' })).body).toMatchObject({ id, joined: true });
+  });
 });
 
 describe('shoshilinch vazifa va dashboard', () => {
@@ -455,7 +521,16 @@ describe('shoshilinch vazifa va dashboard', () => {
     const db = await one(pool, `SELECT count(*)::int AS total, count(*) FILTER (WHERE status = 'DONE')::int AS done FROM task WHERE period = date_trunc('month', now())::date AND status <> 'CANCELLED'`);
     expect(d.body.summary.tasksTotal).toBe(db.total);
     expect(d.body.summary.tasksDone).toBe(db.done);
-    const a = await L.get('/api/dashboard/accountants');
+    // Kechikish barcha oylar bo'yicha (ro'yxat sarlavhasi), "Vazifalar" kartasi — faqat joriy oy
+    const od = await one(
+      pool,
+      `SELECT count(*)::int AS n, count(*) FILTER (WHERE period = date_trunc('month', now())::date)::int AS month
+       FROM task WHERE status IN ('TODO','IN_PROGRESS','WAITING_CLIENT') AND due_at < now()`,
+    );
+    expect(d.body.summary.tasksOverdue).toBe(od.n);
+    expect(d.body.summary.tasksOverdueMonth).toBe(od.month);
+    expect(d.body.summary.withTasks).toBe(d.body.clients.filter((c: any) => c.state !== 'NONE').length);
+    const a =await L.get('/api/dashboard/accountants');
     const acc1 = a.body.accountants.find((x: any) => x.id === team.acc1);
     const open = await one(pool, `SELECT count(*)::int AS n FROM task WHERE assignee_id = $1 AND status IN ('TODO','IN_PROGRESS','WAITING_CLIENT')`, [team.acc1]);
     expect(acc1.openTasks).toBe(open.n);

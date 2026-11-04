@@ -25,8 +25,8 @@ import { api, qs } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
 import { errorText } from '@/lib/errors';
-import { currentMonth, monthLabel, shiftMonth } from '@/lib/time';
-import { type AdvanceResult, CLIENT_STATUSES, type Task, type WorkCell, type WorkColumn, type WorkState, type Works, type WorksRow } from '@/lib/types';
+import { currentMonth, monthLabel, shiftMonth, workDueDate } from '@/lib/time';
+import { type AdvanceResult, CLIENT_STATUSES, TAX_TYPE_OPTIONS, type Task, type WorkCell, type WorkColumn, type WorkState, type Works, type WorksRow } from '@/lib/types';
 
 // "Oylik ishlar" ("Бухгалтер ишлари" fayli): qatorda mijoz, ustunda doimiy ish, katakda tanlangan oy ishining
 // holati ("Hisobot topshirish"dagidek oyma-oy). Holat serverda vazifalardan hisoblanadi (works.ts, ?month=).
@@ -191,7 +191,7 @@ export default function Clients() {
               options={[{ value: 'none', label: t('clients.noAccountant') }, ...(accountants.data?.map((a) => ({ value: String(a.id), label: a.fullName })) ?? [])]}
             />
           )}
-          <Select className="w-auto min-w-44" value={f.taxType} onChange={(v) => set({ taxType: v })} aria-label={t('clients.taxType')} placeholder={t('clients.allTaxTypes')} clearable options={[{ value: 'AOS', label: 'AOS' }, { value: 'QQS', label: 'QQS' }, { value: 'NONE', label: t('clients.taxNone') }]} />
+          <Select className="w-auto min-w-44" value={f.taxType} onChange={(v) => set({ taxType: v })} aria-label={t('clients.taxType')} placeholder={t('clients.allTaxTypes')} clearable options={[...TAX_TYPE_OPTIONS, { value: 'NONE', label: t('clients.taxNone') }]} />
           <Select className="w-auto min-w-44" value={f.status} onChange={(v) => set({ status: v })} aria-label={t('clients.status')} placeholder={t('clients.allStatuses')} clearable options={CLIENT_STATUSES.map((s) => ({ value: s, label: t(`clientStatus.${s}`) }))} />
           <div className="ml-auto flex flex-wrap gap-3 text-xs text-gray-600">
             {LEGEND.map((s) => (
@@ -231,7 +231,7 @@ export default function Clients() {
                       g.label ? (
                         <th key={g.key} colSpan={g.cols.length} className={cn(TH, 'border-b border-b-brand-400 text-center')} style={bgAt(g.cols[0])}>{g.label}</th>
                       ) : (
-                        <WorkTh key={g.key} label={colLabel(g.cols[0])} title={colName(g.cols[0])} rowSpan={2} style={bgAt(g.cols[0])} />
+                        <WorkTh key={g.key} label={colLabel(g.cols[0])} title={colName(g.cols[0])} due={workDueDate(month, g.cols[0].dueDay)} rowSpan={2} style={bgAt(g.cols[0])} />
                       ),
                     )}
                     <th rowSpan={2} className={cn(TH, NOTE_CLS, 'border-r-0 px-3')} style={sectionBg(columns.length * WORK_W, sectionW)}>{t('works.note')}</th>
@@ -241,7 +241,7 @@ export default function Clients() {
                     <th className={cn(TH, 'min-w-[92px] text-center')}>{t('works.checkedAt')}</th>
                     <th className={cn(TH, 'min-w-[120px]')}>{t('works.login')}</th>
                     <th className={cn(TH, 'min-w-[150px]')}>{t('works.password')}</th>
-                    {headGroups.filter((g) => g.label).flatMap((g) => g.cols.map((c) => <WorkTh key={c.routineTypeId} label={colLabel(c)} title={colName(c)} style={bgAt(c)} />))}
+                    {headGroups.filter((g) => g.label).flatMap((g) => g.cols.map((c) => <WorkTh key={c.routineTypeId} label={colLabel(c)} title={colName(c)} due={workDueDate(month, c.dueDay)} style={bgAt(c)} />))}
                   </tr>
                 </thead>
                 <tbody>
@@ -300,10 +300,12 @@ export default function Clients() {
   );
 }
 
-function WorkTh({ label, title, rowSpan, style }: { label: string; title: string; rowSpan?: number; style?: React.CSSProperties }) {
+/** Ish sarlavhasi; ostida tanlangan oy ishining muddati (Hisobot topshirish sarlavhasidagidek) */
+function WorkTh({ label, title, due, rowSpan, style }: { label: string; title: string; due: string; rowSpan?: number; style?: React.CSSProperties }) {
   return (
     <th rowSpan={rowSpan} className={cn(TH, 'w-[108px] min-w-[108px] max-w-[108px] text-center')} title={title} style={style}>
       <div className="line-clamp-2 whitespace-normal leading-tight">{label}</div>
+      <div className="font-normal text-on-brand/80">{due}</div>
     </th>
   );
 }

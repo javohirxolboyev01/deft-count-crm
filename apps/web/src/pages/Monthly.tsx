@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronLeft, ChevronRight, FileSpreadsheet, FileText, Plus } from 'lucide-react';
+import { ChevronLeft, ChevronRight, FileSpreadsheet, FileText, Plus, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
@@ -25,7 +25,7 @@ import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
 import { errorText } from '@/lib/errors';
 import { currentMonth, fmtIsoDate, monthLabel, shiftMonth } from '@/lib/time';
-import { type CellState, CLIENT_STATUSES, type Grid, type Task } from '@/lib/types';
+import { type CellState, CLIENT_STATUSES, type Grid, TAX_TYPE_OPTIONS, type Task, type TaxType, taxTypeLabel } from '@/lib/types';
 
 const CELL = REPORT_CELL;
 
@@ -69,7 +69,9 @@ export default function Monthly() {
   });
   // Soliq turi almashsa ochiq vazifalar bekor qilinadi: tasdiqlanadi (birinchi marta tanlash — tasdiqsiz)
   const [newOpen, setNewOpen] = useState(false);
-  const [taxConfirm, setTaxConfirm] = useState<{ clientId: number; from: string; to: 'AOS' | 'QQS' } | null>(null);
+  const [taxConfirm, setTaxConfirm] = useState<{ clientId: number; from: string; to: TaxType } | null>(null);
+  // Shartnoma tugadi: rahbar mijozni jadvaldan olib tashlaydi (tasdiq bilan)
+  const [removing, setRemoving] = useState<{ clientId: number; name: string } | null>(null);
   // ?search=: "Qo'lda tekshirish" ro'yxatidan korxona bosilganda (detail sahifa yo'q — jadvalning o'zida tuzatiladi)
   const [params] = useSearchParams();
   const [f, setF] = useState({ accountantId: '', taxType: '', status: '', search: params.get('search') ?? '' });
@@ -165,7 +167,7 @@ export default function Monthly() {
               options={accountants.data?.map((a) => ({ value: String(a.id), label: a.fullName })) ?? []}
             />
           )}
-          <Select className="w-auto min-w-44" value={f.taxType} onChange={(v) => setF({ ...f, taxType: v })} aria-label={t('clients.taxType')} placeholder={t('clients.allTaxTypes')} clearable options={[{ value: 'AOS', label: 'AOS' }, { value: 'QQS', label: 'QQS' }, { value: 'NONE', label: t('clients.taxNone') }]} />
+          <Select className="w-auto min-w-44" value={f.taxType} onChange={(v) => setF({ ...f, taxType: v })} aria-label={t('clients.taxType')} placeholder={t('clients.allTaxTypes')} clearable options={[...TAX_TYPE_OPTIONS, { value: 'NONE', label: t('clients.taxNone') }]} />
           <Select className="w-auto min-w-44" value={f.status} onChange={(v) => setF({ ...f, status: v })} aria-label={t('clients.status')} placeholder={t('clients.allStatuses')} clearable options={CLIENT_STATUSES.map((s) => ({ value: s, label: t(`clientStatus.${s}`) }))} />
           <div className="ml-auto flex flex-wrap gap-3 text-xs text-gray-600">
             {(['1', '0', '!', 'X'] as CellState[]).map((s) => (
@@ -197,7 +199,9 @@ export default function Monthly() {
                         {!NO_DUE_DATE.has(c.code) && <div className="font-normal text-on-brand/80">{c.dueDate ? fmtIsoDate(c.dueDate) : '—'}</div>}
                       </th>
                     ))}
-                    <th className="sticky top-0 z-10 w-[300px] min-w-[300px] max-w-[300px] px-3 py-2.5 text-left text-xs">{t('monthly.note')}</th>
+                    <th className={cn('sticky top-0 z-10 w-[300px] min-w-[300px] max-w-[300px] px-3 py-2.5 text-left text-xs', isLeader && 'border-r border-brand-400')}>{t('monthly.note')}</th>
+                    {/* Shartnoma tugadi: mijozni jadvaldan olib tashlash — faqat rahbar (server ham requireLeader) */}
+                    {isLeader && <th className="sticky top-0 z-10 w-16 min-w-16 px-2 py-2.5 text-center text-xs">{t('monthly.removeCol')}</th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -244,7 +248,20 @@ export default function Monthly() {
                           </td>
                         );
                       })}
-                      <NoteCell clientId={r.clientId} clientName={r.name} note={r.note} readOnly={!isLeader} />
+                      <NoteCell clientId={r.clientId} clientName={r.name} note={r.note} readOnly={!isLeader} className={cn(isLeader && 'border-r')} />
+                      {isLeader && (
+                        <td className="border-b px-1 text-center">
+                          <button
+                            type="button"
+                            className="inline-flex h-8 w-8 items-center justify-center rounded text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/40"
+                            title={t('monthly.remove')}
+                            aria-label={`${r.name} — ${t('monthly.remove')}`}
+                            onClick={() => setRemoving({ clientId: r.clientId, name: r.name })}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>
@@ -256,6 +273,7 @@ export default function Monthly() {
       <p className="mt-2 shrink-0 text-xs text-gray-500">{t(isLeader ? 'monthly.hint' : 'monthly.hintReadOnly')}</p>
       {printData && createPortal(<PrintTable {...printData} colShort={colShort} />, document.body)}
       {taxConfirm && <TaxConfirm {...taxConfirm} onClose={() => setTaxConfirm(null)} />}
+      {isLeader && removing && <RemoveClientConfirm {...removing} onClose={() => setRemoving(null)} />}
       {isLeader && newOpen && <NewReportClientDialog onClose={() => setNewOpen(false)} onCreated={(stir) => setF({ accountantId: '', taxType: '', status: '', search: stir })} />}
     </div>
   );
@@ -272,7 +290,7 @@ function ClientCells({
   row: Grid['rows'][number];
   isLeader: boolean;
   review: React.ReactNode;
-  onTaxChange: (c: { clientId: number; from: string; to: 'AOS' | 'QQS' }) => void;
+  onTaxChange: (c: { clientId: number; from: string; to: TaxType }) => void;
 }) {
   const { t } = useTranslation();
   const save = useClientPatch(r.clientId);
@@ -297,14 +315,14 @@ function ClientCells({
       <td className="border-b border-r px-0.5 text-center text-xs">
         <SelectCell
           value={r.taxType ?? ''}
-          options={[{ value: 'AOS', label: 'AOS' }, { value: 'QQS', label: 'QQS' }]}
+          options={TAX_TYPE_OPTIONS}
           clearable={false}
           placeholder={r.taxTypeRaw ? `${r.taxTypeRaw} ?` : t('clients.taxNone')}
           readOnly={ro}
-          display={r.taxType ?? <span className="rounded bg-amber-50 px-1 font-medium text-amber-800" title={t('clients.taxNoneHint')}>{r.taxTypeRaw || t('clients.taxNone')} ?</span>}
+          display={r.taxType ? taxTypeLabel(r.taxType) : <span className="rounded bg-amber-50 px-1 font-medium text-amber-800" title={t('clients.taxNoneHint')}>{r.taxTypeRaw || t('clients.taxNone')} ?</span>}
           label={`${r.name} — ${t('clients.taxType')}`}
           onChange={(v) => {
-            const to = v as 'AOS' | 'QQS';
+            const to = v as TaxType;
             if (!v || to === r.taxType) return;
             if (r.taxType) onTaxChange({ clientId: r.clientId, from: r.taxType, to });
             else save.mutate({ taxType: to });
@@ -333,7 +351,7 @@ function ClientCells({
 function NewReportClientDialog({ onClose, onCreated }: { onClose: () => void; onCreated: (stir: string) => void }) {
   const { t } = useTranslation();
   const qc = useQueryClient();
-  const [form, setForm] = useState({ stir: '', name: '', taxType: '' as '' | 'AOS' | 'QQS', status: 'ACTIVE', note: '' });
+  const [form, setForm] = useState({ stir: '', name: '', taxType: '' as '' | TaxType, status: 'ACTIVE', note: '' });
   const set = (patch: Partial<typeof form>) => setForm({ ...form, ...patch });
   const create = useMutation({
     mutationFn: () =>
@@ -380,7 +398,7 @@ function NewReportClientDialog({ onClose, onCreated }: { onClose: () => void; on
         </Field>
         <Field label={t('monthly.company')} htmlFor="nr-name"><Input id="nr-name" required value={form.name} onChange={(e) => set({ name: e.target.value })} /></Field>
         <Field label={t('clients.taxType')} htmlFor="nr-tax">
-          <Select id="nr-tax" value={form.taxType} placeholder={t('clients.chooseTax')} onChange={(v) => set({ taxType: v as 'AOS' | 'QQS' })} options={[{ value: 'AOS', label: 'AOS' }, { value: 'QQS', label: 'QQS' }]} />
+          <Select id="nr-tax" value={form.taxType} placeholder={t('clients.chooseTax')} onChange={(v) => set({ taxType: v as TaxType })} options={TAX_TYPE_OPTIONS} />
         </Field>
         <Field label={t('clients.status')} htmlFor="nr-status">
           <Select id="nr-status" value={form.status} onChange={(v) => set({ status: v })} options={(['ACTIVE', 'ZERO_REPORT', 'LIQUIDATING'] as const).map((s) => ({ value: s, label: t(`clientStatus.${s}`) }))} />
@@ -400,7 +418,7 @@ const parseStir = (raw: string) => {
   return d.length === 9 ? d : undefined;
 };
 
-function TaxConfirm({ clientId, from, to, onClose }: { clientId: number; from: string; to: 'AOS' | 'QQS'; onClose: () => void }) {
+function TaxConfirm({ clientId, from, to, onClose }: { clientId: number; from: string; to: TaxType; onClose: () => void }) {
   const { t } = useTranslation();
   const save = useClientPatch(clientId);
   return (
@@ -415,7 +433,38 @@ function TaxConfirm({ clientId, from, to, onClose }: { clientId: number; from: s
         </>
       }
     >
-      <p className="text-sm">{t('clients.confirmTaxBody', { from, to, date: t('clients.thisMonth') })}</p>
+      <p className="text-sm">{t('clients.confirmTaxBody', { from: taxTypeLabel(from), to: taxTypeLabel(to), date: t('clients.thisMonth') })}</p>
+    </Dialog>
+  );
+}
+
+/** Shartnoma tugadi: mijoz Hisobot topshirish va Buxgalter ishlaridan olib tashlanadi (server: ikkala bo'lim belgisi false, ochiq vazifalar bekor) */
+function RemoveClientConfirm({ clientId, name, onClose }: { clientId: number; name: string; onClose: () => void }) {
+  const { t } = useTranslation();
+  const qc = useQueryClient();
+  const remove = useMutation({
+    mutationFn: () => api.del(`/monthly-grid/clients/${clientId}`),
+    onSuccess: () => {
+      toast.success(t('monthly.removed'));
+      invalidateTasks(qc);
+      for (const key of ['grid', 'works', 'clients']) void qc.invalidateQueries({ queryKey: [key] });
+      onClose();
+    },
+    onError: (e) => toast.error(errorText(e, t)),
+  });
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      title={t('monthly.removeTitle')}
+      footer={
+        <>
+          <Button variant="outline" onClick={onClose}>{t('common.cancel')}</Button>
+          <Button variant="danger" loading={remove.isPending} onClick={() => remove.mutate()}>{t('monthly.remove')}</Button>
+        </>
+      }
+    >
+      <p className="text-sm">{t('monthly.removeBody', { name })}</p>
     </Dialog>
   );
 }
@@ -481,7 +530,7 @@ function PrintTable({
               <td className="c">{i + 1}</td>
               <td className="nowrap">{r.stir ?? r.stirRaw}</td>
               <td>{r.name}</td>
-              <td className="c nowrap">{r.taxType ?? r.taxTypeRaw}</td>
+              <td className="c nowrap">{r.taxType ? taxTypeLabel(r.taxType) : r.taxTypeRaw}</td>
               {g.columns.map((c) => {
                 const cell = r.cells[c.reportTypeId];
                 if (!r.taxType || cell?.raw !== undefined) return <td key={c.reportTypeId} className="c">{cell?.raw}</td>;

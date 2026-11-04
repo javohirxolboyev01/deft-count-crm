@@ -15,6 +15,9 @@ describe('normalizatsiya', () => {
     expect(normalizeTaxType('aos')).toBe('AOS');
     expect(normalizeTaxType('ҚҚС')).toBe('QQS');
     expect(normalizeTaxType('QQS')).toBe('QQS');
+    expect(normalizeTaxType('ЯТТ')).toBe('YATT');
+    expect(normalizeTaxType('YaTT')).toBe('YATT');
+    expect(normalizeTaxType('Қ АОС')).toBeNull();
     expect(normalizeTaxType('boshqa')).toBeNull();
   });
 

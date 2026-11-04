@@ -6,7 +6,7 @@ import { toast } from 'sonner';
 import { useAccountants } from '@/hooks/tasks';
 import { api } from '@/lib/api';
 import { errorText } from '@/lib/errors';
-import type { ClientStatus, Lead, TaxType } from '@/lib/types';
+import { type ClientStatus, type Lead, TAX_TYPE_OPTIONS, type TaxType } from '@/lib/types';
 import { Button } from './ui/button';
 import { Dialog } from './ui/dialog';
 import { DatePicker } from './ui/date-picker';
@@ -97,7 +97,7 @@ export function NewClientDialog({
         <Field label={t('clients.contact')} htmlFor="nc-contact"><Input id="nc-contact" value={form.contactPerson} onChange={(e) => set({ contactPerson: e.target.value })} /></Field>
         <Field label={t('clients.phone')} htmlFor="nc-phone" hint={t('clients.phoneHint')}><PhoneInput id="nc-phone" value={form.phone} onChange={(v) => set({ phone: v })} /></Field>
         <Field label={t('clients.taxType')} htmlFor="nc-tax">
-          <Select id="nc-tax" value={form.taxType} onChange={(v) => set({ taxType: v as TaxType })} options={[{ value: 'AOS', label: 'AOS' }, { value: 'QQS', label: 'QQS' }]} />
+          <Select id="nc-tax" value={form.taxType} onChange={(v) => set({ taxType: v as TaxType })} options={TAX_TYPE_OPTIONS} />
         </Field>
         <Field label={t('clients.effectiveFrom')} htmlFor="nc-eff" hint={t('clients.effectiveFromHint')}>
           <DatePicker id="nc-eff" value={form.taxTypeEffectiveFrom} onChange={(v) => set({ taxTypeEffectiveFrom: v })} />

@@ -11,7 +11,10 @@ dashboardRouter.use(requireAuth, requireLeader);
 
 const OPEN = `('TODO','IN_PROGRESS','WAITING_CLIENT')`;
 
-/** Mijozlar bo'yicha joriy oy: tayyor / jarayonda / kechikkan, umumiy foiz, muddati o'tganlar */
+/**
+ * Mijozlar bo'yicha: bajarilish (jami/bajarildi) — tanlangan oy; kechikish — BARCHA oylar (o'tgan oydan qolgan
+ * ochiq vazifa ham kechikish, "Muddati o'tgan vazifalar" ro'yxati va Buxgalterlar jadvali bilan bir xil).
+ */
 dashboardRouter.get('/clients', async (req, res) => {
   const { month } = parse(z.object({ month: z.string().optional() }), req.query);
   const period = periodFromMonth(month);
@@ -19,27 +22,31 @@ dashboardRouter.get('/clients', async (req, res) => {
     pool,
     `SELECT c.id AS "clientId", c.name, c.stir, c.status, c.tax_type AS "taxType",
             a.id AS "accountantId", a.full_name AS "accountantName",
-            count(t.id)::int AS total,
-            count(t.id) FILTER (WHERE t.status = 'DONE')::int AS done,
+            count(t.id) FILTER (WHERE t.period = $1)::int AS total,
+            count(t.id) FILTER (WHERE t.period = $1 AND t.status = 'DONE')::int AS done,
             count(t.id) FILTER (WHERE t.status IN ${OPEN} AND t.due_at < now())::int AS overdue,
-            count(t.id) FILTER (WHERE t.status = 'WAITING_CLIENT')::int AS waiting
+            count(t.id) FILTER (WHERE t.period = $1 AND t.status = 'WAITING_CLIENT')::int AS waiting
      FROM client c
      LEFT JOIN app_user a ON a.id = c.accountant_id
-     LEFT JOIN task t ON t.client_id = c.id AND t.period = $1 AND t.status <> 'CANCELLED'
+     LEFT JOIN task t ON t.client_id = c.id AND t.status <> 'CANCELLED'
+       AND (t.period = $1 OR (t.status IN ${OPEN} AND t.due_at < now()))
      WHERE c.status <> 'ARCHIVED'
      GROUP BY c.id, a.id ORDER BY c.name_normalized`,
     [period],
   );
+  // Kechikkan vazifasi bor mijoz (qaysi oyniki bo'lmasin) — "Tayyor" emas
   const clients = perClient.map((c: any) => ({
     ...c,
     percent: c.total ? Math.round((c.done / c.total) * 100) : null,
-    state: c.total === 0 ? 'NONE' : c.done === c.total ? 'READY' : c.overdue > 0 ? 'OVERDUE' : 'IN_PROGRESS',
+    state: c.overdue > 0 ? 'OVERDUE' : c.total === 0 ? 'NONE' : c.done === c.total ? 'READY' : 'IN_PROGRESS',
   }));
   const totals = await one(
     pool,
-    `SELECT count(*)::int AS total, count(*) FILTER (WHERE status = 'DONE')::int AS done,
+    `SELECT count(*) FILTER (WHERE period = $1)::int AS total,
+            count(*) FILTER (WHERE period = $1 AND status = 'DONE')::int AS done,
+            count(*) FILTER (WHERE period = $1 AND status IN ${OPEN} AND due_at < now())::int AS "overdueMonth",
             count(*) FILTER (WHERE status IN ${OPEN} AND due_at < now())::int AS overdue
-     FROM task WHERE period = $1 AND status <> 'CANCELLED'`,
+     FROM task WHERE status <> 'CANCELLED'`,
     [period],
   );
   const overdueTasks = await q(
@@ -54,12 +61,17 @@ dashboardRouter.get('/clients', async (req, res) => {
     period: period.slice(0, 7),
     summary: {
       clients: clients.length,
+      // Vazifasi yo'q mijoz (soliq turi aniqlanmagan, bo'limsiz) hech qachon "tayyor" bo'lmaydi — foiz maxrajiga kirmaydi
+      withTasks: clients.filter((c) => c.state !== 'NONE').length,
       ready: clients.filter((c) => c.state === 'READY').length,
       inProgress: clients.filter((c) => c.state === 'IN_PROGRESS').length,
       overdue: clients.filter((c) => c.state === 'OVERDUE').length,
       tasksTotal: totals!.total,
       tasksDone: totals!.done,
+      // Barcha oylar (ro'yxat sarlavhasidagi haqiqiy son; ro'yxatning o'zi 200 ta bilan cheklangan)
       tasksOverdue: totals!.overdue,
+      // Faqat tanlangan oy ("Vazifalar" kartasidagi bo'laklar shu oy jamisidan)
+      tasksOverdueMonth: totals!.overdueMonth,
       percent: totals!.total ? Math.round((totals!.done / totals!.total) * 100) : 0,
       // Soliq turi aniqlanmagan (importda tanilmagan): vazifa chiqmaydi, rahbar kartada to'ldirishi kerak
       incomplete: clients.filter((c: any) => !c.taxType).length,

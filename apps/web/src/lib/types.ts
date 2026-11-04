@@ -1,7 +1,10 @@
 // API javob tiplari (backend DTO'lariga mos)
 export type Role = 'LEADER' | 'ACCOUNTANT' | 'OPERATOR';
 export type Lang = 'uz' | 'ru';
-export type TaxType = 'AOS' | 'QQS';
+export type TaxType = 'AOS' | 'QQS' | 'YATT';
+// Ochiladigan ro'yxatlar uchun: qiymat -> ko'rinadigan nom (YaTT — yakka tartibdagi tadbirkor)
+export const TAX_TYPE_OPTIONS: { value: TaxType; label: string }[] = [{ value: 'AOS', label: 'AOS' }, { value: 'QQS', label: 'QQS' }, { value: 'YATT', label: 'YaTT' }];
+export const taxTypeLabel = (t: string) => (t === 'YATT' ? 'YaTT' : t);
 export type ClientStatus = 'ACTIVE' | 'ZERO_REPORT' | 'LIQUIDATING' | 'ARCHIVED';
 export const CLIENT_STATUSES: ClientStatus[] = ['ACTIVE', 'ZERO_REPORT', 'LIQUIDATING', 'ARCHIVED'];
 export type TaskStatus = 'TODO' | 'IN_PROGRESS' | 'WAITING_CLIENT' | 'DONE' | 'CANCELLED';
@@ -180,6 +183,8 @@ export interface WorkColumn {
   shortNameRu: string | null;
   group: string | null;
   groupRu: string | null;
+  /** Keyingi oyning nechanchi kunigacha (INPS — hisobot muddati); null — keyingi oy oxiri */
+  dueDay: number | null;
 }
 
 export interface WorkCell {
@@ -239,6 +244,7 @@ export interface ReportType {
   generationMonths: number[] | null;
   appliesToAos: boolean;
   appliesToQqs: boolean;
+  appliesToYatt: boolean;
   createsAccountantTask: boolean;
   requiresEventFlag: boolean;
   sheetAliases: string[];
@@ -255,6 +261,8 @@ export interface RoutineWork {
   reportTypeId: number | null;
   isFreeText: boolean;
   effectiveFrom: string;
+  /** Keyingi oyning nechanchi kunigacha; null — keyingi oy oxiri (INPS — hisobot muddati) */
+  dueDay: number | null;
 }
 
 export interface UrgentTemplate {
@@ -291,12 +299,17 @@ export interface DashboardClients {
   period: string;
   summary: {
     clients: number;
+    /** Joriy oyda vazifasi bor yoki kechikkan mijozlar ("Tayyor" foizi maxraji) */
+    withTasks: number;
     ready: number;
     inProgress: number;
     overdue: number;
     tasksTotal: number;
     tasksDone: number;
+    /** Barcha oylar */
     tasksOverdue: number;
+    /** Faqat joriy oy */
+    tasksOverdueMonth: number;
     percent: number;
     /** Soliq turi aniqlanmagan mijozlar */
     incomplete: number;

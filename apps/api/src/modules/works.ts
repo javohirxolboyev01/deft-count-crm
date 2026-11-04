@@ -17,9 +17,7 @@ import { markDone } from './taskService';
 // "qaysi oygacha bajarilgan" + necha oy orqada.
 // Qaror: katak holati SAQLANMAYDI, vazifalardan hisoblanadi ("muddati o'tgan" kabi). Faqat tizimgacha
 // bo'lgan oylar uchun client_routine_baseline (rahbar fayldan bir marta kiritadi).
-// Hammasi "ish oyi"da yuritiladi: ROUTINE vazifa davri = ish oyi. Hisobotga bog'langan ish (INPS) esa
-// keyingi oyda topshiriladi: oktyabr vazifasi (15.10) = sentabr ishi.
-// TODO(tasdiqlash): hisobotga bog'langan ishning ish oyi = vazifa davri - 1 oy (INPS) deb olindi.
+// Hammasi "ish oyi"da yuritiladi: vazifa davri = ish oyi, INPS ham (V36). Muddat — keyingi oyda (oktyabr INPS = 25.11).
 
 export type WorkTone = 'done' | 'waiting' | 'overdue' | 'soon';
 
@@ -35,6 +33,8 @@ export interface WorkColumn {
   /** Ketma-ket bir xil guruh sarlavha ustida birlashadi ("Schyot-faktura") */
   group: string | null;
   groupRu: string | null;
+  /** Keyingi oyning nechanchi kunigacha (V34; INPS — hisobot muddati, V36); null — keyingi oy oxiri */
+  dueDay: number | null;
 }
 
 export interface WorkCell {
@@ -73,10 +73,20 @@ const monthOfPeriod = (period: string) => period.slice(0, 7);
 const addMonths = (period: string, n: number) => DateTime.fromISO(period).plus({ months: n }).toISODate()!;
 /** from'dan keyingi oydan to'gacha (shu ham) nechta oy */
 const monthsAfter = (from: string, to: string) => Math.round(DateTime.fromISO(to).diff(DateTime.fromISO(from), 'months').months);
-const workOffset = (c: WorkColumn) => (c.reportTypeId ? 1 : 0);
 
 const COLUMN = `id AS "routineTypeId", name, name_ru AS "nameRu", report_type_id AS "reportTypeId", is_free_text AS "isFreeText",
-  short_name AS "shortName", short_name_ru AS "shortNameRu", header_group AS "group", header_group_ru AS "groupRu"`;
+  short_name AS "shortName", short_name_ru AS "shortNameRu", header_group AS "group", header_group_ru AS "groupRu",
+  CASE WHEN report_type_id IS NULL THEN due_day ELSE (SELECT r.due_day FROM report_type r WHERE r.id = report_type_id) END AS "dueDay"`;
+
+/**
+ * Muddati o'tgan oxirgi ish oyi (buxgalteriya 1 oy orqada, V34): o'tgan oy ishi joriy oyning dueDay-kunigacha,
+ * undan oldingilar albatta kechikkan.
+ */
+function overdueThrough(col: WorkColumn, now = currentPeriod()) {
+  const today = DateTime.now().setZone(config.timezone);
+  const due = Math.min(col.dueDay ?? 31, today.daysInMonth!);
+  return addMonths(now, today.day > due ? -1 : -2);
+}
 
 export async function loadColumns(db: Db): Promise<WorkColumn[]> {
   return q<WorkColumn>(db, `SELECT ${COLUMN} FROM routine_work_type WHERE active ORDER BY sort_order, id`);
@@ -163,12 +173,9 @@ export async function loadCells(db: Db, clientIds: number[], columns: WorkColumn
 
 export function computeCell(col: WorkColumn, agg: Agg | undefined, baseline: string | null, now: string): WorkCell {
   if (!agg && !baseline) return { na: true, doneThrough: null, baseline: null, lag: 0, tone: null, next: null };
-  const off = workOffset(col);
-  const workMonth = (period: string) => addMonths(period, -off);
-  // O'tgan oy ishi muddati o'tgan hisoblanadi (doimiy ish muddati oy oxiri)
-  const dueLimit = addMonths(now, -1);
+  const dueLimit = overdueThrough(col, now);
   // Tizimgacha bo'shliq: boshlang'ich nuqtadan keyin, birinchi vazifagacha bo'lgan oylar
-  const gapEnd = agg ? addMonths(workMonth(agg.firstPeriod), -1) : dueLimit;
+  const gapEnd = agg ? addMonths(agg.firstPeriod, -1) : dueLimit;
   const inGap = !!baseline && addMonths(baseline, 1) <= gapEnd;
   const gap = inGap ? monthsAfter(baseline!, gapEnd < dueLimit ? gapEnd : dueLimit) : 0;
 
@@ -178,9 +185,9 @@ export function computeCell(col: WorkColumn, agg: Agg | undefined, baseline: str
     doneThrough = baseline;
     next = { kind: 'BASELINE', month: monthOfPeriod(addMonths(baseline!, 1)) };
   } else {
-    doneThrough = agg?.lastDonePeriod ? workMonth(agg.lastDonePeriod) : baseline;
+    doneThrough = agg?.lastDonePeriod ?? baseline;
     if (agg?.nextTaskId && agg.nextPeriod) {
-      next = { kind: 'TASK', taskId: agg.nextTaskId, status: agg.nextStatus!, month: monthOfPeriod(workMonth(agg.nextPeriod)) };
+      next = { kind: 'TASK', taskId: agg.nextTaskId, status: agg.nextStatus!, month: monthOfPeriod(agg.nextPeriod) };
     }
   }
   const lag = Math.max(0, gap) + (agg?.overdue ?? 0);
@@ -216,9 +223,7 @@ interface MonthTask {
 }
 
 /**
- * Bitta oy kataklari. Ish oyi qoidasi loadCells bilan bir xil: hisobotga bog'langan ish (INPS) vazifasi
- * keyingi oy davrida (oktyabr ishi = noyabr vazifasi, 15.11).
- * TODO(tasdiqlash): joriy oyda INPS ustuni "—" (vazifasi keyingi oyning 1-kuni chiqadi).
+ * Bitta oy kataklari: katak = shu oy davridagi vazifa (V36: INPS ham — oktyabr ishi = oktyabr vazifasi, muddat 25.11).
  */
 export async function loadMonthCells(db: Db, clientIds: number[], columns: WorkColumn[], month: string) {
   const typeIds = columns.map((c) => c.routineTypeId);
@@ -228,8 +233,8 @@ export async function loadMonthCells(db: Db, clientIds: number[], columns: WorkC
         db,
         `WITH t AS (
            SELECT t.client_id, w.id AS rid, t.id, t.period, t.status, t.is_overdue, t.is_due_soon,
-                  -- Shu oy ishining vazifasi: hisobotga bog'langan ishda keyingi oy davri
-                  t.period = ($3::date + make_interval(months => CASE WHEN w.report_type_id IS NULL THEN 0 ELSE 1 END))::date AS hit
+                  -- Shu oy ishining vazifasi (V36: INPS ham ish oyi davrida)
+                  t.period = $3::date AS hit
            FROM v_task_state t
            JOIN routine_work_type w ON w.id = ANY ($2::bigint[]) AND (
                 (t.kind = 'ROUTINE' AND t.routine_type_id = w.id)
@@ -266,8 +271,8 @@ export async function loadMonthCells(db: Db, clientIds: number[], columns: WorkC
   const taskMap = new Map(rows.map((x) => [key(x.clientId, x.routineTypeId), x]));
   const baseMap = new Map(baselines.map((b) => [key(b.clientId, b.routineTypeId), b.doneThrough]));
   const rawMap = new Map(raws.map((x) => [key(x.clientId, x.routineTypeId), x.raw]));
-  const dueLimit = addMonths(currentPeriod(), -1);
   return (clientId: number, col: WorkColumn): WorkMonthCell => {
+    const dueLimit = overdueThrough(col);
     const k = key(clientId, col.routineTypeId);
     const t = taskMap.get(k);
     const baseline = baseMap.get(k) ?? null;
@@ -284,7 +289,7 @@ export async function loadMonthCells(db: Db, clientIds: number[], columns: WorkC
     }
     const raw = rawMap.get(k) ?? null;
     // Tizimdagi birinchi ish oyidan oldin: rahbar kiritgan nuqtagacha bajarilgan, undan keyingisi bo'shliq
-    const firstWork = t ? addMonths(t.firstPeriod, -workOffset(col)) : null;
+    const firstWork = t?.firstPeriod ?? null;
     if (!baseline || (firstWork && period >= firstWork)) return { ...base, state: 'na', raw };
     if (period <= baseline) return { ...base, state: 'done', beforeSystem: true, raw };
     const gapEnd = firstWork ? addMonths(firstWork, -1) : dueLimit;
@@ -460,7 +465,7 @@ worksRouter.put('/:clientId/:routineTypeId/baseline', requireLeader, async (req,
            AND ((kind = 'ROUTINE' AND routine_type_id = $2) OR (kind = 'REPORT' AND report_type_id = $3))`,
         [clientId, routineTypeId, col.reportTypeId],
       );
-      const firstWork = first?.p ? addMonths(first.p, -workOffset(col)) : null;
+      const firstWork = first?.p ?? null;
       if (firstWork && period >= firstWork) {
         throw new AppError(
           409,
@@ -509,8 +514,8 @@ async function setWorkCell(db: Db, u: AuthUser, c: { clientId: number; routineTy
     [c.clientId],
   );
   if (!client?.inWorks) throw notFound('Mijoz');
-  // Vazifa davri: hisobotga bog'langan ishda ish oyidan keyingi oy (oktyabr INPS = noyabr vazifasi)
-  const period = addMonths(`${c.month}-01`, workOffset(col));
+  // Vazifa davri = ish oyi, INPS ham (V36: oktyabr INPS = oktyabr vazifasi, muddat 25.11)
+  const period = `${c.month}-01`;
   if (col.reportTypeId && client.inReports && client.taxType) {
     return setGridCell(db, u, { clientId: c.clientId, reportTypeId: col.reportTypeId, month: monthOfPeriod(period), value: c.value });
   }
@@ -578,9 +583,9 @@ async function syncRoutineTask(db: Db, clientId: number, routineTypeId: number, 
     const created = await one<{ id: number; title: string }>(
       db,
       `INSERT INTO task (client_id, kind, routine_type_id, period, title, assignee_id, due_at, status, overdue_notified_at)
-       SELECT c.id, 'ROUTINE', w.id, $3, w.name, c.accountant_id, fn_due_at($3, 31, $4), 'TODO',
+       SELECT c.id, 'ROUTINE', w.id, $3, w.name, c.accountant_id, fn_work_due_at($3, w.id, $4), 'TODO',
               -- o'tgan oy uchun yaratilsa "muddat o'tdi" xabari yuborilmaydi
-              CASE WHEN fn_due_at($3, 31, $4) < now() THEN now() END
+              CASE WHEN fn_work_due_at($3, w.id, $4) < now() THEN now() END
        FROM client c, routine_work_type w WHERE c.id = $1 AND w.id = $2
        RETURNING id, title`,
       [clientId, routineTypeId, period, await getDueTime(db)],

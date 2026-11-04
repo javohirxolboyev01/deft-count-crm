@@ -116,7 +116,7 @@ export function parseCell(raw: unknown): SheetCell | null {
 
 export interface ParsedNote {
   status: 'LIQUIDATING' | 'ZERO_REPORT' | 'ARCHIVED' | null;
-  taxType: 'AOS' | 'QQS' | null;
+  taxType: 'AOS' | 'QQS' | 'YATT' | null;
   effectiveFrom: string | null;
   note: string | null;
   /** Avtomatik ajratib bo'lmadi: qo'lda tekshirish */

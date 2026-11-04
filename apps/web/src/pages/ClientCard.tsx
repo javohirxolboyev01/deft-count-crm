@@ -22,7 +22,7 @@ import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
 import { errorText } from '@/lib/errors';
 import { currentMonth, fmtDate, fmtShortDue } from '@/lib/time';
-import { CLIENT_STATUSES, type ClientCard as ClientCardData, type ClientStatus, type Task, type TaxType } from '@/lib/types';
+import { CLIENT_STATUSES, type ClientCard as ClientCardData, type ClientStatus, TAX_TYPE_OPTIONS, type Task, type TaxType, taxTypeLabel } from '@/lib/types';
 
 interface Form {
   stir: string;
@@ -164,7 +164,7 @@ export default function ClientCard() {
             htmlFor="tax"
             hint={!q.data?.taxType ? `${q.data?.taxTypeRaw ? t('clients.taxFromFile', { raw: q.data.taxTypeRaw }) + '. ' : ''}${t('clients.taxNoneHint')}` : ro ? t('clients.taxLeaderOnly') : undefined}
           >
-            <Select id="tax" value={form.taxType} disabled={ro} placeholder={t('clients.chooseTax')} onChange={(v) => set({ taxType: v as TaxType })} options={[{ value: 'AOS', label: 'AOS' }, { value: 'QQS', label: 'QQS' }]} />
+            <Select id="tax" value={form.taxType} disabled={ro} placeholder={t('clients.chooseTax')} onChange={(v) => set({ taxType: v as TaxType })} options={TAX_TYPE_OPTIONS} />
           </Field>
           <Field label={t('clients.effectiveFrom')} htmlFor="eff" hint={t('clients.effectiveFromHint')}>
             <DatePicker id="eff" value={form.taxTypeEffectiveFrom} disabled={ro} onChange={(v) => set({ taxTypeEffectiveFrom: v })} />
@@ -304,7 +304,7 @@ export default function ClientCard() {
           </>
         }
       >
-        <p className="text-sm">{t('clients.confirmTaxBody', { from: q.data?.taxType, to: form.taxType, date: form.taxTypeEffectiveFrom ? fmtDate(form.taxTypeEffectiveFrom) : t('clients.thisMonth') })}</p>
+        <p className="text-sm">{t('clients.confirmTaxBody', { from: taxTypeLabel(q.data?.taxType ?? ''), to: taxTypeLabel(form.taxType ?? ''), date: form.taxTypeEffectiveFrom ? fmtDate(form.taxTypeEffectiveFrom) : t('clients.thisMonth') })}</p>
       </Dialog>
     </div>
   );

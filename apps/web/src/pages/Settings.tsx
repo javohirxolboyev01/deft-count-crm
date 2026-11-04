@@ -162,7 +162,7 @@ function ReportTypesTab() {
 function ReportTypeRow({ r, name, changed, onChange }: { r: ReportType; name: string; changed: boolean; onChange: (p: Partial<ReportType>) => void }) {
   const { t } = useTranslation();
   const months = t('months', { returnObjects: true }) as string[];
-  const nobody = !r.appliesToAos && !r.appliesToQqs;
+  const nobody = !r.appliesToAos && !r.appliesToQqs && !r.appliesToYatt;
   const pill = (on: boolean) =>
     cn(
       'inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition-colors',
@@ -225,7 +225,7 @@ function ReportTypeRow({ r, name, changed, onChange }: { r: ReportType; name: st
       </td>
       <td className="px-3 py-3">
         <div className="flex gap-2">
-          {(['appliesToAos', 'appliesToQqs'] as const).map((k) => (
+          {(['appliesToAos', 'appliesToQqs', 'appliesToYatt'] as const).map((k) => (
             <button
               key={k}
               type="button"
@@ -236,7 +236,7 @@ function ReportTypeRow({ r, name, changed, onChange }: { r: ReportType; name: st
               onClick={() => onChange({ [k]: !r[k] })}
             >
               {r[k] ? <Check className="h-3.5 w-3.5" /> : <XIcon className="h-3.5 w-3.5" />}
-              {k === 'appliesToAos' ? 'AOS' : 'QQS'}
+              {k === 'appliesToAos' ? 'AOS' : k === 'appliesToQqs' ? 'QQS' : 'YaTT'}
             </button>
           ))}
         </div>
@@ -337,7 +337,26 @@ function RoutinesTab() {
               <span className="w-6 text-xs text-gray-400">{i + 1}</span>
               <Input className="h-8 min-w-[200px] flex-1" value={w.name} onChange={(e) => update(w.id, { name: e.target.value })} aria-label={t('common.name')} />
               <Input className="h-8 min-w-[160px] flex-1" value={w.nameRu} onChange={(e) => update(w.id, { nameRu: e.target.value })} aria-label={t('common.nameRu')} />
-              {w.reportTypeId && <span className="text-xs text-gray-500">{t('settings.linkedReport')}</span>}
+              {/* Muddat: ish oyidan keyingi oyda (buxgalteriya 1 oy orqada, V34). INPS — hisobot muddati (Hisobotlar bo'limi) */}
+              {w.reportTypeId ? (
+                <span className="text-xs text-gray-500">{t('settings.linkedReport')}</span>
+              ) : (
+                <label className="flex items-center gap-1.5 text-xs text-gray-600">
+                  {t('settings.rt.dueBefore')}
+                  <Input
+                    type="number"
+                    min={1}
+                    max={31}
+                    className="h-8 w-16 text-center"
+                    value={w.dueDay ?? ''}
+                    placeholder="—"
+                    onChange={(e) => update(w.id, { dueDay: e.target.value ? Math.min(31, Math.max(1, Number(e.target.value))) : null })}
+                    aria-label={`${w.name} — ${t('settings.field.dueDay')}`}
+                    title={t('settings.routineDueHint')}
+                  />
+                  {t('settings.rt.dueAfter')}
+                </label>
+              )}
               {w.isFreeText && <span className="text-xs text-gray-500">{t('settings.freeText')}</span>}
               {w.effectiveFrom > new Date().toISOString().slice(0, 10) && <span className="text-xs text-blue-700">{t('settings.fromDate', { date: fmtDate(w.effectiveFrom) })}</span>}
               <Button variant="ghost" size="icon" onClick={() => move(i, -1)} aria-label={t('settings.moveUp')}><ArrowUp className="h-4 w-4" /></Button>

@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { type AuthUser, isLeader, me, requireAuth } from '../common/auth';
 import { audit, diff } from '../common/audit';
 import { AppError, forbidden, notFound, parse } from '../common/errors';
-import { normalizeName, normalizeStir } from '../common/normalize';
+import { normalizeName, normalizeStir, normalizeTaxType } from '../common/normalize';
 import { decryptSecret, encryptSecret } from '../common/secretBox';
 import { addMonthsIso, currentPeriod, monthOf } from '../common/time';
 import { type Db, one, pool, q, tx } from '../db';
@@ -47,7 +47,7 @@ export const clientListQuery = z.object({
   search: z.string().trim().optional(),
   status: z.enum(CLIENT_STATUSES).optional(),
   // NONE: soliq turi aniqlanmagan ("to'ldirilmagan") mijozlar
-  taxType: z.enum(['AOS', 'QQS', 'NONE']).optional(),
+  taxType: z.enum(['AOS', 'QQS', 'YATT', 'NONE']).optional(),
   accountantId: z.union([z.coerce.number().int(), z.literal('none')]).optional(),
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(500).default(25),
@@ -84,7 +84,7 @@ export const clientInput = z.object({
   contactPerson: z.string().trim().max(200).nullable().optional(),
   phone: z.string().trim().max(50).nullable().optional(),
   // Faqat ikki qiymat (CLAUDE.md "Asosiy qoida")
-  taxType: z.enum(['AOS', 'QQS']),
+  taxType: z.enum(['AOS', 'QQS', 'YATT']),
   taxTypeEffectiveFrom: isoDate.nullable().optional(),
   accountantId: z.number().int().positive().nullable().optional(),
   status: z.enum(CLIENT_STATUSES).default('ACTIVE'),
@@ -123,6 +123,36 @@ export async function recordTaxType(db: Db, clientId: number, taxType: string, e
 }
 
 /**
+ * Tanilmagan soliq turi endi tanilsa (masalan V33'dan "ЯТТ" / "YaTT" = YATT): fayldagi matn (tax_type_raw) bo'yicha
+ * tur o'zi qo'yiladi — rahbar kartada birinchi marta tanlagandek (boshidan, kataklar qo'llanadi, audit). Ilova ishga
+ * tushganda chaqiriladi; idempotent (faqat tax_type NULL va matni tanilgan mijozlar).
+ */
+export async function adoptRecognizedTaxTypes() {
+  const pending = await q<{ id: number; raw: string }>(
+    pool,
+    'SELECT id, tax_type_raw AS raw FROM client WHERE tax_type IS NULL AND tax_type_raw IS NOT NULL ORDER BY id',
+  );
+  let adopted = 0;
+  for (const c of pending) {
+    const taxType = normalizeTaxType(c.raw);
+    if (!taxType) continue;
+    await tx(async (t) => {
+      await t.query('UPDATE client SET tax_type = $2, tax_type_raw = NULL WHERE id = $1 AND tax_type IS NULL', [c.id, taxType]);
+      await recordTaxType(t, c.id, taxType, '2000-01-01', null);
+      await audit(t, {
+        actorId: null, entity: 'client', entityId: c.id, clientId: c.id, action: 'UPDATE',
+        before: { taxType: null, taxTypeRaw: c.raw }, after: { taxType, source: 'RECOGNIZED' },
+      });
+      await resolveReviewOnSave(t, c.id, ['taxType'], false, null);
+      await reconcileClient(t, c.id, null);
+      await applyPendingReportCells(t, c.id, null);
+    });
+    adopted++;
+  }
+  return adopted;
+}
+
+/**
  * Import uchun soliq turi null bo'lishi mumkin (fayldagi qiymat tanilmadi, V24): mijoz "to'ldirilmagan",
  * vazifa chiqmaydi, fayldagi matn tax_type_raw'da. Formadan qo'shishda tur majburiy (clientInput).
  */
@@ -130,7 +160,7 @@ type NewClient = Omit<z.infer<typeof clientInput>, 'taxType' | 'stir'> & {
   /** null: importda STIR yo'q/noto'g'ri/takroriy (V26), fayldagi matn stirRaw'da */
   stir: string | null;
   stirRaw?: string | null;
-  taxType: 'AOS' | 'QQS' | null;
+  taxType: 'AOS' | 'QQS' | 'YATT' | null;
   taxTypeRaw?: string | null;
   /** V25: qaysi bo'limda (import faqat o'z bo'limini qo'yadi; forma va lead — ikkalasi) */
   inReports?: boolean;
@@ -216,7 +246,7 @@ clientsRouter.get('/:id', async (req, res) => {
   const events = await q(
     pool,
     `SELECT rt.id AS "reportTypeId", rt.code, rt.name, rt.name_ru AS "nameRu", rt.due_day AS "dueDay",
-            CASE WHEN $2 = 'AOS' THEN rt.applies_to_aos ELSE rt.applies_to_qqs END AS applicable,
+            CASE $2 WHEN 'AOS' THEN rt.applies_to_aos WHEN 'YATT' THEN rt.applies_to_yatt ELSE rt.applies_to_qqs END AS applicable,
             coalesce((SELECT array_agg(ev.month ORDER BY ev.month DESC) FROM client_report_event ev
                       WHERE ev.client_id = $1 AND ev.report_type_id = rt.id), '{}') AS months
      FROM report_type rt WHERE rt.active AND rt.requires_event_flag ORDER BY rt.sort_order, rt.id`,
@@ -414,9 +444,8 @@ clientsRouter.post('/:id/mehnat-password/reveal', async (req, res) => {
 });
 
 // ---------- Holat belgisi (dividend, norezident; V20) ----------
-// Belgi = holat bo'lgan oy; hisobot keyingi oyda chiqadi. Faqat joriy yoki o'tgan oy: joriy oy belgisi vazifani keyingi
-// oyning 1-kuni generatsiyada chiqaradi, o'tgan oy belgisi esa joriy davrga darhol (reconcile). Eskiroq oylar uchun
-// reconcile butun davrni (doimiy ishlar bilan) qayta yaratib yuborishi mumkin edi.
+// Belgi = holat bo'lgan oy = hisobot katagi oyi (V36), muddati keyingi oyda. Faqat joriy yoki o'tgan oy: shu oy davri
+// darhol moslanadi (reconcile). Eskiroq oylar uchun reconcile butun davrni (doimiy ishlar bilan) qayta yaratib yuborishi mumkin edi.
 // Belgini rahbar ham, mijozning buxgalteri ham qo'yadi (firma egasi tasdiqladi).
 const eventParams = z.object({
   id: z.coerce.number().int(),
@@ -428,7 +457,7 @@ async function eventTarget(db: Db, raw: unknown, u: AuthUser) {
   const p = parse(eventParams, raw);
   const now = monthOf(currentPeriod());
   if (p.month !== now && p.month !== monthOf(addMonthsIso(currentPeriod(), -1))) {
-    throw new AppError(400, 'EVENT_MONTH', "Faqat joriy yoki keyingi oyda topshiriladigan hisobotni belgilash mumkin");
+    throw new AppError(400, 'EVENT_MONTH', "Faqat joriy yoki o'tgan oy holatini belgilash mumkin");
   }
   await loadClientForUser(db, p.id, u, true);
   const rt = await one<{ code: string }>(db, 'SELECT code FROM report_type WHERE id = $1 AND requires_event_flag AND active', [p.reportTypeId]);
@@ -446,7 +475,7 @@ clientsRouter.put('/:id/events/:reportTypeId/:month', async (req, res) => {
     );
     if (r.rowCount) {
       await audit(db, { actorId: u.id, entity: 'client', entityId: e.id, clientId: e.id, action: 'EVENT_MARK', after: { report: e.code, month: e.month } });
-      await reconcileClient(db, e.id, u.id);
+      await reconcileClient(db, e.id, u.id, `${e.month}-01`);
     }
   });
   res.json({ ok: true });
@@ -459,7 +488,7 @@ clientsRouter.delete('/:id/events/:reportTypeId/:month', async (req, res) => {
     const r = await db.query('DELETE FROM client_report_event WHERE client_id = $1 AND report_type_id = $2 AND month = $3', [e.id, e.reportTypeId, e.month]);
     if (r.rowCount) {
       await audit(db, { actorId: u.id, entity: 'client', entityId: e.id, clientId: e.id, action: 'EVENT_UNMARK', before: { report: e.code, month: e.month } });
-      await reconcileClient(db, e.id, u.id);
+      await reconcileClient(db, e.id, u.id, `${e.month}-01`);
     }
   });
   res.json({ ok: true });

@@ -15,6 +15,11 @@ export const currentMonth = () => DateTime.now().setZone(TZ).toFormat('yyyy-MM')
 export const shiftMonth = (month: string, delta: number) =>
   DateTime.fromFormat(month, 'yyyy-MM').plus({ months: delta }).toFormat('yyyy-MM');
 /** Oy nomlari lug'atdan (brauzerda uz locale ma'lumoti bo'lmasligi mumkin) */
+/** Oy ishining muddati (V34/V36): keyingi oyning dueDay-kuni (oy qisqa bo'lsa oxirgi kuni; null — oy oxiri) */
+export const workDueDate = (month: string, dueDay: number | null) => {
+  const next = DateTime.fromISO(`${month}-01`).plus({ months: 1 });
+  return next.set({ day: Math.min(dueDay ?? 31, next.daysInMonth!) }).toFormat('dd.MM.yyyy');
+};
 export const monthLabel = (month: string, names: string[]) => {
   const [y, m] = month.split('-').map(Number);
   return `${names[m - 1]} ${y}`;

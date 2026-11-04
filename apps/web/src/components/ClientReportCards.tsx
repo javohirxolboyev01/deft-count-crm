@@ -8,7 +8,7 @@ import { invalidateTasks } from '@/hooks/tasks';
 import { api } from '@/lib/api';
 import { errorText } from '@/lib/errors';
 import { fmtDate, monthLabel } from '@/lib/time';
-import type { ClientCard } from '@/lib/types';
+import { type ClientCard, taxTypeLabel } from '@/lib/types';
 
 /**
  * Mijoz kartasidagi hisobotga oid kartalar: soliq turi tarixi va doimiy "X" istisnolari (bo'lsa).
@@ -40,7 +40,7 @@ export function ClientReportCards({ client, isLeader }: { client: ClientCard; is
         <ul className="divide-y text-sm">
           {client.taxHistory?.map((h) => (
             <li key={h.id} className="flex justify-between px-4 py-2">
-              <span><b>{h.taxType}</b> · {h.effectiveFrom === '2000-01-01' ? t('clients.fromStart') : `${fmtDate(h.effectiveFrom)} ${t('clients.since')}`}</span>
+              <span><b>{taxTypeLabel(h.taxType)}</b> · {h.effectiveFrom === '2000-01-01' ? t('clients.fromStart') : `${fmtDate(h.effectiveFrom)} ${t('clients.since')}`}</span>
               <span className="text-xs text-gray-500">{h.createdByName ?? t('notif.system')}</span>
             </li>
           ))}

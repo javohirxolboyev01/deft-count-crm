@@ -46,7 +46,7 @@ export async function insertReview(
  * Mijoz saqlandi (yoki ish katagida oy kiritildi): o'zgargan maydonlarga tegishli yozuvlar, reviewed bo'lsa
  * maydonsiz ("tekshiring") ham yopiladi
  */
-export async function resolveReviewOnSave(db: Db, clientId: number, changed: string[], reviewed: boolean, actorId: number) {
+export async function resolveReviewOnSave(db: Db, clientId: number, changed: string[], reviewed: boolean, actorId: number | null) {
   await db.query(
     `UPDATE sheet_sync_error e SET resolved = true, resolved_by = $3, resolved_at = now()
      WHERE e.kind = 'IMPORT_REVIEW' AND NOT e.resolved

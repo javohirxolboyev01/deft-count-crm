@@ -77,9 +77,9 @@ export async function applyReportCells(
   const excluded = new Set(
     (await q<{ id: number }>(db, 'SELECT report_type_id AS id FROM client_report_exclusion WHERE client_id = $1', [clientId])).map((e) => Number(e.id)),
   );
-  // Holat bo'yicha hisobot (dividend, norezident; V20): katakda 0/1 = holat bo'lgan -> o'tgan oy (holat oyi) belgisi
-  // qo'yiladi; X = holat yo'q -> belgi olinadi. Bunday ustundagi X doimiy "topshirmaydi" belgisi emas.
-  const eventMonth = addMonthsIso(period, -1).slice(0, 7);
+  // Holat bo'yicha hisobot (dividend, norezident; V20): katakda 0/1 = holat bo'lgan -> shu oy (holat oyi = hisobot oyi,
+  // V36) belgisi qo'yiladi; X = holat yo'q -> belgi olinadi. Bunday ustundagi X doimiy "topshirmaydi" belgisi emas.
+  const eventMonth = period.slice(0, 7);
   const events = new Set(
     (await q<{ id: number }>(db, 'SELECT report_type_id AS id FROM client_report_event WHERE client_id = $1 AND month = $2', [clientId, eventMonth])).map((e) => Number(e.id)),
   );

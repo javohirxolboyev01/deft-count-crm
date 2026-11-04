@@ -2,6 +2,7 @@ import { createApp } from './app';
 import { assertSecrets, config } from './config';
 import { pool } from './db';
 import { migrate } from './migrate';
+import { adoptRecognizedTaxTypes } from './modules/clients';
 import { closeAllStreams } from './modules/events';
 import { startTelegramPolling, stopTelegramPolling } from './modules/telegram';
 import { bootstrapLeader } from './modules/users';
@@ -11,6 +12,9 @@ async function main() {
   process.env.TZ = config.timezone;
   assertSecrets();
   await migrate();
+  // Eski importdagi tanilmagan soliq turi endi tanilsa (ЯТТ/YaTT) — o'zi qo'llanadi
+  const adopted = await adoptRecognizedTaxTypes();
+  if (adopted) console.log(`Soliq turi aniqlandi: ${adopted} ta mijoz`);
   await bootstrapLeader(config.bootstrapLeader.login, config.bootstrapLeader.password, config.bootstrapLeader.fullName);
   const server = createApp().listen(config.port, () => {
     console.log(`API: http://localhost:${config.port}/api (env=${config.env})`);
