@@ -16,6 +16,7 @@ const Users = lazy(() => import('./pages/Users'));
 const Profile = lazy(() => import('./pages/Profile'));
 const Audit = lazy(() => import('./pages/Audit'));
 const Leads = lazy(() => import('./pages/Leads'));
+const ClientIssues = lazy(() => import('./pages/ClientIssues'));
 
 /** UI darajasidagi himoya (qulaylik uchun). Haqiqiy ruxsat tekshiruvi serverda. */
 function Protected({ roles, children }: { roles?: Role[]; children: React.ReactNode }) {
@@ -46,6 +47,8 @@ export default function App() {
         <Route element={<Protected><Layout /></Protected>}>
           <Route index element={<Home />} />
           <Route path="dashboard" element={<Protected roles={L}><Dashboard /></Protected>} />
+          {/* Kamchiligi bor mijozlar: import kamchiliklari va tuzatish faqat rahbarga (server ham yopiq) */}
+          <Route path="client-issues" element={<Protected roles={L}><ClientIssues /></Protected>} />
           <Route path="my-day" element={<Protected roles={S}><MyDay /></Protected>} />
           <Route path="clients" element={<Protected roles={S}><Clients /></Protected>} />
           <Route path="clients/new" element={<Navigate to="/clients" replace />} />

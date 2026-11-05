@@ -12,7 +12,7 @@ const uz = {
   },
   nav: {
     main: 'Asosiy menyu', menu: 'Menyu', dashboard: 'Dashboard', myDay: 'Mening kunim', clients: 'Oylik ishlar', clientsLeader: 'Buxgalter ishlari',
-    monthly: 'Hisobot topshirish', leads: 'Yangi mijozlar', settings: 'Sozlamalar', users: 'Xodimlar', audit: "O'zgarishlar tarixi",
+    monthly: 'Hisobot topshirish', issues: 'Kamchiliklar', leads: 'Yangi mijozlar', settings: 'Sozlamalar', users: 'Xodimlar', audit: "O'zgarishlar tarixi",
     notifications: 'Bildirishnomalar', logout: 'Chiqish', home: 'Bosh sahifa', openMenu: 'Menyuni ochish', collapse: "Menyuni yig'ish", language: 'Til', themeDark: "Qorong'i rejim", themeLight: "Yorug' rejim",
   },
   pagination: { label: 'Sahifalar', first: 'Birinchi sahifa', last: 'Oxirgi sahifa', page: '{{n}}-sahifa', range: '{{from}}–{{to}} / {{total}}', perPage: 'Sahifada:' },
@@ -202,6 +202,7 @@ const uz = {
     openBot: 'Botni ochish', checkLinked: 'Tekshirish', unlink: 'Uzish', botDisabled: 'Telegram bot sozlanmagan (TELEGRAM_BOT_TOKEN).',
     prefs: 'Bildirishnoma sozlamalari', kind: 'Turi', inApp: 'Ilova ichida',
   },
+  issues: { section: "Bo'lim" },
   dashboard: {
     title: 'Rahbar paneli', percent: 'Umumiy bajarilish', ready: 'Tayyor mijozlar', inProgress: 'Jarayonda', overdueClients: 'Kechikkan mijozlar',
     incomplete: '{{n}} ta mijozning soliq turi aniqlanmagan: ularga vazifa chiqmayapti', incompleteOpen: "Ko'rish", issues: '{{n}} ta mijozda kamchilik bor (STIR, soliq turi, buxgalter yoki import farqi)', issuesTitle: 'Kamchiligi bor mijozlar ({{n}})', issuesHint: "Sariq katak — yetishmayotgan ma'lumot. Katakni bosib to'ldiring yoki o'zgartiring: tuzatilgan mijoz ro'yxatdan o'zi chiqadi.", needAccountant: 'Buxgalter biriktirilmagan',

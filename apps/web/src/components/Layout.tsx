@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  AlertTriangle,
   AlignJustify,
   Bell,
   Building2,
@@ -121,6 +122,7 @@ export function Layout() {
     ...(isLeader ? [] : [{ to: '/my-day', label: t('nav.home'), icon: LayoutDashboard, staff: true }]),
     { to: '/clients', label: t(isLeader ? 'nav.clientsLeader' : 'nav.clients'), icon: Building2, staff: true },
     { to: '/monthly', label: t('nav.monthly'), icon: Sheet, staff: true },
+    { to: '/client-issues', label: t('nav.issues'), icon: AlertTriangle, leader: true },
     ...(isLeader || isOperator ? [{ to: '/leads', label: t('nav.leads'), icon: PhoneCall }] : []),
     { to: '/audit', label: t('nav.audit'), icon: History, leader: true },
     { to: '/users', label: t('nav.users'), icon: Users, leader: true },

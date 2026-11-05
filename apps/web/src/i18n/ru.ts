@@ -15,7 +15,7 @@ const ru: Dict = {
   },
   nav: {
     main: 'Главное меню', menu: 'Меню', dashboard: 'Дашборд', myDay: 'Мой день', clients: 'Ежемесячные работы', clientsLeader: 'Работы бухгалтеров',
-    monthly: 'Сдача отчётов', leads: 'Новые клиенты', settings: 'Настройки', users: 'Сотрудники', audit: 'История изменений',
+    monthly: 'Сдача отчётов', issues: 'Замечания', leads: 'Новые клиенты', settings: 'Настройки', users: 'Сотрудники', audit: 'История изменений',
     notifications: 'Уведомления', logout: 'Выйти', home: 'Главная', openMenu: 'Открыть меню', collapse: 'Свернуть меню', language: 'Язык', themeDark: 'Тёмная тема', themeLight: 'Светлая тема',
   },
   pagination: { label: 'Страницы', first: 'Первая страница', last: 'Последняя страница', page: 'Страница {{n}}', range: '{{from}}–{{to}} из {{total}}', perPage: 'На странице:' },
@@ -205,6 +205,7 @@ const ru: Dict = {
     openBot: 'Открыть бота', checkLinked: 'Проверить', unlink: 'Отвязать', botDisabled: 'Telegram-бот не настроен (TELEGRAM_BOT_TOKEN).',
     prefs: 'Настройки уведомлений', kind: 'Тип', inApp: 'В приложении',
   },
+  issues: { section: 'Раздел' },
   dashboard: {
     title: 'Панель руководителя', percent: 'Общее выполнение', ready: 'Готовые клиенты', inProgress: 'В работе', overdueClients: 'С просрочкой',
     incomplete: 'У {{n}} клиентов не определён налоговый режим: задачи для них не создаются', incompleteOpen: 'Показать', issues: 'У {{n}} клиентов есть замечания (ИНН, налоговый режим, бухгалтер или расхождение при импорте)', issuesTitle: 'Клиенты с замечаниями ({{n}})', issuesHint: 'Жёлтая ячейка — не хватает данных. Нажмите на ячейку, чтобы заполнить или изменить: исправленный клиент сам уйдёт из списка.', needAccountant: 'Бухгалтер не назначен',

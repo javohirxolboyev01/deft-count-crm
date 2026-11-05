@@ -19,6 +19,8 @@ import type { TaxType } from '@/lib/types';
 export type ClientPatch = Partial<{
   stir: string;
   name: string;
+  contactPerson: string | null;
+  phone: string | null;
   taxType: TaxType;
   status: string;
   monthlyFee: number | null;
