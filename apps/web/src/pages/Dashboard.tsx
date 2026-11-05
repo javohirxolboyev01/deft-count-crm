@@ -19,7 +19,7 @@ import { useOpenTask } from '@/hooks/outlet';
 import { api, qs } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { errorText } from '@/lib/errors';
-import { fmtDuration, fmtShortDue, startOfMonthIso, startOfWeekIso, todayIso, workMonth } from '@/lib/time';
+import { fmtDateTime, fmtDuration, startOfMonthIso, startOfWeekIso, todayIso, workMonth } from '@/lib/time';
 import { CLIENT_STATUSES, type DashboardAccountants, type DashboardClients, type ReviewItem, TAX_TYPE_OPTIONS, type TaxType, taxTypeLabel } from '@/lib/types';
 
 type Range = 'day' | 'week' | 'month';
@@ -98,7 +98,7 @@ export default function Dashboard() {
                 <button className="flex w-full flex-wrap items-center gap-x-3 px-4 py-2.5 text-left transition-colors hover:bg-red-50 sm:px-5" onClick={() => openTask(o.id)}>
                   <span className="font-medium">{o.title}</span>
                   <span className="text-gray-600">{o.clientName}</span>
-                  <span className="ml-auto text-xs text-overdue">{fmtShortDue(o.dueAt)}</span>
+                  <span className="ml-auto text-xs text-overdue">{fmtDateTime(o.dueAt)}</span>
                   <span className="w-32 truncate text-right text-xs text-gray-500">{o.assigneeName ?? t('task.unassigned')}</span>
                 </button>
               </li>
