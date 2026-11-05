@@ -3,7 +3,7 @@ const uz = {
   months: ['Yanvar', 'Fevral', 'Mart', 'Aprel', 'May', 'Iyun', 'Iyul', 'Avgust', 'Sentabr', 'Oktabr', 'Noyabr', 'Dekabr'],
   weekdaysShort: ['Du', 'Se', 'Ch', 'Pa', 'Ju', 'Sh', 'Ya'],
   common: {
-    clear: 'Tozalash', pickDate: 'Sanani tanlang', pickMonth: 'Oyni tanlang',
+    clear: 'Tozalash', pickDate: 'Sanani tanlang', pickMonth: 'Oyni tanlang', pickTime: 'Vaqtni tanlang', hour: 'Soat', minute: 'Daqiqa',
     add: "Qo'shish", all: 'Hammasi', back: 'Orqaga', cancel: 'Bekor qilish', change: "O'zgartirish", close: 'Yopish',
     confirm: 'Tasdiqlash', create: 'Yaratish', delete: "O'chirish", deleteTitle: "O'chirilsinmi?", deleteText: "Bu amalni qaytarib bo'lmaydi.", edit: 'Tahrirlash', empty: "Ma'lumot yo'q",
     filter: 'Filtr', inactive: 'Nofaol', loading: 'Yuklanmoqda…', name: 'Nomi (uz)', nameRu: 'Nomi (ru)', next: 'Keyingi',
@@ -214,7 +214,7 @@ const uz = {
   },
   urgent: {
     button: 'Yangi vazifa', title: 'Yangi vazifa', client: 'Mijoz', searchClient: 'Mijoz nomi yoki STIR… (Enter — birinchisi)',
-    template: 'Tayyor shablon', text: 'Vazifa matni', textHint: 'Shablon tanlansa, matn o\'zi to\'ldiriladi',
+    template: 'Tayyor shablon', templatePlaceholder: 'Shablonni tanlang', text: 'Vazifa matni', textHint: 'Shablon tanlansa, matn o\'zi to\'ldiriladi',
     assignee: 'Buxgalter', leastBusy: 'eng kam band', load: '{{count}} ta ochiq', due: 'Muddat', submit: 'Yuborish',
     created: 'Shoshilinch vazifa yuborildi', kbdHint: 'Ctrl+Enter — yuborish, Esc — yopish',
   },

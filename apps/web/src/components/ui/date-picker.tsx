@@ -1,6 +1,6 @@
-import { CalendarIcon, ChevronLeft, ChevronRight } from 'lucide-react';
+import { CalendarIcon, ChevronLeft, ChevronRight, Clock } from 'lucide-react';
 import { DateTime } from 'luxon';
-import { type ReactNode, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { cn } from '@/lib/cn';
 import { todayIso } from '@/lib/time';
@@ -118,8 +118,10 @@ function Trigger({
   className,
   btnRef,
   ariaLabel,
+  icon: Icon = CalendarIcon,
 }: {
   ariaLabel?: string;
+  icon?: typeof CalendarIcon;
   id?: string;
   open: boolean;
   text: string;
@@ -137,7 +139,7 @@ function Trigger({
       <span className={cn('truncate', !text && 'text-gray-500')}>{text || placeholder}</span>
       <span className="flex shrink-0 items-center gap-1">
         {clearable && text && !disabled && <ClearIcon onClear={onClear} label={t('common.clear')} />}
-        <CalendarIcon className={cn('h-4 w-4 transition-colors', text ? 'text-brand-500 dark:text-brand-400' : 'text-gray-500')} />
+        <Icon className={cn('h-4 w-4 transition-colors', text ? 'text-brand-500 dark:text-brand-400' : 'text-gray-500')} />
       </span>
     </button>
   );
@@ -284,6 +286,97 @@ export function MonthPicker({
               />
             </>
           )}
+        </div>
+      </Popover>
+    </>
+  );
+}
+
+const pad = (n: number) => String(n).padStart(2, '0');
+const HOURS = Array.from({ length: 24 }, (_, i) => pad(i));
+const MINUTES = Array.from({ length: 12 }, (_, i) => pad(i * 5));
+
+/** Vaqt ustuni: ochilganda tanlangan qiymat ko'rinadigan joyga (o'rtaga) suriladi */
+function TimeColumn({ label, items, value, onPick }: { label: string; items: string[]; value: string; onPick: (v: string) => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = ref.current?.querySelector<HTMLElement>('[data-selected]');
+    if (el && ref.current) ref.current.scrollTop = el.offsetTop - ref.current.clientHeight / 2 + el.clientHeight / 2;
+  }, []);
+  return (
+    <div className="flex flex-col">
+      <span className="pb-1.5 text-center text-xs font-medium text-gray-500">{label}</span>
+      <div ref={ref} className="custom-scrollbar relative flex h-52 w-14 flex-col gap-1 overflow-y-auto pr-1">
+        {items.map((v) => (
+          <button
+            key={v}
+            type="button"
+            data-selected={v === value || undefined}
+            onClick={() => onPick(v)}
+            className={cn(cellCls, 'h-8 w-full shrink-0 tabular-nums', v === value && selectedCls)}
+          >
+            {v}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Vaqt tanlash: 'HH:mm' (native type="time" o'rniga — brauzer/OS'ga qarab AM/PM va o'z uslubida chiqardi).
+ * 24 soatlik format (Asia/Tashkent). Daqiqa 5 qadam bilan; boshqa qiymat kelsa ham ro'yxatda ko'rinadi.
+ */
+export function TimePicker({
+  id,
+  value,
+  onChange,
+  placeholder,
+  disabled,
+  className,
+  'aria-label': ariaLabel,
+}: {
+  'aria-label'?: string;
+  id?: string;
+  value: string;
+  onChange: (time: string) => void;
+  placeholder?: string;
+  disabled?: boolean;
+  className?: string;
+}) {
+  const { t } = useTranslation();
+  const ref = useRef<HTMLButtonElement>(null);
+  const [open, setOpen] = useState(false);
+  const [h = '', m = ''] = value ? value.split(':') : [];
+  const minutes = m && !MINUTES.includes(m) ? [...MINUTES, m].sort() : MINUTES;
+  return (
+    <>
+      <Trigger
+        btnRef={ref}
+        id={id}
+        open={open}
+        text={value ? `${h}:${m}` : ''}
+        placeholder={placeholder ?? t('common.pickTime')}
+        disabled={disabled}
+        onToggle={() => setOpen(!open)}
+        onClear={() => onChange('')}
+        className={className}
+        ariaLabel={ariaLabel}
+        icon={Clock}
+      />
+      <Popover anchorRef={ref} open={open} onClose={() => setOpen(false)}>
+        <div className="flex gap-2 p-3">
+          <TimeColumn label={t('common.hour')} items={HOURS} value={h} onPick={(v) => onChange(`${v}:${m || '00'}`)} />
+          <div className="w-px bg-gray-200" />
+          <TimeColumn
+            label={t('common.minute')}
+            items={minutes}
+            value={m}
+            onPick={(v) => {
+              onChange(`${h || '00'}:${v}`);
+              setOpen(false);
+            }}
+          />
         </div>
       </Popover>
     </>

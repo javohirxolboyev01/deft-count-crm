@@ -157,7 +157,7 @@ export function Field({
   const hintEl = hint && <p className="ml-1.5 mt-1 text-xs text-gray-500">{hint}</p>;
   if (group) {
     return (
-      <fieldset>
+      <fieldset className="min-w-0">
         <legend className={labelCls}>{label}</legend>
         {children}
         {hintEl}

@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardHeader, PageHeader } from '@/components/ui/card';
 import { ConfirmDialog, Dialog } from '@/components/ui/dialog';
 import { Checkbox, Field, Input } from '@/components/ui/input';
+import { TimePicker } from '@/components/ui/date-picker';
 import { Empty, QueryState } from '@/components/ui/states';
 import { TableSkeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
@@ -483,7 +484,7 @@ function OverdueReminderCard() {
         <div className="flex flex-wrap items-end gap-6">
           <Checkbox label={t('settings.overdueEnabled')} checked={draft.enabled} onChange={(v) => setDraft({ ...draft, enabled: v })} />
           <Field label={t('settings.overdueSendAt')}>
-            <Input type="time" value={draft.sendAt} onChange={(e) => setDraft({ ...draft, sendAt: e.target.value })} />
+            <TimePicker value={draft.sendAt} onChange={(v) => setDraft({ ...draft, sendAt: v })} />
           </Field>
         </div>
         <div className="space-y-2">
@@ -556,7 +557,7 @@ function GeneralTab() {
       <Card>
         <CardHeader title={t('settings.general')} />
         <div className="flex items-end gap-3 p-4">
-          <Field label={t('settings.dueTime')} hint={t('settings.dueTimeHint')}><Input type="time" value={time} onChange={(e) => setTime(e.target.value)} /></Field>
+          <Field label={t('settings.dueTime')} hint={t('settings.dueTimeHint')}><TimePicker value={time} onChange={setTime} /></Field>
           <Button disabled={!time || time === q.data?.taskDueTime} onClick={() => save.mutate({ taskDueTime: time })}>{t('common.save')}</Button>
         </div>
         <div className="flex items-end gap-3 border-t p-4">
