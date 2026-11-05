@@ -156,6 +156,10 @@ Rahbar mijozga boshqa buxgalter tayinlaydi; tugallanmagan vazifalar yangisiga o'
 ### 6.9 Shoshilinch vazifa (10 soniya)
 "+ Shoshilinch": mijoz tanlanadi, matn yoziladi yoki tayyor shablon; tizim **eng kam ochiq vazifali** buxgalterni birinchi taklif qiladi; buxgalter ekranida qizil xabar + Telegram; muddat odatda shu kuni 18:00.
 
+### 6.9.1 Vazifani boshqa xodimga o'tkazish (V40)
+Faqat Shoshilinch va qo'lda yaratilgan (URGENT/MANUAL) ochiq vazifa. So'rovni vazifa egasi (mas'ul) yoki rahbar yuboradi; sabab majburiy (Menga tegishli emas / Bandman / Boshqa sabab + matn). Qabul qiluvchi rozilik beradi ("Qabul qilaman / Rad etaman" — "Mening kunim" yuqorisida va vazifa panelida); qabul qilinguncha vazifa eski egasida. Bitta vazifada bitta kutilayotgan so'rov (`task_transfer`), zanjir cheklanmaydi. Qabul qilinsa "Jarayonda" → "Bajarilishi kerak" (taymer to'xtaydi). Bildirishnomalar: `TASK_TRANSFER` (qabul qiluvchiga), `TASK_TRANSFER_RESULT` (so'rovchi, eski egasi; qabulda vazifa muallifi ham). Hammasi `audit_log`'da. Faqat buxgalterga o'tkaziladi (`TODO(tasdiqlash)`).
+Shoshilinch va o'tkazilayotgan vazifa — kompyuter (brauzer Notification API) bildirishnomasi ham: CRM brauzerda ochiq tursa, boshqa dasturda ishlayotganda ham ekranda chiqadi. Brauzer yopiq bo'lsa — Telegram.
+
 ### 6.10 Oylik jadval (Google Sheet ko'rinishi)
 Qatorda mijoz, ustunda hisobot va muddati. Katakcha holati vazifadan olinadi:
 
@@ -206,3 +210,4 @@ Haqiqiy jadval ustunlari:
 ## 10. Hali ochiq masalalar (`TODO(tasdiqlash)`)
 
 1. YaTT uchun jadvalda ustuni yo'q hisobotlar (Poruchenya, dividend, norezident, yillik) X deb olingan (V33).
+2. Vazifa faqat buxgalterga o'tkaziladi, rahbarga emas (V40).

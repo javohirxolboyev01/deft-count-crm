@@ -24,15 +24,19 @@ import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
+import { showDesktopNotification } from '@/lib/desktopNotify';
 import { useServerEvents } from '@/lib/events';
 import { useTheme } from '@/lib/theme';
 import type { AppNotification, Lang } from '@/lib/types';
+import { DesktopNotifPrompt } from './DesktopNotifPrompt';
 import { Logo } from './Logo';
-import { NotificationsDrawer, notificationText } from './NotificationsDrawer';
+import { NotificationsDrawer, notificationParts, notificationText } from './NotificationsDrawer';
 import { TaskPanel } from './TaskPanel';
 import { UrgentDialog } from './UrgentDialog';
 
 const SIDEBAR_KEY = 'sidebar-expanded';
+/** Kompyuter bildirishnomasi chiqadigan turlar: xodimdan darhol harakat kutadiganlari */
+const DESKTOP_KINDS = new Set(['URGENT_TASK', 'TASK_TRANSFER']);
 const readExpanded = () => {
   try {
     return localStorage.getItem(SIDEBAR_KEY) !== 'false';
@@ -95,6 +99,16 @@ export function Layout() {
   useServerEvents(!!user, (n: AppNotification) => {
     setRingKey((k) => k + 1);
     const text = notificationText(n, t);
+    // Boshqa dastur yoki oynada ishlayotgan bo'lsa ham ko'rinsin: OS bildirishnomasi (CRM oynasi faol bo'lsa toast yetarli)
+    if (DESKTOP_KINDS.has(n.kind) && (document.hidden || !document.hasFocus())) {
+      const parts = notificationParts(n, t);
+      showDesktopNotification({
+        ...parts,
+        tag: `notif-${n.id}`,
+        sticky: n.kind === 'URGENT_TASK',
+        onClick: n.taskId ? () => setOpenTask(n.taskId) : undefined,
+      });
+    }
     if (n.kind === 'URGENT_TASK') {
       // Shoshilinch: ekranda qizil xabar, foydalanuvchi o'zi yopmaguncha turadi
       toast.error(text, {
@@ -104,6 +118,11 @@ export function Layout() {
       });
     } else if (n.kind === 'TASK_OVERDUE' || n.kind === 'CLIENTS_OVERDUE') {
       toast.warning(text);
+    } else if (n.kind === 'TASK_TRANSFER') {
+      toast.info(text, {
+        duration: 15000,
+        action: n.taskId ? { label: t('common.open'), onClick: () => setOpenTask(n.taskId) } : undefined,
+      });
     } else if (n.kind === 'LEAD_WON') {
       toast.success(text, {
         duration: 10000,
@@ -282,6 +301,7 @@ export function Layout() {
         </main>
       </div>
       <UrgentDialog open={urgentOpen} onClose={() => setUrgentOpen(false)} />
+      <DesktopNotifPrompt enabled={!!user && !isOperator} />
       <NotificationsDrawer open={notifOpen} onClose={() => setNotifOpen(false)} onOpenTask={setOpenTask} />
       <TaskPanel taskId={openTask} onClose={() => setOpenTask(null)} />
     </div>

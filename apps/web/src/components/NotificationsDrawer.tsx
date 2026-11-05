@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { TFunction } from 'i18next';
-import { CalendarClock, CheckCheck, CircleCheck, Clock, Handshake, Siren, X, type LucideIcon } from 'lucide-react';
+import { ArrowLeftRight, CalendarClock, CheckCheck, CircleCheck, Clock, Handshake, Siren, Undo2, UserCheck, X, type LucideIcon } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
@@ -27,21 +27,39 @@ const params = (n: AppNotification, t: TFunction) => {
     assignee: p.assigneeName ?? '—',
     createdBy: p.createdByName ?? '',
     lead: p.leadName ?? '',
+    from: p.fromName ?? p.actorName ?? '—',
+    to: p.toName ?? '',
+    reason: p.reasonCode ? (p.reasonText ? (p.reasonCode === 'OTHER' ? p.reasonText : `${t(`transfer.reasons.${p.reasonCode}`)} — ${p.reasonText}`) : t(`transfer.reasons.${p.reasonCode}`)) : '',
+    rejectReason: p.rejectReason ? ` (${p.rejectReason})` : '',
   };
 };
 
+/** Matn kaliti: o'tkazish natijasi qabul/rad bo'yicha ikki xil ko'rinadi */
+type TextKey = Exclude<NotificationKind, 'TASK_TRANSFER_RESULT'> | 'TASK_TRANSFER_ACCEPTED' | 'TASK_TRANSFER_REJECTED';
+const textKey = (n: AppNotification): TextKey =>
+  n.kind === 'TASK_TRANSFER_RESULT' ? (n.payload?.accepted ? 'TASK_TRANSFER_ACCEPTED' : 'TASK_TRANSFER_REJECTED') : n.kind;
+
 /** Bir qatorli matn (toast xabarlari uchun) */
 export function notificationText(n: AppNotification, t: TFunction) {
-  return t(`notif.${n.kind}`, params(n, t));
+  return t(`notif.${textKey(n)}`, params(n, t));
+}
+
+/** Kompyuter bildirishnomasi uchun: sarlavha va matn alohida */
+export function notificationParts(n: AppNotification, t: TFunction) {
+  const k = textKey(n);
+  return { title: t(`notif.heading.${k}`), body: t(`notif.body.${k}`, params(n, t)) };
 }
 
 // Tur bo'yicha ko'rinish: chap chiziq, belgi foni va rangi
-const KIND_STYLE: Record<NotificationKind, { icon: LucideIcon; border: string; tile: string }> = {
+const KIND_STYLE: Record<TextKey, { icon: LucideIcon; border: string; tile: string }> = {
   URGENT_TASK: { icon: Siren, border: 'border-l-red-500', tile: 'bg-red-50 text-red-500' },
   TASK_OVERDUE: { icon: Clock, border: 'border-l-amber-400', tile: 'bg-amber-50 text-amber-500' },
   CLIENTS_OVERDUE: { icon: CalendarClock, border: 'border-l-red-500', tile: 'bg-red-50 text-red-500' },
   TASK_DONE: { icon: CircleCheck, border: 'border-l-green-500', tile: 'bg-green-50 text-green-600' },
   LEAD_WON: { icon: Handshake, border: 'border-l-brand-500', tile: 'bg-brand-50 text-brand-600' },
+  TASK_TRANSFER: { icon: ArrowLeftRight, border: 'border-l-blue-500', tile: 'bg-blue-50 text-blue-600' },
+  TASK_TRANSFER_ACCEPTED: { icon: UserCheck, border: 'border-l-green-500', tile: 'bg-green-50 text-green-600' },
+  TASK_TRANSFER_REJECTED: { icon: Undo2, border: 'border-l-amber-400', tile: 'bg-amber-50 text-amber-500' },
 };
 
 /** Bildirishnomalar: alohida sahifa emas, headerdagi qo'ng'iroqdan o'ngdan ochiladigan panel */
@@ -105,7 +123,8 @@ export function NotificationsDrawer({ open, onClose, onOpenTask }: { open: boole
             {!q.data?.items?.length && <Empty text={t('notif.empty')} />}
             <ul className="divide-y divide-gray-200">
               {q.data?.items.map((n) => {
-                const st = KIND_STYLE[n.kind] ?? KIND_STYLE.TASK_DONE;
+                const k = textKey(n);
+                const st = KIND_STYLE[k] ?? KIND_STYLE.TASK_DONE;
                 const when = n.deliveredAt ?? n.createdAt;
                 return (
                   <li key={n.id}>
@@ -135,12 +154,12 @@ export function NotificationsDrawer({ open, onClose, onOpenTask }: { open: boole
                       </span>
                       <span className="min-w-0 flex-1">
                         <span className="flex items-baseline justify-between gap-2">
-                          <span className={cn('text-[13px] leading-5 text-foreground', n.readAt ? 'font-medium' : 'font-semibold')}>{t(`notif.heading.${n.kind}`)}</span>
+                          <span className={cn('text-[13px] leading-5 text-foreground', n.readAt ? 'font-medium' : 'font-semibold')}>{t(`notif.heading.${k}`)}</span>
                           <time dateTime={when} title={fmtDateTime(when)} className="shrink-0 text-[11px] text-gray-400">
                             {fmtRelative(when, t)}
                           </time>
                         </span>
-                        <span className="block text-[11px] leading-snug text-gray-500">{t(`notif.body.${n.kind}`, params(n, t))}</span>
+                        <span className="block text-[11px] leading-snug text-gray-500">{t(`notif.body.${k}`, params(n, t))}</span>
                       </span>
                     </button>
                   </li>

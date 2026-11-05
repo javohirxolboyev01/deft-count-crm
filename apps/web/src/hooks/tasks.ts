@@ -6,7 +6,7 @@ import { errorText } from '@/lib/errors';
 import type { AccountantOption, Task, TaskStatus } from '@/lib/types';
 
 export function invalidateTasks(qc: QueryClient) {
-  for (const key of ['my-day', 'tasks', 'task', 'grid', 'works', 'dashboard', 'clients', 'client']) {
+  for (const key of ['my-day', 'transfers', 'tasks', 'task', 'grid', 'works', 'dashboard', 'clients', 'client']) {
     void qc.invalidateQueries({ queryKey: [key] });
   }
 }

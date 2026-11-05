@@ -8,6 +8,7 @@ import { TZ, currentPeriod, nowTz, periodFromMonth, todayAt, workPeriod } from '
 import { one, pool, q, tx } from '../db';
 import { getDueTime } from './generator';
 import { enqueue } from './notifications';
+import { hasPendingTransferTo, transfersForTask } from './taskTransfer';
 import {
   assertTaskAccess,
   changeStatus,
@@ -228,7 +229,8 @@ tasksRouter.get('/:id', async (req, res) => {
   const taskId = parse(id, req.params.id);
   const t = await one(pool, 'SELECT t.assignee_id, c.accountant_id FROM task t JOIN client c ON c.id = t.client_id WHERE t.id = $1', [taskId]);
   if (!t) throw notFound('Vazifa');
-  assertTaskAccess(u, t);
+  // Qabul qiluvchi o'ziga o'tkazilayotgan vazifani qaror qilishdan oldin ko'ra oladi (faqat ko'radi)
+  if (!(await hasPendingTransferTo(pool, taskId, u.id))) assertTaskAccess(u, t);
   const task = await getTaskDto(pool, taskId);
   const checklist = await q(
     pool,
@@ -241,7 +243,7 @@ tasksRouter.get('/:id', async (req, res) => {
      FROM time_entry te JOIN app_user u ON u.id = te.user_id WHERE te.task_id = $1 ORDER BY te.started_at DESC LIMIT 50`,
     [taskId],
   );
-  res.json({ ...task, checklist, timeEntries });
+  res.json({ ...task, checklist, timeEntries, ...(await transfersForTask(pool, taskId)) });
 });
 
 tasksRouter.patch('/:id', async (req, res) => {

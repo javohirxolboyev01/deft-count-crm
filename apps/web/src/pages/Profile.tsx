@@ -8,6 +8,7 @@ import { Field, Input, PIN_MIN, PinInput } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
+import { showDesktopNotification, useDesktopPermission } from '@/lib/desktopNotify';
 import { errorText } from '@/lib/errors';
 import { fmtDateTime } from '@/lib/time';
 import type { Lang, NotificationKind } from '@/lib/types';
@@ -15,6 +16,7 @@ import type { Lang, NotificationKind } from '@/lib/types';
 export default function Profile() {
   const { t, i18n } = useTranslation();
   const { user, reload } = useAuth();
+  const desktop = useDesktopPermission();
   const [pw, setPw] = useState({ currentPassword: '', newPassword: '', repeat: '' });
   const [code, setCode] = useState<{ code: string; expiresAt: string; deepLink: string | null; botEnabled: boolean } | null>(null);
   const onErr = (e: unknown) => toast.error(errorText(e, t));
@@ -110,6 +112,21 @@ export default function Profile() {
           )}
         </div>
       </Card>
+
+      {!!kinds.length && <Card>
+        <CardHeader title={t('desktopNotif.title')} />
+        <div className="flex flex-wrap items-center gap-3 p-4 text-sm">
+          <p className="min-w-0 flex-1 text-gray-600">
+            {desktop.perm === 'granted' ? t('desktopNotif.on') : desktop.perm === 'denied' ? t('desktopNotif.denied') : desktop.perm === 'unsupported' ? t('desktopNotif.unsupported') : t('desktopNotif.banner')}
+          </p>
+          {desktop.perm === 'default' && <Button size="sm" onClick={() => void desktop.request()}>{t('desktopNotif.enable')}</Button>}
+          {desktop.perm === 'granted' && (
+            <Button size="sm" variant="outline" onClick={() => showDesktopNotification({ title: 'CRM', body: t('desktopNotif.testText'), tag: 'desktop-test' })}>
+              {t('desktopNotif.test')}
+            </Button>
+          )}
+        </div>
+      </Card>}
 
       {!!kinds.length && <Card>
         <CardHeader title={t('profile.prefs')} />

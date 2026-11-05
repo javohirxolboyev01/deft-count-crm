@@ -38,6 +38,20 @@ export function renderNotification(kind: string, p: any, lang: Lang): string {
       return uz
         ? `🚨 Shoshilinch vazifa: ${p.title}\nMijoz: ${p.clientName}\nMuddat: ${fmt(p.dueAt)}\nKim berdi: ${p.createdByName}`
         : `🚨 Срочная задача: ${p.title}\nКлиент: ${p.clientName}\nСрок: ${fmt(p.dueAt)}\nПоставил: ${p.createdByName}`;
+    case 'TASK_TRANSFER': {
+      const reason = transferReason(p, uz);
+      return uz
+        ? `🔁 Sizga vazifa o'tkazilmoqda: ${p.taskTitle}\nMijoz: ${p.clientName}\nKimdan: ${p.fromName ?? '—'}${p.actorName !== p.fromName ? ` (so'rov: ${p.actorName})` : ''}\nSabab: ${reason}\nMuddat: ${fmt(p.dueAt)}\nCRM'da "Qabul qilaman" yoki "Rad etaman" ni bosing.`
+        : `🔁 Вам передают задачу: ${p.taskTitle}\nКлиент: ${p.clientName}\nОт кого: ${p.fromName ?? '—'}${p.actorName !== p.fromName ? ` (запрос: ${p.actorName})` : ''}\nПричина: ${reason}\nСрок: ${fmt(p.dueAt)}\nВ CRM нажмите «Принять» или «Отклонить».`;
+    }
+    case 'TASK_TRANSFER_RESULT':
+      return p.accepted
+        ? uz
+          ? `✅ ${p.toName} vazifani qabul qildi: ${p.taskTitle}\nMijoz: ${p.clientName}`
+          : `✅ ${p.toName} принял(а) задачу: ${p.taskTitle}\nКлиент: ${p.clientName}`
+        : uz
+          ? `↩️ ${p.toName} vazifani rad etdi: ${p.taskTitle}\nMijoz: ${p.clientName}${p.rejectReason ? `\nSabab: ${p.rejectReason}` : ''}\nVazifa sizda qoldi.`
+          : `↩️ ${p.toName} отклонил(а) задачу: ${p.taskTitle}\nКлиент: ${p.clientName}${p.rejectReason ? `\nПричина: ${p.rejectReason}` : ''}\nЗадача осталась за вами.`;
     case 'LEAD_WON':
       return uz
         ? `🤝 Yangi mijoz topildi: ${p.leadName}\nSTIR: ${p.stir}\nOperator: ${p.actorName}${p.comment ? `\nIzoh: ${p.comment}` : ''}\nBuxgalter biriktiring.`
@@ -45,6 +59,16 @@ export function renderNotification(kind: string, p: any, lang: Lang): string {
     default:
       return uz ? `Bildirishnoma: ${kind}` : `Уведомление: ${kind}`;
   }
+}
+
+function transferReason(p: any, uz: boolean) {
+  const base: Record<string, [string, string]> = {
+    NOT_MINE: ['Menga tegishli emas', 'Не относится ко мне'],
+    BUSY: ['Bandman', 'Занят(а)'],
+    OTHER: ['Boshqa sabab', 'Другая причина'],
+  };
+  const label = base[p.reasonCode]?.[uz ? 0 : 1] ?? p.reasonCode;
+  return p.reasonText ? (p.reasonCode === 'OTHER' ? p.reasonText : `${label} — ${p.reasonText}`) : label;
 }
 
 export const telegramTexts = {

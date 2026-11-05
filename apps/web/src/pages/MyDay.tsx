@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { MyDayKpis } from '@/components/MyDayKpis';
 import { OverdueMatrix } from '@/components/OverdueMatrix';
 import { TaskCard } from '@/components/TaskCard';
+import { IncomingTransfers } from '@/components/TaskTransfer';
 import { Card, CardHeader, PageHeader } from '@/components/ui/card';
 import { QueryState } from '@/components/ui/states';
 import { KpiSkeleton, Skeleton } from '@/components/ui/skeleton';
@@ -62,6 +63,8 @@ export default function MyDay() {
         {d && (
           <div className="space-y-4">
             <MyDayKpis d={d} />
+
+            <IncomingTransfers onOpen={openTask} />
 
             <Group title={t('myDay.urgent')} icon={<Siren className="h-4 w-4 text-red-600" />} tasks={d.groups?.urgent} tone="border-l-red-600" onOpen={openTask} onDone={onDone} />
             <OverdueMatrix tasks={d.groups?.overdue} onOpen={openTask} onDone={onDone} />

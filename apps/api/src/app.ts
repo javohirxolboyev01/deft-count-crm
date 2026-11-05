@@ -19,6 +19,7 @@ import { notificationsRouter } from './modules/notifications';
 import { settingsRouter } from './modules/settings';
 import { sheetsRouter } from './modules/sheets/routes';
 import { tasksRouter } from './modules/tasks';
+import { transfersRouter } from './modules/taskTransfer';
 import { usersRouter } from './modules/users';
 import { worksRouter } from './modules/works';
 
@@ -49,6 +50,7 @@ export function createApp() {
   app.use('/api/clients', staff, clientsRouter);
   app.use('/api/settings', staff, settingsRouter);
   app.use('/api/tasks', staff, tasksRouter);
+  app.use('/api/task-transfers', staff, transfersRouter);
   app.use('/api/generator', staff, generatorRouter);
   app.use('/api/monthly-grid', staff, gridRouter);
   app.use('/api/works', staff, worksRouter);

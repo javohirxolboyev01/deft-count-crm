@@ -11,6 +11,7 @@ import { fmtDateTime, fmtDuration } from '@/lib/time';
 import type { TaskDetail, TaskStatus } from '@/lib/types';
 import { invalidateTasks, taskTitle, taskTone, useChangeStatus } from '@/hooks/tasks';
 import { TaskStatusBadge } from './StatusBadge';
+import { TransferSection } from './TaskTransfer';
 import { Button } from './ui/button';
 import { ConfirmDialog, Drawer } from './ui/dialog';
 import { Input, Textarea } from './ui/input';
@@ -44,7 +45,7 @@ const NEXT: Record<TaskStatus, TaskStatus[]> = {
 
 export function TaskPanel({ taskId, onClose }: { taskId: number | null; onClose: () => void }) {
   const { t, i18n } = useTranslation();
-  const { isLeader } = useAuth();
+  const { isLeader, user } = useAuth();
   const qc = useQueryClient();
   const changeStatus = useChangeStatus();
   const q = useQuery({
@@ -66,6 +67,8 @@ export function TaskPanel({ taskId, onClose }: { taskId: number | null; onClose:
   const remove = useMutation({ mutationFn: (id: number) => api.del(`/tasks/${taskId}/checklist/${id}`), onSuccess: () => { setRemoving(null); refresh(); }, onError: onErr });
 
   const tone = task ? taskTone(task) : null;
+  // Qabul qiluvchi o'ziga o'tkazilayotgan vazifani faqat ko'radi va qaror qiladi (holatni o'zgartirmaydi)
+  const viewOnly = !!task && !isLeader && task.assigneeId !== user?.id && task.pendingTransfer?.toUserId === user?.id;
   return (
     <Drawer open={taskId !== null} onClose={onClose} title={task ? taskTitle(task, i18n.language) : t('task.title')}>
       <QueryState q={q}>
@@ -103,7 +106,7 @@ export function TaskPanel({ taskId, onClose }: { taskId: number | null; onClose:
               )}
             </dl>
 
-            <div className="flex flex-wrap gap-1.5">
+            {!viewOnly && <div className="flex flex-wrap gap-1.5">
               {NEXT[task.status].map((s) => (
                 <Button key={s} variant="outline" size="sm" onClick={() => changeStatus(task.id, s)}>
                   {t(`task.to.${s}`)}
@@ -119,7 +122,9 @@ export function TaskPanel({ taskId, onClose }: { taskId: number | null; onClose:
                   {t('task.reopen')}
                 </Button>
               )}
-            </div>
+            </div>}
+
+            <TransferSection task={task} />
 
             {SHOW_CHECKLIST && (
             <section>

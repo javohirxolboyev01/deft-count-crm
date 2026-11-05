@@ -9,7 +9,27 @@ export type ClientStatus = 'ACTIVE' | 'ZERO_REPORT' | 'LIQUIDATING' | 'ARCHIVED'
 export const CLIENT_STATUSES: ClientStatus[] = ['ACTIVE', 'ZERO_REPORT', 'LIQUIDATING', 'ARCHIVED'];
 export type TaskStatus = 'TODO' | 'IN_PROGRESS' | 'WAITING_CLIENT' | 'DONE' | 'CANCELLED';
 export type TaskKind = 'ROUTINE' | 'REPORT' | 'URGENT' | 'MANUAL';
-export type NotificationKind = 'TASK_DONE' | 'TASK_OVERDUE' | 'CLIENTS_OVERDUE' | 'URGENT_TASK' | 'LEAD_WON';
+export type NotificationKind = 'TASK_DONE' | 'TASK_OVERDUE' | 'CLIENTS_OVERDUE' | 'URGENT_TASK' | 'TASK_TRANSFER' | 'TASK_TRANSFER_RESULT' | 'LEAD_WON';
+export type TransferReason = 'NOT_MINE' | 'BUSY' | 'OTHER';
+export const TRANSFER_REASONS: TransferReason[] = ['NOT_MINE', 'BUSY', 'OTHER'];
+
+/** Vazifani boshqa xodimga o'tkazish so'rovi (qabul qiluvchi rozilik beradi) */
+export interface TaskTransfer {
+  id: number;
+  taskId: number;
+  status: 'PENDING' | 'ACCEPTED' | 'REJECTED' | 'CANCELLED';
+  reasonCode: TransferReason;
+  reasonText: string | null;
+  rejectReason: string | null;
+  createdAt: string;
+  resolvedAt: string | null;
+  fromUserId: number | null;
+  fromName: string | null;
+  toUserId: number;
+  toName: string;
+  requestedBy: number;
+  requestedByName: string;
+}
 
 export interface Me {
   id: number;
@@ -124,6 +144,8 @@ export interface Task {
 export interface TaskDetail extends Task {
   checklist: { id: number; text: string; done: boolean; sortOrder: number }[];
   timeEntries: { id: number; userId: number; userName: string; startedAt: string; endedAt: string | null }[];
+  pendingTransfer: TaskTransfer | null;
+  transfers: TaskTransfer[];
 }
 
 export interface MyDay {
