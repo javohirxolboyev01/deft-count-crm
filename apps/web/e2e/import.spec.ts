@@ -21,8 +21,8 @@ async function reportsFile() {
       'QQS 20.10.2026', 'FOYDA 20.10.2026', 'INPS', 'Poruchenya JSHDS', 'Қилиниши лозим бўлган ишлар'],
     ['1', '601000001', 'E2E IMPORT MChJ', 'AOC', '1', '0', '0', 'X', 'X', '0', '0', ''],
     ['2', '601000002', 'E2E IZOH MChJ', 'QQS', '0', '0', 'X', '0', '0', '0', '0', '15.03.2026 da tekshiruv'],
-    // Soliq turi tanilmaydi: boricha yuklanadi (V24) va "Qo'lda tekshirish"ga tushadi
-    ['3', '601000003', 'E2E YATT', 'ЯТТ', '0', '0', 'X', 'X', 'X', '0', '0', ''],
+    // Soliq turi tanilmaydi ("Қ АОС"): boricha yuklanadi (V24), nomi yonida ⚠ (ЯТТ esa V33'dan YaTT deb taniladi)
+    ['3', '601000003', 'E2E NOMALUM', 'Қ АОС', '0', '0', 'X', 'X', 'X', '0', '0', ''],
   ]);
   return { name: 'hisobot oktyabr.xlsx', mimeType: XLSX, buffer: Buffer.from(await wb.xlsx.writeBuffer()) };
 }
@@ -54,22 +54,17 @@ test('Excel import har sahifaning o\'zida; Google Sheets sahifasi yo\'q', async 
   await expect(dlg.getByText(/CRM'ga yozildi/)).toBeVisible();
   await page.keyboard.press('Escape');
 
-  // Soliq turi tanilmagan korxona ham jadvalda (boricha), nomi yonida kamchilik belgisi
-  await page.getByLabel('Qidiruv').fill('E2E YATT');
-  await expect(page.getByRole('button', { name: 'E2E YATT — Korxona nomi' })).toBeVisible();
-  await expect(page.getByLabel(/Qo'lda tekshirish ro'yxati: Soliq turini tanlang/)).toBeVisible();
-  await page.getByLabel('Qidiruv').fill('');
-
-  // "Qo'lda tekshirish": korxona bosilsa jadvalning o'zida topiladi (detail sahifa yo'q)
-  await page.getByRole('button', { name: /Qo'lda tekshirish \(\d+\)/ }).click();
+  // Soliq turi tanilmagan korxona ham jadvalda (boricha), nomi yonida ⚠ kamchilik belgisi.
+  // Alohida "Qo'lda tekshirish" ro'yxati yo'q (V27, rahbar qarori) — hammasi shu belgida
+  await page.getByLabel('Qidiruv').fill('E2E NOMALUM');
+  await expect(page.getByRole('button', { name: 'E2E NOMALUM — Korxona nomi' })).toBeVisible();
+  await expect(page.getByLabel(/Kamchilik: Soliq turini tanlang/)).toBeVisible();
+  await expect(page.getByRole('button', { name: /Qo'lda tekshirish/ })).toHaveCount(0);
   if (SHOTS) await page.screenshot({ path: `${SHOTS}/7-review.png` });
-  await page.getByRole('dialog').getByRole('link', { name: /E2E YATT/ }).click();
-  await expect(page).toHaveURL(/\/monthly\?search=/);
-  await expect(page.getByRole('button', { name: 'E2E YATT — Korxona nomi' })).toBeVisible();
   // Soliq turi katak ichida tanlanadi: kamchilik o'zi yopiladi (V28), "Hal qilindi" tugmasi yo'q
-  await page.getByRole('combobox', { name: 'E2E YATT — Soliq turi' }).click();
+  await page.getByRole('combobox', { name: 'E2E NOMALUM — Soliq turi' }).click();
   await page.getByRole('option', { name: 'AOS', exact: true }).click();
-  await expect(page.getByLabel(/Qo'lda tekshirish ro'yxati/)).toHaveCount(0);
+  await expect(page.getByLabel(/Kamchilik:/)).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Hal qilindi' })).toHaveCount(0);
   if (SHOTS) await page.screenshot({ path: `${SHOTS}/8-review-fixed.png` });
   await page.goto('/monthly');

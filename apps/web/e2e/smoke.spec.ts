@@ -58,12 +58,12 @@ test('mijoz yaratish (AOS va QQS) va oylik jadvalda X qoidasi', async ({ page })
   await page.goto('/monthly');
   await page.getByLabel('Qidiruv').fill('E2E');
   await expect(page.getByRole('button', { name: 'E2E AOS MChJ — Korxona nomi' })).toBeVisible();
-  // AOS: QQS va Foyda "—"; QQS: AOS "—"
-  await expect(page.getByRole('button', { name: 'E2E AOS MChJ — QQS: Topshirmaydi' })).toHaveText('—');
-  await expect(page.getByRole('button', { name: "E2E AOS MChJ — Foyda solig'i: Topshirmaydi" })).toHaveText('—');
-  await expect(page.getByRole('button', { name: 'E2E QQS MChJ — AOS: Topshirmaydi' })).toHaveText('—');
-  await expect(page.getByRole('button', { name: /^E2E AOS MChJ — AOS:/ })).not.toHaveText('—');
-  await expect(page.getByRole('button', { name: /^E2E QQS MChJ — QQS:/ })).not.toHaveText('—');
+  // AOS: QQS va Foyda "X"; QQS: AOS "X" (jadvaldagi X belgisi, Exceldagidek)
+  await expect(page.getByRole('button', { name: 'E2E AOS MChJ — QQS: Topshirmaydi' })).toHaveText('X');
+  await expect(page.getByRole('button', { name: "E2E AOS MChJ — Foyda solig'i: Topshirmaydi" })).toHaveText('X');
+  await expect(page.getByRole('button', { name: 'E2E QQS MChJ — AOS: Topshirmaydi' })).toHaveText('X');
+  await expect(page.getByRole('button', { name: /^E2E AOS MChJ — AOS:/ })).not.toHaveText('X');
+  await expect(page.getByRole('button', { name: /^E2E QQS MChJ — QQS:/ })).not.toHaveText('X');
   // Katak bosish -> 1 / 0 / X menyusi (Excel kabi): 1 — Bajarildi
   await page.getByRole('button', { name: /^E2E QQS MChJ — QQS:/ }).click();
   await page.getByRole('menuitemradio', { name: /Topshirildi/ }).click();
@@ -101,7 +101,7 @@ test('shoshilinch vazifa: buxgalter ekranida bir necha soniyada qizil xabar', as
   const lead = await leadCtx.newPage();
   await login(lead, 'rahbar');
   const started = Date.now();
-  await lead.getByRole('button', { name: '+ Shoshilinch' }).click();
+  await lead.getByRole('button', { name: 'Yangi vazifa' }).click();
   const dialog = lead.getByRole('dialog');
   await dialog.getByPlaceholder(/Mijoz nomi yoki STIR/).fill('SHERPROM');
   await expect(dialog.getByRole('button', { name: /SHERPROM STROY/ })).toBeVisible();
@@ -131,7 +131,7 @@ test("Buxgalter ishlari: mijoz maydonlari Excel'dagidek katak ichida tahrirlanad
   await expect(page.getByLabel(`${name} — Oylik to'lov`)).toHaveValue('1,500,000');
   await page.getByLabel(`${name} — Oylik to'lov`).press('Enter');
   await expect(page.getByRole('button', { name: `${name} — Oylik to'lov` })).toHaveText('1,500,000');
-  // Ish katagi Exceldagidek: 1 / 0 / X menyusi (V31). Joriy oy "Ish haqi": 1 -> ✓, X -> —
+  // Ish katagi Exceldagidek: 1 / 0 / X menyusi (V31). Joriy oy "Ish haqi": 1 -> ✓, X -> X
   const salary = page.getByRole('button', { name: new RegExp(`^${name} — Ish haqi:`) });
   await salary.click();
   await page.getByRole('menuitemradio', { name: /Bajarilgan/ }).click();
@@ -139,7 +139,7 @@ test("Buxgalter ishlari: mijoz maydonlari Excel'dagidek katak ichida tahrirlanad
   await expect(salary).toHaveText('✓');
   await salary.click();
   await page.getByRole('menuitemradio', { name: /Chiqmaydi/ }).click();
-  await expect(salary).toHaveText('—');
+  await expect(salary).toHaveText('X');
   // Xodim soni va login
   await page.getByRole('button', { name: `${name} — Xodim soni` }).click();
   await page.getByLabel(`${name} — Xodim soni`).fill('4');
