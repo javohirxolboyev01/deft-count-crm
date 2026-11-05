@@ -96,7 +96,7 @@ export function ChatWidget({ pulse }: { pulse: number }) {
         <div
           role="dialog"
           aria-label={t('chat.title')}
-          className="fixed inset-x-2 bottom-24 top-16 z-[56] flex animate-pop-in flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-pop sm:inset-x-auto sm:right-6 sm:top-auto sm:h-[600px] sm:max-h-[calc(100vh-128px)] sm:w-[400px]"
+          className="fixed inset-x-2 bottom-24 top-16 z-[56] flex animate-pop-in flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-pop dark:border-[#374151] dark:bg-[#111827] sm:inset-x-auto sm:right-6 sm:top-auto sm:h-[600px] sm:max-h-[calc(100vh-128px)] sm:w-[400px]"
         >
           {activeId ? (
             <Conversation userId={activeId} meId={user.id} onBack={() => setActiveId(null)} onClose={() => setOpen(false)} />
@@ -118,7 +118,7 @@ export function ChatWidget({ pulse }: { pulse: number }) {
         {!!total && (
           <span key={`chat-badge-${pulse}`} className="absolute -right-1 -top-1 animate-badge-pop">
             <span className="absolute inset-0 animate-ping rounded-full bg-red-400 opacity-60" />
-            <span className="relative block min-w-[22px] rounded-full border-2 border-white bg-red-500 px-1 text-center text-[11px] font-bold leading-[18px] text-on-brand">
+            <span className="relative block min-w-[22px] rounded-full border-2 border-white bg-red-500 dark:border-[#111827] px-1 text-center text-[11px] font-bold leading-[18px] text-on-brand">
               {total > 99 ? '99+' : total}
             </span>
           </span>
@@ -151,14 +151,14 @@ function ContactList({ onPick, onClose, meId }: { onPick: (id: number) => void; 
 
   return (
     <>
-      <div className="flex h-14 shrink-0 items-center justify-between border-b border-gray-200 px-4">
+      <div className="flex h-14 shrink-0 items-center justify-between border-b border-gray-200 px-4 dark:border-[#1F2937]">
         <h2 className="text-base font-semibold text-gray-900">{t('chat.title')}</h2>
-        <button type="button" onClick={onClose} aria-label={t('common.close')} className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-full text-gray-500 hover:bg-gray-100">
+        <button type="button" onClick={onClose} aria-label={t('common.close')} className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-full text-gray-500 hover:bg-gray-100 dark:hover:bg-[#1F2937]">
           <X className="h-5 w-5" />
         </button>
       </div>
       <div className="shrink-0 px-3 py-2">
-        <label className="flex h-10 items-center gap-2 rounded-full border border-gray-200 bg-gray-50 px-3.5 text-gray-500 focus-within:border-brand-500">
+        <label className="flex h-10 items-center gap-2 rounded-full border border-gray-200 bg-gray-50 px-3.5 text-gray-500 focus-within:border-brand-500 dark:border-[#374151] dark:bg-[#1F2937] dark:focus-within:border-brand-500">
           <Search className="h-4 w-4 shrink-0" />
           <input
             value={search}
@@ -170,7 +170,7 @@ function ContactList({ onPick, onClose, meId }: { onPick: (id: number) => void; 
           />
         </label>
       </div>
-      <ul className="min-h-0 grow overflow-y-auto">
+      <ul className="no-scrollbar min-h-0 grow overflow-y-auto">
         {contacts.isLoading && (
           <li className="flex justify-center py-10">
             <Spinner />
@@ -185,10 +185,10 @@ function ContactList({ onPick, onClose, meId }: { onPick: (id: number) => void; 
               <button
                 type="button"
                 onClick={() => onPick(c.id)}
-                className="flex w-full cursor-pointer items-center gap-3 px-3 py-2 text-left transition-colors hover:bg-gray-100"
+                className="flex w-full cursor-pointer items-center gap-3 px-3 py-2 text-left transition-colors hover:bg-gray-100 dark:hover:bg-[#1F2937]"
               >
                 <Avatar id={c.id} name={c.fullName} size={52} />
-                <span className="flex min-w-0 grow flex-col gap-1 border-b border-gray-100 py-1.5">
+                <span className="flex min-w-0 grow flex-col gap-1 border-b border-gray-100 py-1.5 dark:border-[#1F2937]">
                   <span className="flex items-center gap-2">
                     <span className={cn('min-w-0 grow truncate font-semibold text-gray-900', !c.active && 'text-gray-500')}>{c.fullName}</span>
                     {mine && <Ticks read={!!last?.readAt} className="text-brand-500" />}
@@ -384,8 +384,8 @@ function Conversation({ userId, meId, onBack, onClose }: { userId: number; meId:
 
   return (
     <>
-      <div className="flex h-14 shrink-0 items-center gap-2 border-b border-gray-200 px-2">
-        <button type="button" onClick={onBack} aria-label={t('common.back')} className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-full text-gray-500 hover:bg-gray-100">
+      <div className="flex h-14 shrink-0 items-center gap-2 border-b border-gray-200 px-2 dark:border-[#1F2937]">
+        <button type="button" onClick={onBack} aria-label={t('common.back')} className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-full text-gray-500 hover:bg-gray-100 dark:hover:bg-[#1F2937]">
           <ArrowLeft className="h-5 w-5" />
         </button>
         {peer && <Avatar id={peer.id} name={name} size={38} />}
@@ -393,7 +393,7 @@ function Conversation({ userId, meId, onBack, onClose }: { userId: number; meId:
           <div className="truncate text-sm font-semibold text-gray-900">{name}</div>
           {peer && <div className="truncate text-xs text-gray-500">{peer.active ? t(`roles.${peer.role}`) : t('chat.inactive')}</div>}
         </div>
-        <button type="button" onClick={onClose} aria-label={t('common.close')} className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-full text-gray-500 hover:bg-gray-100">
+        <button type="button" onClick={onClose} aria-label={t('common.close')} className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-full text-gray-500 hover:bg-gray-100 dark:hover:bg-[#1F2937]">
           <X className="h-5 w-5" />
         </button>
       </div>
@@ -403,7 +403,7 @@ function Conversation({ userId, meId, onBack, onClose }: { userId: number; meId:
         onScroll={(e) => {
           if (e.currentTarget.scrollTop < 60) loadOlder();
         }}
-        className="min-h-0 grow overflow-y-auto bg-brand-25 px-3 py-2 dark:bg-gray-50"
+        className="no-scrollbar min-h-0 grow overflow-y-auto bg-brand-25 px-3 py-2 dark:bg-[#1F2937]"
       >
         {history.isLoading && (
           <div className="flex justify-center py-10">
@@ -417,7 +417,7 @@ function Conversation({ userId, meId, onBack, onClose }: { userId: number; meId:
         )}
         {history.isSuccess && !messages.length && (
           <div className="flex h-full flex-col items-center justify-center gap-1 text-center">
-            <span className="rounded-2xl bg-black/20 px-4 py-2 text-sm text-on-brand">
+            <span className="rounded-2xl bg-black/20 px-4 py-2 text-sm text-on-brand dark:bg-[#374151]">
               {t('chat.noMessages')}
               <br />
               <span className="text-xs opacity-90">{t('chat.startHint')}</span>
@@ -433,7 +433,7 @@ function Conversation({ userId, meId, onBack, onClose }: { userId: number; meId:
             <Fragment key={m.id}>
               {newDay && (
                 <div className="sticky top-0 z-[1] my-2 flex justify-center">
-                  <span className="rounded-full bg-black/25 px-3 py-0.5 text-xs font-medium text-on-brand backdrop-blur-sm">{dayLabel(m.createdAt, t)}</span>
+                  <span className="rounded-full bg-black/25 px-3 py-0.5 text-xs font-medium text-on-brand backdrop-blur-sm dark:bg-[#374151]/90">{dayLabel(m.createdAt, t)}</span>
                 </div>
               )}
               <div className={cn('flex', mine ? 'justify-end' : 'justify-start', grouped ? 'mt-0.5' : 'mt-2')}>
@@ -444,7 +444,7 @@ function Conversation({ userId, meId, onBack, onClose }: { userId: number; meId:
                     'relative max-w-[82%] rounded-2xl px-3 py-1.5 text-sm shadow-sm',
                     mine && 'cursor-pointer',
                     menu?.msg.id === m.id && 'ring-2 ring-brand-300',
-                    mine ? 'bg-brand-500 text-on-brand dark:bg-brand-700' : 'bg-white text-gray-900',
+                    mine ? 'bg-brand-500 text-on-brand dark:bg-brand-600' : 'bg-white text-gray-900 dark:bg-[#374151]',
                     !grouped && (mine ? 'rounded-br-md' : 'rounded-bl-md'),
                   )}
                 >
@@ -463,20 +463,20 @@ function Conversation({ userId, meId, onBack, onClose }: { userId: number; meId:
       </div>
 
       {canSend && editing && (
-        <div className="flex shrink-0 items-center gap-3 border-t border-gray-200 px-3 py-1.5">
+        <div className="flex shrink-0 items-center gap-3 border-t border-gray-200 px-3 py-1.5 dark:border-[#1F2937]">
           <Pencil className="h-4 w-4 shrink-0 text-brand-500" />
           <div className="min-w-0 grow border-l-2 border-brand-500 pl-2">
             <div className="text-xs font-semibold text-brand-500">{t('chat.editing')}</div>
             <div className="truncate text-xs text-gray-500">{editing.body}</div>
           </div>
-          <button type="button" onClick={cancelEdit} aria-label={t('chat.cancelEdit')} title={t('chat.cancelEdit')} className="flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-full text-gray-500 hover:bg-gray-100">
+          <button type="button" onClick={cancelEdit} aria-label={t('chat.cancelEdit')} title={t('chat.cancelEdit')} className="flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-full text-gray-500 hover:bg-gray-100 dark:hover:bg-[#1F2937]">
             <X className="h-4 w-4" />
           </button>
         </div>
       )}
       {canSend ? (
         <form
-          className={cn('flex shrink-0 items-end gap-2 p-2', !editing && 'border-t border-gray-200')}
+          className={cn('flex shrink-0 items-end gap-2 p-2', !editing && 'border-t border-gray-200 dark:border-[#1F2937]')}
           onSubmit={(e) => {
             e.preventDefault();
             submit();
@@ -507,7 +507,7 @@ function Conversation({ userId, meId, onBack, onClose }: { userId: number; meId:
             }}
             placeholder={t('chat.placeholder')}
             aria-label={t('chat.placeholder')}
-            className="max-h-[140px] min-h-10 grow resize-none rounded-2xl border border-gray-200 bg-gray-50 px-3.5 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-brand-500 focus-visible:ring-0 focus-visible:ring-offset-0"
+            className="no-scrollbar max-h-[140px] min-h-10 grow resize-none rounded-2xl border border-gray-200 bg-gray-50 px-3.5 py-2 dark:border-[#374151] dark:bg-[#1F2937] dark:focus:border-brand-500 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-brand-500 focus-visible:ring-0 focus-visible:ring-offset-0"
           />
           <button
             type="submit"
@@ -520,7 +520,7 @@ function Conversation({ userId, meId, onBack, onClose }: { userId: number; meId:
           </button>
         </form>
       ) : (
-        <div className="shrink-0 border-t border-gray-200 p-3 text-center text-xs text-gray-500">{t('chat.inactiveHint')}</div>
+        <div className="shrink-0 border-t border-gray-200 p-3 text-center text-xs text-gray-500 dark:border-[#1F2937]">{t('chat.inactiveHint')}</div>
       )}
 
       {menu && (
@@ -596,7 +596,7 @@ function MessageMenu({
       ref={ref}
       role="menu"
       style={pos}
-      className="fixed z-[58] min-w-[170px] animate-pop-in overflow-hidden rounded-xl border border-gray-200 bg-white py-1 shadow-pop"
+      className="fixed z-[58] min-w-[170px] animate-pop-in overflow-hidden rounded-xl border border-gray-200 bg-white py-1 shadow-pop dark:border-[#4B5563] dark:bg-[#374151]"
     >
       {items.map((it) => (
         <button
@@ -608,7 +608,7 @@ function MessageMenu({
             it.onClick();
           }}
           className={cn(
-            'flex w-full cursor-pointer items-center gap-3 px-3.5 py-2 text-left text-sm outline-none hover:bg-gray-100 focus-visible:bg-gray-100 focus-visible:ring-0 focus-visible:ring-offset-0',
+            'flex w-full cursor-pointer items-center gap-3 px-3.5 py-2 text-left text-sm outline-none hover:bg-gray-100 focus-visible:bg-gray-100 dark:hover:bg-[#4B5563] dark:focus-visible:bg-[#4B5563] focus-visible:ring-0 focus-visible:ring-offset-0',
             it.danger ? 'text-red-600' : 'text-gray-900',
           )}
         >
