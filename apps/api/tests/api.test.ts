@@ -532,23 +532,63 @@ describe('shoshilinch vazifa va dashboard', () => {
 
   it('dashboard raqamlari bazaga mos', async () => {
     const d = await L.get('/api/dashboard/clients');
-    const db = await one(pool, `SELECT count(*)::int AS total, count(*) FILTER (WHERE status = 'DONE')::int AS done FROM task WHERE period = date_trunc('month', now())::date AND status <> 'CANCELLED'`);
+    // Buxgalter biriktirilmagan mijoz dashboard natijalariga kirmaydi (rahbar qarori)
+    const db = await one(
+      pool,
+      `SELECT count(*)::int AS total, count(*) FILTER (WHERE t.status = 'DONE')::int AS done
+       FROM task t JOIN client c ON c.id = t.client_id
+       WHERE t.period = date_trunc('month', now())::date AND t.status <> 'CANCELLED' AND c.accountant_id IS NOT NULL`,
+    );
     expect(d.body.summary.tasksTotal).toBe(db.total);
     expect(d.body.summary.tasksDone).toBe(db.done);
     // Kechikish barcha oylar bo'yicha (ro'yxat sarlavhasi), "Vazifalar" kartasi — faqat joriy oy
     const od = await one(
       pool,
-      `SELECT count(*)::int AS n, count(*) FILTER (WHERE period = date_trunc('month', now())::date)::int AS month
-       FROM task WHERE status IN ('TODO','IN_PROGRESS','WAITING_CLIENT') AND due_at < now()`,
+      `SELECT count(*)::int AS n, count(*) FILTER (WHERE t.period = date_trunc('month', now())::date)::int AS month
+       FROM task t JOIN client c ON c.id = t.client_id
+       WHERE t.status IN ('TODO','IN_PROGRESS','WAITING_CLIENT') AND t.due_at < now() AND c.accountant_id IS NOT NULL`,
     );
     expect(d.body.summary.tasksOverdue).toBe(od.n);
     expect(d.body.summary.tasksOverdueMonth).toBe(od.month);
     expect(d.body.summary.withTasks).toBe(d.body.clients.filter((c: any) => c.state !== 'NONE').length);
+    expect(d.body.clients.every((c: any) => c.accountantId)).toBe(true);
+    expect(d.body.unassignedClients.every((c: any) => !c.accountantId)).toBe(true);
     const a =await L.get('/api/dashboard/accountants');
     const acc1 = a.body.accountants.find((x: any) => x.id === team.acc1);
-    const open = await one(pool, `SELECT count(*)::int AS n FROM task WHERE assignee_id = $1 AND status IN ('TODO','IN_PROGRESS','WAITING_CLIENT')`, [team.acc1]);
+    const open = await one(
+      pool,
+      `SELECT count(*)::int AS n FROM task t JOIN client c ON c.id = t.client_id
+       WHERE t.assignee_id = $1 AND t.status IN ('TODO','IN_PROGRESS','WAITING_CLIENT') AND c.accountant_id IS NOT NULL`,
+      [team.acc1],
+    );
     expect(acc1.openTasks).toBe(open.n);
     expect((await A1.get('/api/dashboard/clients')).status).toBe(403);
+  });
+
+  it("buxgalter biriktirilmagan mijoz dashboard hisobiga kirmaydi, faqat unassignedClients'da", async () => {
+    const before = (await L.get('/api/dashboard/clients')).body;
+    const accBefore = (await L.get('/api/dashboard/accountants')).body.accountants.find((x: any) => x.id === team.acc1);
+    // Biriktirilmagan mijoz + unga muddati o'tgan shoshilinch vazifa (acc1 bajaruvchi)
+    const c = await L.post('/api/clients', { stir: '309900001', name: 'BIRIKTIRILMAGAN MCHJ', taxType: 'AOS' });
+    expect(c.body.accountantId).toBeNull();
+    await L.post('/api/tasks/urgent', { clientId: c.body.id, text: 'Eski ish', assigneeId: team.acc1, dueAt: new Date(Date.now() - 3600_000).toISOString() });
+
+    const after = (await L.get('/api/dashboard/clients')).body;
+    expect(after.clients.map((x: any) => x.clientId)).not.toContain(c.body.id);
+    expect(after.unassignedClients.map((x: any) => x.clientId)).toContain(c.body.id);
+    expect(after.summary.clients).toBe(before.summary.clients);
+    expect(after.summary.tasksTotal).toBe(before.summary.tasksTotal);
+    expect(after.summary.tasksOverdue).toBe(before.summary.tasksOverdue);
+    expect(after.overdueTasks.map((x: any) => x.clientId)).not.toContain(c.body.id);
+    const accAfter = (await L.get('/api/dashboard/accountants')).body.accountants.find((x: any) => x.id === team.acc1);
+    expect(accAfter.openTasks).toBe(accBefore.openTasks);
+    expect(accAfter.overdue).toBe(accBefore.overdue);
+
+    // Buxgalter biriktirilgach hisobga qaytadi
+    await L.patch(`/api/clients/${c.body.id}`, { accountantId: team.acc2 });
+    const assigned = (await L.get('/api/dashboard/clients')).body;
+    expect(assigned.clients.map((x: any) => x.clientId)).toContain(c.body.id);
+    expect(assigned.summary.tasksOverdue).toBe(before.summary.tasksOverdue + 1);
   });
 
   it('audit: rahbar ko\'radi, mijoz bo\'yicha filtr', async () => {

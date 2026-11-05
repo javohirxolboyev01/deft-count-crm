@@ -30,7 +30,7 @@ const parseStir = (raw: string) => {
 export default function ClientIssues() {
   const { t } = useTranslation();
   const dash = useDashboardClients();
-  const issues = useClientIssues(dash.data?.clients);
+  const issues = useClientIssues(dash.data);
   // To'liq maydonlar (aloqa, to'lov, my.mehnat.uz, izoh): ~100 mijoz, bitta sahifada
   const full = useQuery({
     queryKey: ['clients', 'issues-full'],

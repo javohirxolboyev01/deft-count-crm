@@ -357,6 +357,8 @@ export interface DashboardClients {
     percent: number | null;
     state: 'NONE' | 'READY' | 'OVERDUE' | 'IN_PROGRESS';
   }[];
+  /** Buxgalter biriktirilmagan mijozlar: dashboard natijalariga kirmaydi, faqat "Kamchiliklar" uchun */
+  unassignedClients?: DashboardClients['clients'];
   overdueTasks: {
     id: number;
     title: string;

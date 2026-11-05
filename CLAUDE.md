@@ -177,6 +177,7 @@ Shartnoma tugasa rahbar qatorni jadvaldan olib tashlaydi (№ katagidagi savat, 
 - Mijozlar bo'yicha: joriy oy tayyor / jarayonda / kechikkan, umumiy foiz, muddati o'tganlar ro'yxati.
 - Buxgalterlar bo'yicha: bajargan (kun/hafta/oy), o'z vaqtida foiz, kechikkan, ochiq vazifa (yuklama), ishga sarflangan vaqt.
 - "O'z vaqtida" = `done_at <= due_at`.
+- Buxgalter biriktirilmagan mijoz (`accountant_id` NULL) dashboarddagi hech bir natijaga kirmaydi (rahbar qarori): kartalar, foizlar, kechikkan vazifalar, mijozlar va Buxgalterlar jadvali. Ular faqat "Kamchiliklar" sahifasida (`unassignedClients`) — biriktirilgach hisobga qaytadi.
 
 ## 7. Excel import (jadval fayllari)
 

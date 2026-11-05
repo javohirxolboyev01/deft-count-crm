@@ -63,7 +63,7 @@ export default function Dashboard() {
     onError: (e) => toast.error(errorText(e, t)),
   });
 
-  const issues = useClientIssues(clients.data?.clients);
+  const issues = useClientIssues(clients.data);
   const rows = clients.data?.clients?.filter((c) => clientFilter === 'ALL' || c.state === clientFilter) ?? [];
 
   return (

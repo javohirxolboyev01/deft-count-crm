@@ -12,6 +12,12 @@ dashboardRouter.use(requireAuth, requireLeader);
 const OPEN = `('TODO','IN_PROGRESS','WAITING_CLIENT')`;
 
 /**
+ * Rahbar qarori: buxgalter biriktirilmagan mijoz dashboarddagi hech bir natijaga kirmaydi (kartalar, foizlar,
+ * kechikkan vazifalar, Buxgalterlar jadvali). Bu mijozlar faqat "Kamchiliklar" sahifasida (biriktirish uchun).
+ */
+const COUNTED_CLIENT = (alias: string) => `${alias}.accountant_id IS NOT NULL`;
+
+/**
  * Mijozlar bo'yicha: bajarilish (jami/bajarildi) — tanlangan oy; kechikish — BARCHA oylar (o'tgan oydan qolgan
  * ochiq vazifa ham kechikish, "Muddati o'tgan vazifalar" ro'yxati va Buxgalterlar jadvali bilan bir xil).
  */
@@ -36,18 +42,20 @@ dashboardRouter.get('/clients', async (req, res) => {
     [period],
   );
   // Kechikkan vazifasi bor mijoz (qaysi oyniki bo'lmasin) — "Tayyor" emas
-  const clients = perClient.map((c: any) => ({
+  const all = perClient.map((c: any) => ({
     ...c,
     percent: c.total ? Math.round((c.done / c.total) * 100) : null,
     state: c.overdue > 0 ? 'OVERDUE' : c.total === 0 ? 'NONE' : c.done === c.total ? 'READY' : 'IN_PROGRESS',
   }));
+  const clients = all.filter((c: any) => c.accountantId);
+  const unassignedClients = all.filter((c: any) => !c.accountantId);
   const totals = await one(
     pool,
-    `SELECT count(*) FILTER (WHERE period = $1)::int AS total,
-            count(*) FILTER (WHERE period = $1 AND status = 'DONE')::int AS done,
-            count(*) FILTER (WHERE period = $1 AND status IN ${OPEN} AND due_at < now())::int AS "overdueMonth",
-            count(*) FILTER (WHERE status IN ${OPEN} AND due_at < now())::int AS overdue
-     FROM task WHERE status <> 'CANCELLED'`,
+    `SELECT count(*) FILTER (WHERE t.period = $1)::int AS total,
+            count(*) FILTER (WHERE t.period = $1 AND t.status = 'DONE')::int AS done,
+            count(*) FILTER (WHERE t.period = $1 AND t.status IN ${OPEN} AND t.due_at < now())::int AS "overdueMonth",
+            count(*) FILTER (WHERE t.status IN ${OPEN} AND t.due_at < now())::int AS overdue
+     FROM task t JOIN client c ON c.id = t.client_id WHERE t.status <> 'CANCELLED' AND ${COUNTED_CLIENT('c')}`,
     [period],
   );
   const overdueTasks = await q(
@@ -55,7 +63,7 @@ dashboardRouter.get('/clients', async (req, res) => {
     `SELECT t.id, t.title, t.kind, t.due_at AS "dueAt", t.status, c.id AS "clientId", c.name AS "clientName",
             u.id AS "assigneeId", u.full_name AS "assigneeName"
      FROM task t JOIN client c ON c.id = t.client_id LEFT JOIN app_user u ON u.id = t.assignee_id
-     WHERE t.status IN ${OPEN} AND t.due_at < now()
+     WHERE t.status IN ${OPEN} AND t.due_at < now() AND ${COUNTED_CLIENT('c')}
      ORDER BY t.due_at LIMIT 200`,
   );
   res.json({
@@ -78,6 +86,8 @@ dashboardRouter.get('/clients', async (req, res) => {
       incomplete: clients.filter((c: any) => !c.taxType).length,
     },
     clients,
+    // Faqat "Kamchiliklar" sahifasi uchun (buxgalter biriktirish); dashboard natijalariga kirmaydi
+    unassignedClients,
     overdueTasks,
   });
 });
@@ -97,20 +107,21 @@ dashboardRouter.get('/accountants', async (req, res) => {
   const rows = await q(
     pool,
     `SELECT u.id, u.full_name AS "fullName",
-       (SELECT count(*) FROM task t WHERE t.done_by = u.id AND t.status = 'DONE' AND t.done_at >= $3)::int AS "doneToday",
-       (SELECT count(*) FROM task t WHERE t.done_by = u.id AND t.status = 'DONE' AND t.done_at >= $4)::int AS "doneWeek",
-       (SELECT count(*) FROM task t WHERE t.done_by = u.id AND t.status = 'DONE' AND t.done_at >= $5)::int AS "doneMonth",
-       (SELECT count(*) FROM task t WHERE t.done_by = u.id AND t.status = 'DONE' AND t.done_at BETWEEN $1 AND $2)::int AS done,
-       (SELECT count(*) FROM task t WHERE t.done_by = u.id AND t.status = 'DONE' AND t.done_at BETWEEN $1 AND $2
+       (SELECT count(*) FROM task t JOIN client tc ON tc.id = t.client_id AND ${COUNTED_CLIENT('tc')} WHERE t.done_by = u.id AND t.status = 'DONE' AND t.done_at >= $3)::int AS "doneToday",
+       (SELECT count(*) FROM task t JOIN client tc ON tc.id = t.client_id AND ${COUNTED_CLIENT('tc')} WHERE t.done_by = u.id AND t.status = 'DONE' AND t.done_at >= $4)::int AS "doneWeek",
+       (SELECT count(*) FROM task t JOIN client tc ON tc.id = t.client_id AND ${COUNTED_CLIENT('tc')} WHERE t.done_by = u.id AND t.status = 'DONE' AND t.done_at >= $5)::int AS "doneMonth",
+       (SELECT count(*) FROM task t JOIN client tc ON tc.id = t.client_id AND ${COUNTED_CLIENT('tc')} WHERE t.done_by = u.id AND t.status = 'DONE' AND t.done_at BETWEEN $1 AND $2)::int AS done,
+       (SELECT count(*) FROM task t JOIN client tc ON tc.id = t.client_id AND ${COUNTED_CLIENT('tc')} WHERE t.done_by = u.id AND t.status = 'DONE' AND t.done_at BETWEEN $1 AND $2
           AND t.due_at IS NOT NULL)::int AS "doneWithDue",
-       (SELECT count(*) FROM task t WHERE t.done_by = u.id AND t.status = 'DONE' AND t.done_at BETWEEN $1 AND $2
+       (SELECT count(*) FROM task t JOIN client tc ON tc.id = t.client_id AND ${COUNTED_CLIENT('tc')} WHERE t.done_by = u.id AND t.status = 'DONE' AND t.done_at BETWEEN $1 AND $2
           AND t.done_at <= t.due_at)::int AS "onTime",
-       (SELECT count(*) FROM task t WHERE t.assignee_id = u.id AND t.status IN ${OPEN} AND t.due_at < now())::int AS overdue,
-       (SELECT count(*) FROM task t WHERE t.assignee_id = u.id AND t.status = 'WAITING_CLIENT')::int AS waiting,
-       (SELECT count(*) FROM task t WHERE t.assignee_id = u.id AND t.status IN ${OPEN})::int AS "openTasks",
+       (SELECT count(*) FROM task t JOIN client tc ON tc.id = t.client_id AND ${COUNTED_CLIENT('tc')} WHERE t.assignee_id = u.id AND t.status IN ${OPEN} AND t.due_at < now())::int AS overdue,
+       (SELECT count(*) FROM task t JOIN client tc ON tc.id = t.client_id AND ${COUNTED_CLIENT('tc')} WHERE t.assignee_id = u.id AND t.status = 'WAITING_CLIENT')::int AS waiting,
+       (SELECT count(*) FROM task t JOIN client tc ON tc.id = t.client_id AND ${COUNTED_CLIENT('tc')} WHERE t.assignee_id = u.id AND t.status IN ${OPEN})::int AS "openTasks",
        (SELECT count(*) FROM client c WHERE c.accountant_id = u.id)::int AS clients,
        (SELECT coalesce(sum(extract(epoch FROM least(coalesce(te.ended_at, now()), $2) - greatest(te.started_at, $1))), 0)::int
-          FROM time_entry te WHERE te.user_id = u.id AND te.started_at <= $2 AND coalesce(te.ended_at, now()) >= $1) AS "spentSec"
+          FROM time_entry te JOIN task tt ON tt.id = te.task_id JOIN client tc ON tc.id = tt.client_id AND ${COUNTED_CLIENT('tc')}
+          WHERE te.user_id = u.id AND te.started_at <= $2 AND coalesce(te.ended_at, now()) >= $1) AS "spentSec"
      FROM app_user u WHERE u.role = 'ACCOUNTANT' AND u.active ORDER BY u.full_name`,
     [from, to, dayFrom, weekFrom, monthFrom],
   );

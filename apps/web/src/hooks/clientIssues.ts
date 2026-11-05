@@ -25,7 +25,11 @@ export function useDashboardClients() {
  * Kamchiligi bor mijozlar: STIR yoki soliq turi yo'q (import "boricha"), Buxgalter ishlaridagi mijozga buxgalter
  * biriktirilmagan, importda aniqlangan ochiq kamchiliklar (ikkala bo'lim). Bo'limdan olib tashlanganlar kirmaydi.
  */
-export function useClientIssues(clients: DashClient[] | undefined): ClientIssue[] {
+export function useClientIssues(data: DashboardClients | undefined): ClientIssue[] {
+  // Buxgalter biriktirilmaganlar dashboard hisobiga kirmaydi, lekin kamchilik sifatida shu yerda ko'rinadi
+  const clients = data
+    ? [...data.clients, ...(data.unassignedClients ?? [])].sort((a, b) => a.name.localeCompare(b.name, 'uz'))
+    : undefined;
   const { t } = useTranslation();
   const reports = useReviewByClient('REPORTS');
   const works = useReviewByClient('WORKS');
