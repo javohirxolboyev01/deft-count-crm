@@ -9,6 +9,7 @@ import { errorHandler } from './common/errors';
 import { config } from './config';
 import { pool } from './db';
 import { authRouter, meRouter } from './modules/auth';
+import { chatRouter } from './modules/chat';
 import { clientsRouter } from './modules/clients';
 import { auditRouter, dashboardRouter } from './modules/dashboard';
 import { sseHandler } from './modules/events';
@@ -59,6 +60,8 @@ export function createApp() {
   app.use('/api/audit', staff, auditRouter);
   app.use('/api/sheets', staff, sheetsRouter);
   app.use('/api/leads', leadsRouter);
+  // Chat hamma rol uchun (operator ham): ruxsat — faqat o'z yozishmalari (router ichida)
+  app.use('/api/chat', chatRouter);
   app.get('/api/events', sseHandler);
 
   app.use('/api', (_req, res) => {

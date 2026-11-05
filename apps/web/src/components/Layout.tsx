@@ -28,6 +28,7 @@ import { showDesktopNotification } from '@/lib/desktopNotify';
 import { useServerEvents } from '@/lib/events';
 import { useTheme } from '@/lib/theme';
 import type { AppNotification, Lang } from '@/lib/types';
+import { ChatWidget } from './ChatWidget';
 import { DesktopNotifPrompt } from './DesktopNotifPrompt';
 import { Logo } from './Logo';
 import { NotificationsDrawer, notificationParts, notificationText } from './NotificationsDrawer';
@@ -80,6 +81,8 @@ export function Layout() {
   const [openTask, setOpenTask] = useState<number | null>(null);
   // Har yangi bildirishnomada oshadi: `key` orqali qo'ng'iroq va badge animatsiyasini boshidan qayta boshlaydi
   const [ringKey, setRingKey] = useState(0);
+  // Chatga boshqa xodimdan xabar kelganda oshadi: chat tugmasi belgisi va badge animatsiyasi
+  const [chatPulse, setChatPulse] = useState(0);
   // Mobil menyu ochiq bo'lsa yozuvlar har doim ko'rinadi (WinPro sidebar mantiqi)
   const wide = expanded || mobileOpen;
 
@@ -131,6 +134,8 @@ export function Layout() {
     } else {
       toast(text);
     }
+  }, (m) => {
+    if (m.senderId !== user?.id) setChatPulse((k) => k + 1);
   });
 
   const isOperator = user?.role === 'OPERATOR';
@@ -304,6 +309,7 @@ export function Layout() {
       <DesktopNotifPrompt enabled={!!user && !isOperator} />
       <NotificationsDrawer open={notifOpen} onClose={() => setNotifOpen(false)} onOpenTask={setOpenTask} />
       <TaskPanel taskId={openTask} onClose={() => setOpenTask(null)} />
+      <ChatWidget pulse={chatPulse} />
     </div>
   );
 }

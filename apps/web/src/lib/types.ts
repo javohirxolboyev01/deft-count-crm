@@ -303,6 +303,28 @@ export interface AppNotification {
   createdAt: string;
 }
 
+export interface ChatMessage {
+  id: number;
+  senderId: number;
+  recipientId: number;
+  body: string;
+  createdAt: string;
+  readAt: string | null;
+  editedAt: string | null;
+}
+
+export interface ChatContact {
+  id: number;
+  fullName: string;
+  role: Role;
+  active: boolean;
+  unread: number;
+  lastMessage: Omit<ChatMessage, 'recipientId' | 'editedAt'> | null;
+}
+
+/** SSE `chat-message`: xabar + yuboruvchi ismi */
+export type ChatMessageEvent = ChatMessage & { senderName: string };
+
 export interface AuditItem {
   id: number;
   entity: string;

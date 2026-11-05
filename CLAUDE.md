@@ -57,6 +57,7 @@ Bu fayl loyiha ildizida `CLAUDE.md` nomi bilan turadi. Har bosqichda shu konteks
 - `audit_log`: **faqat qo'shiladi** (UPDATE/DELETE yo'q): actor, entity, entity_id, action, before, after, at
 - `notification`: user_id, kind, payload, deliver_at, delivered_at, cancelled_at
 - `setting`: key/value (urgent shablonlar, va h.k.)
+- `chat_message` (V41, V42): sender_id, recipient_id, body, created_at, read_at, edited_at, deleted_at — xodimlar orasidagi 1:1 chat
 
 ## 6. Biznes qoidalari
 
@@ -178,6 +179,9 @@ Shartnoma tugasa rahbar qatorni jadvaldan olib tashlaydi (№ katagidagi savat, 
 - Buxgalterlar bo'yicha: bajargan (kun/hafta/oy), o'z vaqtida foiz, kechikkan, ochiq vazifa (yuklama), ishga sarflangan vaqt.
 - "O'z vaqtida" = `done_at <= due_at`.
 - Buxgalter biriktirilmagan mijoz (`accountant_id` NULL) dashboarddagi hech bir natijaga kirmaydi (rahbar qarori): kartalar, foizlar, kechikkan vazifalar, mijozlar va Buxgalterlar jadvali. Ular faqat "Kamchiliklar" sahifasida (`unassignedClients`) — biriktirilgach hisobga qaytadi.
+
+### 6.12 Ichki chat (V41)
+Barcha xodimlar (rahbar, buxgalter, sotuv operatori) bir-biri bilan yakkama-yakka yozishadi (guruh yo'q). O'ng pastki burchakda yumaloq chat tugmasi — jami o'qilmaganlar soni; ichida Telegram'dagidek suhbatdoshlar ro'yxati (oxirgi xabar, vaqt, har biridan o'qilmaganlar soni, ✓/✓✓). Real vaqt SSE orqali (`chat-message`, `chat-read`); Telegram'ga yuborilmaydi. Suhbat ochilganda xabarlar o'qilgan bo'ladi. O'z xabarini (faqat yuboruvchi, vaqt cheklovisiz) tahrirlash — "tahrirlangan" belgisi bilan; o'chirish — ikkala tomonda yo'qoladi (yumshoq, `deleted_at`, V42). Xabar bosilganda yoki o'ng tugma bilan menyu chiqadi; bo'sh maydonda ↑ — oxirgi xabarni tahrirlash. Faolsizlantirilgan xodimga yozilmaydi, yozishma ro'yxatda qoladi. API: `/api/chat` (hamma rol, faqat o'z yozishmalari).
 
 ## 7. Excel import (jadval fayllari)
 

@@ -49,6 +49,14 @@ const uz = {
     AUDIT_IMMUTABLE: "Tarixni o'zgartirib bo'lmaydi", BAD_JSON: "So'rov noto'g'ri", INTERNAL: 'Kutilmagan xato. Qayta urining.',
     NEXT_CALL_REQUIRED: "Keyingi qo'ng'iroq kunini tanlang", NEXT_CALL_PAST: "Keyingi qo'ng'iroq kuni o'tib ketgan", LEAD_CONVERTED: 'Firma allaqachon mijozga aylantirilgan',
   },
+  chat: {
+    edit: 'Tahrirlash', delete: "O'chirish", edited: 'tahrirlangan', editing: 'Tahrirlash', cancelEdit: 'Tahrirlashni bekor qilish',
+    deleteTitle: "Xabar o'chirilsinmi?", deleteText: "Xabar ikkala tomonda ham o'chadi. Bu amalni qaytarib bo'lmaydi.",
+    title: 'Chat', open: 'Chatni ochish', search: 'Qidiruv', empty: 'Hech kim topilmadi', noMessages: "Hali xabar yo'q",
+    startHint: 'Suhbatni boshlash uchun xabar yozing', placeholder: 'Xabar yozing…', send: 'Yuborish', you: 'Siz',
+    today: 'Bugun', yesterday: 'Kecha', loadOlder: 'Oldingi xabarlar', inactive: 'Faol emas', inactiveHint: "Xodim faol emas — xabar yuborib bo'lmaydi",
+    unread: "{{count}} ta o'qilmagan xabar", newFrom: 'Yangi xabar: {{name}}',
+  },
   notif: {
     title: 'Bildirishnomalar', markAll: "Hammasini o'qilgan qilish", empty: "Bildirishnoma yo'q", unreadOnly: "Faqat o'qilmaganlar", system: 'Tizim',
     TASK_DONE: '✅ {{actor}}: «{{title}}» bajarildi — {{client}}',
