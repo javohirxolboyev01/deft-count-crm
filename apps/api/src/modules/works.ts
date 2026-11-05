@@ -9,7 +9,7 @@ import { config } from '../config';
 import { type Db, one, pool, q, tx } from '../db';
 import { CLIENT, FROM, clientListQuery, clientListWhere, loadClientForUser, presentClient, sharePercent } from './clients';
 import { getDueTime } from './generator';
-import { cancelTask, reopenDone, setGridCell } from './grid';
+import { cancelTask, reopenDone, resetOpenDue, setGridCell } from './grid';
 import { routineField, resolveReviewOnSave } from './sheets/review';
 import { markDone, reopenDue } from './taskService';
 
@@ -550,6 +550,7 @@ async function setWorkCell(db: Db, u: AuthUser, c: { clientId: number; routineTy
   );
   if (c.value === 'X' && task?.status === 'DONE') await cancelTask(db, task.id, c.clientId, 'MANUAL_X', u.id);
   if (c.value === '0' && task?.status === 'DONE') await reopenDone(db, task.id, c.clientId, u.id, 'WORKS');
+  else if (c.value === '0' && task && task.status !== 'CANCELLED') await resetOpenDue(db, task.id, c.clientId, u.id, 'WORKS');
   if (c.value === '1' && task && task.status !== 'DONE' && task.status !== 'CANCELLED') {
     return { task: await markDone(db, task.id, u, { source: 'WORKS' }) };
   }

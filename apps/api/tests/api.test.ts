@@ -422,6 +422,12 @@ describe('oylik jadval', () => {
     expect(await cell('QQS')).toMatchObject({ state: '0', taskStatus: 'TODO' });
     const qqsDue = `SELECT due_at = fn_task_rule_due_at(id, '18:00') AS ok, due_at > now() AS future FROM task WHERE id = $1`;
     expect(await one(pool, qqsDue, [open.taskId])).toEqual({ ok: true, future: true });
+    // Eski muddat bilan ochiq qolgan vazifa ("!"): 0 tanlansa muddat qoidaga qaytadi, "○" bo'ladi (V39)
+    await pool.query(`UPDATE task SET due_at = now() - interval '20 days' WHERE id = $1`, [open.taskId]);
+    expect((await cell('QQS')).state).toBe('!');
+    await put(L, 'QQS', '0');
+    expect(await cell('QQS')).toMatchObject({ state: '0', taskStatus: 'TODO' });
+    expect(await one(pool, qqsDue, [open.taskId])).toEqual({ ok: true, future: true });
     // Topshiriladigan hisobotga X: vazifa bekor (o'chirilmaydi)
     const jshds = (await cell('JSHDS')).taskId;
     expect((await put(L, 'JSHDS', 'X')).status).toBe(200);

@@ -303,6 +303,7 @@ export async function setGridCell(
     task = undefined;
   }
   if (c.value === '0' && task?.status === 'DONE') await reopenDone(db, task.id, c.clientId, actorId, source);
+  else if (c.value === '0' && task && task.status !== 'CANCELLED') await resetOpenDue(db, task.id, c.clientId, actorId, source);
   if (c.value === '1' && task && task.status !== 'DONE') {
     return { task: await markDone(db, task.id, u, { source, notify: opts.notify }) };
   }
@@ -360,6 +361,21 @@ export async function reopenDone(db: Db, taskId: number, clientId: number, actor
   );
   await cancelPendingForTask(db, taskId, 'TASK_DONE');
   await audit(db, { actorId, entity: 'task', entityId: taskId, clientId, action: 'REOPEN', before: { status: 'DONE' }, after: { status: 'TODO', source } });
+}
+
+/**
+ * Ochiq vazifa katagida 0: muddat qoidadan farq qilsa qoidaga qaytadi (V39). Eski muddat bilan qayta ochilgan
+ * vazifa (V37 dan oldin) "!" bo'lib qolmasin — rahbar 0 tanlasa "○" bo'ladi (muddati haqiqatan o'tgan bo'lsa "!" qoladi).
+ */
+export async function resetOpenDue(db: Db, taskId: number, clientId: number, actorId: number | null, source: string) {
+  const r = await one<{ old: Date | null; due: Date | null }>(
+    db,
+    `UPDATE task t SET ${reopenDue('t.')}
+     FROM task o WHERE t.id = $1 AND o.id = t.id AND t.due_at IS DISTINCT FROM fn_task_rule_due_at(t.id, $2)
+     RETURNING o.due_at AS old, t.due_at AS due`,
+    [taskId, await getDueTime(db)],
+  );
+  if (r) await audit(db, { actorId, entity: 'task', entityId: taskId, clientId, action: 'RETIME', before: { dueAt: r.old }, after: { dueAt: r.due, source } });
 }
 
 export async function cancelTask(db: Db, taskId: number, clientId: number, reason: string, actorId: number | null) {
