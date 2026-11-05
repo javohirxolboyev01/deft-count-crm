@@ -320,6 +320,12 @@ export interface DashboardClients {
     stir: string;
     status: ClientStatus;
     taxType: TaxType | null;
+    /** Importda tanilmagan soliq turi matni (fayldagidek) */
+    taxTypeRaw: string | null;
+    /** STIR'siz mijoz (V26): fayldagi matn */
+    stirRaw: string | null;
+    inReports: boolean;
+    inWorks: boolean;
     accountantId: number | null;
     accountantName: string | null;
     total: number;

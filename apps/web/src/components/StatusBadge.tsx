@@ -44,10 +44,10 @@ export function TaxBadge({ taxType, raw }: { taxType: TaxType | null; raw?: stri
   );
 }
 
-/** Hisobot topshirish katagi: ✓ topshirildi, ○ topshirilmagan, ! muddati o'tdi, — topshirmaydi (jadval va detail sahifa) */
+/** Hisobot topshirish katagi: ✓ topshirildi, ○ topshirilmagan, ! muddati o'tdi, X topshirmaydi (Exceldagidek) */
 export const REPORT_CELL: Record<CellState, { sym: string; cls: string }> = {
   '1': { sym: '✓', cls: 'bg-done-bg text-done font-semibold' },
   '0': { sym: '○', cls: 'font-semibold text-gray-600 hover:bg-blue-50 dark:text-on-brand' },
   '!': { sym: '!', cls: 'bg-overdue-bg text-overdue font-bold hover:bg-red-200' },
-  X: { sym: '—', cls: 'bg-gray-100 font-semibold text-gray-600 dark:text-on-brand' },
+  X: { sym: 'X', cls: 'bg-gray-100 font-semibold text-gray-600 dark:text-on-brand' },
 };

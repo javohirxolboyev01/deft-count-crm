@@ -24,8 +24,9 @@ describe('vazifa generatori', () => {
     const aos = await client('305123456', 'AOS');
     const qqs = await client('306234567', 'QQS');
     await gen('2026-10-01');
-    expect(await reportCodes(aos, '2026-10-01')).toEqual(['JSHDS', 'TOLOV_MANBAI', 'AOS', 'INPS', 'PORUCHENYA_JSHDS', 'MOLIYAVIY_NATIJA', 'BALANS', 'STATISTIKA']);
-    expect(await reportCodes(qqs, '2026-10-01')).toEqual(['JSHDS', 'TOLOV_MANBAI', 'QQS', 'FOYDA', 'INPS', 'PORUCHENYA_JSHDS', 'MOLIYAVIY_NATIJA', 'BALANS', 'STATISTIKA']);
+    // Yillik hisobotlar faqat dekabr davrida (V38)
+    expect(await reportCodes(aos, '2026-10-01')).toEqual(['JSHDS', 'TOLOV_MANBAI', 'AOS', 'INPS', 'PORUCHENYA_JSHDS']);
+    expect(await reportCodes(qqs, '2026-10-01')).toEqual(['JSHDS', 'TOLOV_MANBAI', 'QQS', 'FOYDA', 'INPS', 'PORUCHENYA_JSHDS']);
   });
 
   it('muddatlar keyingi oyda (V36): oktyabr INPS 25.11, QQS 20.11, Foyda 20.11, Poruchenya NULL (TODO)', async () => {
@@ -73,7 +74,7 @@ describe('vazifa generatori', () => {
       (await one(pool, `SELECT count(*)::int AS n FROM task WHERE client_id = $1 AND period = '2026-11-01' AND kind = $2`, [id, kind])).n;
     expect(await count(active, 'ROUTINE')).toBe(7);
     expect(await count(zero, 'ROUTINE')).toBe(0);
-    expect(await count(zero, 'REPORT')).toBe(8); // QQS: dividend (belgisiz), AOS va Foyda (noyabr chorak oyi emas, V32) dan tashqari hammasi
+    expect(await count(zero, 'REPORT')).toBe(5); // QQS: JShDS, To'lov manbai, QQS, INPS, Poruchenya (dividend belgisiz, Foyda chorak oyi emas V32, yillik faqat dekabr V38)
     expect(await count(liq, 'ROUTINE') + (await count(liq, 'REPORT'))).toBe(0);
     const inps = await one(
       pool,
@@ -96,25 +97,32 @@ describe('vazifa generatori', () => {
     for (const r of rows) expect(r.assignee_id).toBe(r.code === 'INPS' ? team.acc1 : null);
   });
 
-  it('yillik hisobotlar har oy, muddatsiz (V16); Foyda faqat chorak oyida (V32)', async () => {
+  it('yillik hisobotlar yiliga bir marta: dekabr katagi, muddat bir yil orqada 1-mart (V38); Foyda faqat chorak oyida (V32)', async () => {
     const c = await client('306234567', 'QQS');
     await gen('2026-10-01');
     await gen('2026-11-01');
-    expect(await reportCodes(c, '2026-11-01')).toEqual(expect.arrayContaining(['MOLIYAVIY_NATIJA', 'BALANS', 'STATISTIKA']));
+    await gen('2026-12-01');
+    expect(await reportCodes(c, '2026-11-01')).not.toContain('MOLIYAVIY_NATIJA');
     expect(await reportCodes(c, '2026-11-01')).not.toContain('FOYDA');
     expect(await reportCodes(c, '2026-10-01')).toContain('FOYDA');
-    const t = await one<any>(
-      pool,
-      `SELECT t.due_at, rt.frequency FROM task t JOIN report_type rt ON rt.id = t.report_type_id
-       WHERE t.client_id = $1 AND rt.code = 'BALANS' AND t.period = '2026-11-01'`,
-      [c],
-    );
-    expect(t).toMatchObject({ due_at: null, frequency: 'YEARLY' });
+    expect(await reportCodes(c, '2026-12-01')).toEqual(expect.arrayContaining(['MOLIYAVIY_NATIJA', 'BALANS', 'STATISTIKA']));
+    const due = async (period: string) =>
+      (await one<any>(
+        pool,
+        `SELECT to_char(t.due_at AT TIME ZONE 'Asia/Tashkent', 'DD.MM.YYYY') AS due, rt.frequency FROM task t
+         JOIN report_type rt ON rt.id = t.report_type_id WHERE t.client_id = $1 AND rt.code = 'BALANS' AND t.period = $2`,
+        [c, period],
+      ));
+    // 2026 yil hisoboti — 01.03.2028; tizimgacha bo'lgan 2025 yil hisoboti (oktyabr jadvali ustuni) — 01.03.2027
+    expect(await due('2026-12-01')).toMatchObject({ due: '01.03.2028', frequency: 'YEARLY' });
+    expect((await due('2025-12-01'))!.due).toBe('01.03.2027');
+    const g = await loadGrid(pool, '2026-11-01', {});
+    expect((g.columns.find((x: any) => x.code === 'BALANS') as any).dueDate).toBe('2027-03-01');
   });
 
   it('jadvalda choraklik/yillik ustunlar har oy: katak oxirgi generatsiya davri vazifasidan', async () => {
     // Foyda seed'da choraklik (V32); yillik hisobotlar har oy (V16), mexanizm yillik tur uchun ham tekshiriladi
-    await pool.query(`UPDATE report_type SET frequency = 'YEARLY', generation_months = '{2}', due_day = 15 WHERE code = 'BALANS'`);
+    await pool.query(`UPDATE report_type SET frequency = 'YEARLY', generation_months = '{2}', due_day = 15, due_month_offset = 1 WHERE code = 'BALANS'`);
     const c = await client('306234567', 'QQS');
     await gen('2026-10-01');
     await gen('2026-11-01');
@@ -122,7 +130,7 @@ describe('vazifa generatori', () => {
     const col = (code: string) => g.columns.find((x: any) => x.code === code) as any;
     const cell = (code: string) => g.rows[0].cells[col(code).reportTypeId];
     expect(col('FOYDA').dueDate).toBe('2026-11-20'); // oktyabr choragi, muddat keyingi oyda (V36)
-    expect(col('BALANS').dueDate).toBe('2026-03-15');
+    expect(col('BALANS').dueDate).toBe('2026-03-15'); // fevral davri, muddat keyingi oyda (offset 1)
     const src = async (taskId: number | null) =>
       one<any>(pool, `SELECT to_char(period, 'YYYY-MM-DD') AS period, overdue_notified_at FROM task WHERE id = $1`, [taskId]);
     expect((await src(cell('FOYDA').taskId))!.period).toBe('2026-10-01');
@@ -156,17 +164,27 @@ describe('vazifa generatori', () => {
     expect(t.due).toBe('20.11.2026');
   });
 
-  it('norezident hisobotlari faqat QQS to\'lovchilarga', async () => {
-    const c = await client('305123456', 'AOS');
+  it('dividend va norezident hisobotlari faqat QQS to\'lovchilarga (V38), dividend muddati 20-sana', async () => {
+    const aos = await client('305123456', 'AOS');
+    const qqs = await client('306234567', 'QQS');
     await pool.query(
       `INSERT INTO client_report_event (client_id, report_type_id, month)
-       SELECT $1, id, '2026-10' FROM report_type WHERE code IN ('NOREZIDENT_FOYDA', 'NOREZIDENT_QQS')`,
-      [c],
+       SELECT c, id, '2026-10' FROM report_type, unnest($1::bigint[]) c WHERE code IN ('DIVIDEND', 'NOREZIDENT_FOYDA', 'NOREZIDENT_QQS')`,
+      [[aos, qqs]],
     );
-    await gen('2026-11-01');
-    const codes = await reportCodes(c, '2026-11-01');
+    await gen('2026-10-01');
+    const codes = await reportCodes(aos, '2026-10-01');
+    expect(codes).not.toContain('DIVIDEND');
     expect(codes).not.toContain('NOREZIDENT_FOYDA');
     expect(codes).not.toContain('NOREZIDENT_QQS');
+    expect(await reportCodes(qqs, '2026-10-01')).toEqual(expect.arrayContaining(['DIVIDEND', 'NOREZIDENT_FOYDA', 'NOREZIDENT_QQS']));
+    const d = await one<any>(
+      pool,
+      `SELECT to_char(t.due_at AT TIME ZONE 'Asia/Tashkent', 'DD.MM.YYYY') AS due FROM task t
+       JOIN report_type rt ON rt.id = t.report_type_id WHERE t.client_id = $1 AND rt.code = 'DIVIDEND'`,
+      [qqs],
+    );
+    expect(d.due).toBe('20.11.2026');
   });
 
   it('idempotent: ikkinchi ishga tushirish dublikat yaratmaydi', async () => {
@@ -205,7 +223,7 @@ describe('vazifa generatori', () => {
     await pool.query(`UPDATE client SET tax_type = 'QQS' WHERE id = $1`, [c]);
     const r = await tx((db) => reconcileClient(db, c, team.leader, '2026-10-01'));
     expect(r.cancelled.map((t: any) => t.title)).toEqual(['AOS']);
-    expect(await reportCodes(c, '2026-10-01')).toEqual(['JSHDS', 'TOLOV_MANBAI', 'QQS', 'FOYDA', 'INPS', 'PORUCHENYA_JSHDS', 'MOLIYAVIY_NATIJA', 'BALANS', 'STATISTIKA']);
+    expect(await reportCodes(c, '2026-10-01')).toEqual(['JSHDS', 'TOLOV_MANBAI', 'QQS', 'FOYDA', 'INPS', 'PORUCHENYA_JSHDS']);
     const jshds = await one(
       pool,
       `SELECT status FROM task WHERE client_id = $1 AND period = '2026-10-01' AND report_type_id = (SELECT id FROM report_type WHERE code = 'JSHDS')`,

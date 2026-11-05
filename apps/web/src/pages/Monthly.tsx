@@ -30,7 +30,8 @@ import { type CellState, CLIENT_STATUSES, type Grid, TAX_TYPE_OPTIONS, type Task
 const CELL = REPORT_CELL;
 
 // Sarlavha ostida muddat sanasi ko'rsatilmaydigan ustunlar (rahbar talabi)
-const NO_DUE_DATE = new Set(['INPS', 'PORUCHENYA_JSHDS', 'DIVIDEND', 'NOREZIDENT_FOYDA', 'NOREZIDENT_QQS', 'MOLIYAVIY_NATIJA', 'BALANS', 'STATISTIKA']);
+// Yillik hisobotlarda muddat ko'rinadi (V38: dekabr katagi, muddat 1-mart, bir yil orqada)
+const NO_DUE_DATE = new Set(['INPS', 'PORUCHENYA_JSHDS', 'DIVIDEND', 'NOREZIDENT_FOYDA', 'NOREZIDENT_QQS']);
 
 export default function Monthly() {
   const { t, i18n } = useTranslation();
@@ -184,7 +185,8 @@ export default function Monthly() {
             // ~100 qator x ~10 ustun: oddiy jadval yetarli (virtualizatsiya shart emas)
             <div className="custom-scrollbar min-h-0 flex-1 overflow-auto">
               {/* Exceldagidek katakli jadval: har katakda chiziq, rangli katak butun katakni to'ldiradi (oraliq/yumaloq yo'q) */}
-              <table className="w-full border-separate border-spacing-0 text-sm [&_td]:border-gray-300">
+              {/* Qorong'i rejimda katak chizig'i sahifa fonidek to'q: X / ✓ / aniqlanmagan kataklar foni chegara rangiga yaqin, qo'shilib ketmasin */}
+              <table className="w-full border-separate border-spacing-0 text-sm [&_td]:border-gray-300 dark:[&_td]:border-gray-50">
                 <thead className="table-head">
                   <tr>
                     {/* Ustunlar "Hisobot topshirish jadvali" bilan bir xil: № | STIR | Korxona nomi | Soliq turi | hisobotlar | izoh */}

@@ -370,21 +370,23 @@ describe('oylik jadval', () => {
   it('Dividend: holat belgilanmagan katak "0" (qat\'iy "—" emas), bosilsa belgilanadi va vazifa chiqadi; bekor qilsa qaytadi', async () => {
     const g = await A1.get('/api/monthly-grid');
     const cols = Object.fromEntries(g.body.columns.map((c: any) => [c.code, c.reportTypeId]));
-    const cell = () => A1.get('/api/monthly-grid').then((r) => r.body.rows.find((r: any) => r.clientId === aosClient).cells[cols.DIVIDEND]);
-    expect(g.body.rows.find((r: any) => r.clientId === aosClient).cells[cols.DIVIDEND]).toMatchObject({ state: '0', taskId: null, noEvent: true, markable: true });
-    // AOS mijozga Norezident foyda soliq turi bo'yicha topshirilmaydi: qat'iy "—", bosib bo'lmaydi
+    const cell = () => A1.get('/api/monthly-grid').then((r) => r.body.rows.find((r: any) => r.clientId === qqsClient).cells[cols.DIVIDEND]);
+    expect(g.body.rows.find((r: any) => r.clientId === qqsClient).cells[cols.DIVIDEND]).toMatchObject({ state: '0', taskId: null, noEvent: true, markable: true });
+    // AOS mijozga Dividend va Norezident foyda soliq turi bo'yicha topshirilmaydi (V38): qat'iy "—", bosib bo'lmaydi
+    expect(g.body.rows.find((r: any) => r.clientId === aosClient).cells[cols.DIVIDEND]).toMatchObject({ state: 'X' });
     expect(g.body.rows.find((r: any) => r.clientId === aosClient).cells[cols.NOREZIDENT_FOYDA]).toMatchObject({ state: 'X' });
     expect(g.body.rows.find((r: any) => r.clientId === aosClient).cells[cols.NOREZIDENT_FOYDA].markable).toBeUndefined();
 
-    const url = `/api/clients/${aosClient}/events/${cols.DIVIDEND}/${g.body.eventMonth}`;
-    expect((await A1.put(url)).status).toBe(200);
+    // QQS mijoz 2-buxgalterniki (holat belgisi mijoz kartasi orqali)
+    const url = `/api/clients/${qqsClient}/events/${cols.DIVIDEND}/${g.body.eventMonth}`;
+    expect((await A2.put(url)).status).toBe(200);
     const marked = await cell();
     expect(marked.state).toBe('0');
     expect(marked.taskId).toBeTruthy();
     expect(marked.markable).toBeUndefined();
     expect(marked.noEvent).toBeUndefined();
 
-    expect((await A1.del(url)).status).toBe(200);
+    expect((await A2.del(url)).status).toBe(200);
     expect(await cell()).toMatchObject({ state: '0', taskId: null, noEvent: true, markable: true });
 
     // Ikki oy keyingi jadvalda belgilab bo'lmaydi (server faqat joriy va o'tgan holat oyini qabul qiladi)
@@ -392,8 +394,8 @@ describe('oylik jadval', () => {
     const later = new Date(Date.UTC(y, m + 1, 1)).toISOString().slice(0, 7);
     const g3 = await A1.get(`/api/monthly-grid?month=${later}`);
     expect(g3.body.eventMonth).toBeNull();
-    expect(g3.body.rows.find((r: any) => r.clientId === aosClient).cells[cols.DIVIDEND]).toMatchObject({ state: '0', noEvent: true });
-    expect(g3.body.rows.find((r: any) => r.clientId === aosClient).cells[cols.DIVIDEND].markable).toBeUndefined();
+    expect(g3.body.rows.find((r: any) => r.clientId === qqsClient).cells[cols.DIVIDEND]).toMatchObject({ state: '0', noEvent: true });
+    expect(g3.body.rows.find((r: any) => r.clientId === qqsClient).cells[cols.DIVIDEND].markable).toBeUndefined();
   });
   it("Excel kabi katak: rahbar istalgan katakka 1/0/X qo'yadi, soliq turi to'smaydi; tanlov keyingi oyga o'tadi (V30)", async () => {
     const g = await L.get('/api/monthly-grid');
@@ -413,9 +415,13 @@ describe('oylik jadval', () => {
     const done = await put(L, 'QQS', '1');
     expect(done.body.task).toMatchObject({ id: open.taskId, status: 'DONE' });
     expect((await cell('QQS')).state).toBe('1');
-    // 1 -> 0: qayta ochiladi
+    // 1 -> 0: qayta ochiladi. Bajarilgan vazifada eski muddat qolgan bo'lsa (V36 surilishidan oldingi) — qoidadan
+    // qayta hisoblanadi, darhol "!" bo'lmaydi (V37)
+    await pool.query(`UPDATE task SET due_at = now() - interval '20 days' WHERE id = $1`, [open.taskId]);
     await put(L, 'QQS', '0');
-    expect((await cell('QQS')).taskStatus).toBe('TODO');
+    expect(await cell('QQS')).toMatchObject({ state: '0', taskStatus: 'TODO' });
+    const qqsDue = `SELECT due_at = fn_task_rule_due_at(id, '18:00') AS ok, due_at > now() AS future FROM task WHERE id = $1`;
+    expect(await one(pool, qqsDue, [open.taskId])).toEqual({ ok: true, future: true });
     // Topshiriladigan hisobotga X: vazifa bekor (o'chirilmaydi)
     const jshds = (await cell('JSHDS')).taskId;
     expect((await put(L, 'JSHDS', 'X')).status).toBe(200);
@@ -426,9 +432,11 @@ describe('oylik jadval', () => {
     const ap = await q(pool, 'SELECT report_type_id, applicable FROM fn_report_applicability($1) WHERE client_id = $2', [next.p, aosClient]);
     expect(ap.find((x) => Number(x.report_type_id) === cols.QQS)?.applicable).toBe(true);
     expect(ap.find((x) => Number(x.report_type_id) === cols.JSHDS)?.applicable).toBe(false);
-    // Qaytarish: JSHDS yana 0 — bekor qilingan vazifa qayta ochiladi
+    // Qaytarish: JSHDS yana 0 — bekor qilingan vazifa qayta ochiladi, eski muddat qoidadan qayta hisoblanadi
+    await pool.query(`UPDATE task SET due_at = now() - interval '20 days' WHERE id = $1`, [jshds]);
     await put(L, 'JSHDS', '0');
-    expect((await cell('JSHDS')).taskId).toBe(jshds);
+    expect(await cell('JSHDS')).toMatchObject({ taskId: jshds, state: '0' });
+    expect(await one(pool, qqsDue, [jshds])).toEqual({ ok: true, future: true });
     // Faqat rahbar; noto'g'ri qiymat rad etiladi
     expect((await put(A1, 'QQS', 'X')).status).toBe(403);
     expect((await put(L, 'QQS', '2')).status).toBe(400);

@@ -11,7 +11,7 @@ import { CLIENT, FROM, clientListQuery, clientListWhere, loadClientForUser, pres
 import { getDueTime } from './generator';
 import { cancelTask, reopenDone, setGridCell } from './grid';
 import { routineField, resolveReviewOnSave } from './sheets/review';
-import { markDone } from './taskService';
+import { markDone, reopenDue } from './taskService';
 
 // "Oylik ishlar" sahifasi ("Бухгалтер ишлари" fayli): qatorda mijoz, ustunda doimiy ish, katakda
 // "qaysi oygacha bajarilgan" + necha oy orqada.
@@ -574,9 +574,9 @@ async function syncRoutineTask(db: Db, clientId: number, routineTypeId: number, 
   }
   if (t?.status === 'CANCELLED') {
     await db.query(
-      `UPDATE task t SET status = 'TODO', prev_status = NULL, cancel_reason = NULL, assignee_id = c.accountant_id
+      `UPDATE task t SET status = 'TODO', prev_status = NULL, cancel_reason = NULL, assignee_id = c.accountant_id, ${reopenDue('t.')}
        FROM client c WHERE t.id = $1 AND c.id = t.client_id`,
-      [t.id],
+      [t.id, await getDueTime(db)],
     );
     await audit(db, { actorId, entity: 'task', entityId: t.id, clientId, action: 'REOPEN_RECONCILE', after: { source: 'WORKS' } });
   } else if (!t) {

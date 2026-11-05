@@ -10,6 +10,14 @@ export function currentPeriod(): string {
   return nowTz().startOf('month').toISODate()!;
 }
 
+/**
+ * Belgilanadigan (ish) oyi: joriy oydan bir oy oldin — noyabrda oktyabr ishlari/hisobotlari belgilanadi (muddat keyingi
+ * oyda, V34/V36). Jadvallar va dashboardlar shu oydan ochiladi (web: `workMonth()`).
+ */
+export function workPeriod(): string {
+  return nowTz().startOf('month').minus({ months: 1 }).toISODate()!;
+}
+
 /** 'YYYY-MM' -> 'YYYY-MM-01' */
 export function periodFromMonth(month: string | undefined): string {
   if (!month) return currentPeriod();

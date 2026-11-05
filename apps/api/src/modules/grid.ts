@@ -10,9 +10,12 @@ import { type Db, one, pool, q, tx } from '../db';
 import { CLIENT_STATUSES } from './clients';
 import { getDueTime } from './generator';
 import { cancelPendingForTask } from './notifications';
-import { type MarkDoneOptions, markDone, stopTimersForTask } from './taskService';
+import { type MarkDoneOptions, markDone, reopenDue, stopTimersForTask } from './taskService';
 
 export type CellState = '1' | '0' | '!' | 'X';
+
+const REOPEN_DUE = reopenDue('');
+const REOPEN_DUE_T = reopenDue('t.');
 
 export async function loadGrid(
   db: Db,
@@ -25,7 +28,7 @@ export async function loadGrid(
     db,
     `SELECT rt.id AS "reportTypeId", rt.code, rt.name, rt.name_ru AS "nameRu", rt.due_day AS "dueDay",
             rt.creates_accountant_task AS "createsAccountantTask",
-            to_char(fn_report_due_at(g.source_period, rt.due_day, $2) AT TIME ZONE 'Asia/Tashkent', 'YYYY-MM-DD') AS "dueDate"
+            to_char(fn_report_due_at(g.source_period, rt.due_day, $2, rt.due_month_offset) AT TIME ZONE 'Asia/Tashkent', 'YYYY-MM-DD') AS "dueDate"
      FROM fn_grid_columns($1) g
      JOIN report_type rt ON rt.id = g.report_type_id
      WHERE g.source_period IS NOT NULL
@@ -143,7 +146,7 @@ const SHORT: Record<string, { uz: string; ru: string }> = {
   PORUCHENYA_JSHDS: { uz: 'Poruchenya JSHDS', ru: 'Поручение НДФЛ' },
   FOYDA: { uz: 'FOYDA', ru: 'Прибыль' },
 };
-const NO_DUE_DATE = new Set(['INPS', 'PORUCHENYA_JSHDS', 'DIVIDEND', 'NOREZIDENT_FOYDA', 'NOREZIDENT_QQS', 'MOLIYAVIY_NATIJA', 'BALANS', 'STATISTIKA']);
+const NO_DUE_DATE = new Set(['INPS', 'PORUCHENYA_JSHDS', 'DIVIDEND', 'NOREZIDENT_FOYDA', 'NOREZIDENT_QQS']);
 const HEAD = {
   uz: { no: '№', stir: 'STIR', company: 'Korxona nomi', taxType: 'Soliq turi', note: "Qilinishi lozim bo'lgan ishlar" },
   ru: { no: '№', stir: 'ИНН', company: 'Название предприятия', taxType: 'Налоговый режим', note: 'Что необходимо сделать' },
@@ -326,9 +329,9 @@ async function syncReportTask(db: Db, clientId: number, reportTypeId: number, pe
   if (t?.status === 'CANCELLED') {
     await db.query(
       `UPDATE task t SET status = 'TODO', prev_status = NULL, cancel_reason = NULL,
-              assignee_id = CASE WHEN rt.creates_accountant_task THEN c.accountant_id END
+              assignee_id = CASE WHEN rt.creates_accountant_task THEN c.accountant_id END, ${REOPEN_DUE_T}
        FROM report_type rt, client c WHERE t.id = $1 AND rt.id = t.report_type_id AND c.id = t.client_id`,
-      [t.id],
+      [t.id, await getDueTime(db)],
     );
     await audit(db, { actorId, entity: 'task', entityId: t.id, clientId, action: 'REOPEN_RECONCILE', after: { source: 'GRID' } });
   } else if (!t) {
@@ -337,9 +340,9 @@ async function syncReportTask(db: Db, clientId: number, reportTypeId: number, pe
       db,
       `INSERT INTO task (client_id, kind, report_type_id, period, title, assignee_id, due_at, status, overdue_notified_at)
        SELECT c.id, 'REPORT', rt.id, $3, rt.name, CASE WHEN rt.creates_accountant_task THEN c.accountant_id END,
-              fn_report_due_at($3, rt.due_day, $4), 'TODO',
+              fn_report_due_at($3, rt.due_day, $4, rt.due_month_offset), 'TODO',
               -- muddati allaqachon o'tgan bo'lsa "muddat o'tdi" xabari yuborilmaydi (generator bilan bir xil)
-              CASE WHEN fn_report_due_at($3, rt.due_day, $4) < now() THEN now() END
+              CASE WHEN fn_report_due_at($3, rt.due_day, $4, rt.due_month_offset) < now() THEN now() END
        FROM client c, report_type rt WHERE c.id = $1 AND rt.id = $2
        RETURNING id, title`,
       [clientId, reportTypeId, period, dueTime],
@@ -350,7 +353,11 @@ async function syncReportTask(db: Db, clientId: number, reportTypeId: number, pe
 
 /** Katakda 1 -> 0: bajarilgan vazifa qayta ochiladi, rahbarga ketmagan "bajarildi" xabari bekor */
 export async function reopenDone(db: Db, taskId: number, clientId: number, actorId: number | null, source: string) {
-  await db.query(`UPDATE task SET status = 'TODO', done_at = NULL, done_by = NULL, prev_status = NULL WHERE id = $1`, [taskId]);
+  // Muddat joriy qoidadan qayta hisoblanadi (V37): eski muddat bilan darhol "!" bo'lib qolmasin
+  await db.query(
+    `UPDATE task SET status = 'TODO', done_at = NULL, done_by = NULL, prev_status = NULL, ${REOPEN_DUE} WHERE id = $1`,
+    [taskId, await getDueTime(db)],
+  );
   await cancelPendingForTask(db, taskId, 'TASK_DONE');
   await audit(db, { actorId, entity: 'task', entityId: taskId, clientId, action: 'REOPEN', before: { status: 'DONE' }, after: { status: 'TODO', source } });
 }

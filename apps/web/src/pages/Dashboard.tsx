@@ -8,6 +8,9 @@ import { DashboardKpis } from '@/components/DashboardKpis';
 import { ClientStatusBadge } from '@/components/StatusBadge';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader } from '@/components/ui/card';
+import { Dialog } from '@/components/ui/dialog';
+import { EditableTextCell, parseTextCell, SelectCell, useClientPatch } from '@/components/ClientFieldCells';
+import { clientNeeds, useReviewByClient } from '@/components/SheetImport';
 import { Select } from '@/components/ui/select';
 import { Empty, QueryState } from '@/components/ui/states';
 import { KpiSkeleton, TableSkeleton } from '@/components/ui/skeleton';
@@ -16,8 +19,8 @@ import { useOpenTask } from '@/hooks/outlet';
 import { api, qs } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { errorText } from '@/lib/errors';
-import { fmtDuration, fmtShortDue, startOfMonthIso, startOfWeekIso, todayIso } from '@/lib/time';
-import type { DashboardAccountants, DashboardClients } from '@/lib/types';
+import { fmtDuration, fmtShortDue, startOfMonthIso, startOfWeekIso, todayIso, workMonth } from '@/lib/time';
+import { CLIENT_STATUSES, type DashboardAccountants, type DashboardClients, type ReviewItem, TAX_TYPE_OPTIONS, type TaxType, taxTypeLabel } from '@/lib/types';
 
 type Range = 'day' | 'week' | 'month';
 
@@ -40,10 +43,17 @@ export default function Dashboard() {
   const openTask = useOpenTask();
   const accountants = useAccountants();
   const [range, setRange] = useState<Range>('month');
+  const [issuesOpen, setIssuesOpen] = useState(false);
   const [clientFilter, setClientFilter] = useState<'ALL' | 'OVERDUE' | 'IN_PROGRESS' | 'READY'>('ALL');
   const from = range === 'day' ? todayIso() : range === 'week' ? startOfWeekIso() : startOfMonthIso();
 
-  const clients = useQuery({ queryKey: ['dashboard', 'clients'], queryFn: () => api.get<DashboardClients>('/dashboard/clients'), refetchInterval: 60_000 });
+  // Mijozlar bo'yicha ko'rsatkichlar belgilanadigan oy bo'yicha (rahbar qarori): noyabrda oktyabr — jadvallar bilan bir xil
+  const month = workMonth();
+  const clients = useQuery({
+    queryKey: ['dashboard', 'clients', month],
+    queryFn: () => api.get<DashboardClients>(`/dashboard/clients${qs({ month })}`),
+    refetchInterval: 60_000,
+  });
   const accs = useQuery({
     queryKey: ['dashboard', 'accountants', from],
     queryFn: () => api.get<DashboardAccountants>(`/dashboard/accountants${qs({ from, to: todayIso() })}`),
@@ -61,6 +71,7 @@ export default function Dashboard() {
     onError: (e) => toast.error(errorText(e, t)),
   });
 
+  const issues = useClientIssues(clients.data?.clients);
   const rows = clients.data?.clients?.filter((c) => clientFilter === 'ALL' || c.state === clientFilter) ?? [];
 
   return (
@@ -69,13 +80,14 @@ export default function Dashboard() {
         {clients.data?.summary ? <DashboardKpis data={clients.data} /> : <Empty />}
       </QueryState>
 
-      {!!clients.data?.summary.incomplete && (
+      {issues.length > 0 && (
         <Card className="flex flex-wrap items-center gap-3 border-l-4 border-l-amber-400 px-4 py-3 text-sm sm:px-5">
           <AlertTriangle className="h-4 w-4 shrink-0 text-amber-500" />
-          <span className="flex-1">{t('dashboard.incomplete', { n: clients.data.summary.incomplete })}</span>
-          <Link className="font-medium text-brand-500 hover:text-ink dark:text-brand-400" to="/clients?taxType=NONE">{t('dashboard.incompleteOpen')}</Link>
+          <span className="flex-1">{t('dashboard.issues', { n: issues.length })}</span>
+          <button type="button" className="font-medium text-brand-500 hover:text-ink dark:text-brand-400" onClick={() => setIssuesOpen(true)}>{t('dashboard.incompleteOpen')}</button>
         </Card>
       )}
+      {issuesOpen && <ClientIssuesDialog issues={issues} onClose={() => setIssuesOpen(false)} />}
 
       {!!clients.data?.overdueTasks.length && (
         <Card className="border-l-4 border-l-overdue">
@@ -218,5 +230,133 @@ export default function Dashboard() {
         <Link to="/audit"><Button variant="outline" size="sm">{t('dashboard.toAudit')}</Button></Link>
       </div>
     </div>
+  );
+}
+
+
+type DashClient = DashboardClients['clients'][number];
+type Issue = { client: DashClient; problems: string[]; noStir: boolean; noTax: boolean; noAccountant: boolean };
+
+/**
+ * Kamchiligi bor mijozlar: STIR yoki soliq turi yo'q (import "boricha"), Buxgalter ishlaridagi mijozga buxgalter
+ * biriktirilmagan, importda aniqlangan ochiq kamchiliklar (ikkala bo'lim). Bo'limdan olib tashlanganlar kirmaydi.
+ */
+function useClientIssues(clients: DashClient[] | undefined): Issue[] {
+  const { t } = useTranslation();
+  const reports = useReviewByClient('REPORTS');
+  const works = useReviewByClient('WORKS');
+  const out: Issue[] = [];
+  for (const c of clients ?? []) {
+    if (!c.inReports && !c.inWorks) continue;
+    const review: ReviewItem[] = [...(reports.get(c.clientId) ?? []), ...(works.get(c.clientId) ?? [])];
+    // Hisobot topshirish buxgalterga biriktirilmaydi — buxgalter faqat Buxgalter ishlaridagi mijozga kerak
+    const noAccountant = c.inWorks && !c.accountantId;
+    const problems = [...clientNeeds(c, t), ...(noAccountant ? [t('dashboard.needAccountant')] : []), ...review.map((r) => r.message)];
+    if (problems.length) out.push({ client: c, problems, noStir: !c.stir, noTax: !c.taxType, noAccountant });
+  }
+  return out;
+}
+
+const MISSING = 'bg-amber-50 dark:bg-amber-500/10';
+
+/** "Ko'rish": kamchiligi bor mijozlar to'liq jadvalda, har katak shu yerda tuzatiladi (PATCH /clients/:id, audit'da) */
+function ClientIssuesDialog({ issues, onClose }: { issues: Issue[]; onClose: () => void }) {
+  const { t } = useTranslation();
+  return (
+    <Dialog open onClose={onClose} title={t('dashboard.issuesTitle', { n: issues.length })} className="max-w-6xl">
+      <p className="mb-3 text-sm text-gray-500">{t('dashboard.issuesHint')}</p>
+      {issues.length === 0 ? (
+        <Empty />
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[900px] border-collapse text-sm">
+            <thead>
+              <tr className="table-head text-left text-xs">
+                <th className="w-10 px-2 py-2.5 text-center">№</th>
+                <th className="w-32 px-2 py-2.5">{t('clients.stir')}</th>
+                <th className="px-2 py-2.5">{t('clients.name')}</th>
+                <th className="w-28 px-2 py-2.5">{t('clients.taxType')}</th>
+                <th className="w-36 px-2 py-2.5">{t('clients.status')}</th>
+                <th className="w-48 px-2 py-2.5">{t('clients.accountant')}</th>
+                <th className="w-72 px-2 py-2.5">{t('sheets.warnings')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {issues.map((i, n) => <IssueRow key={i.client.clientId} n={n + 1} issue={i} />)}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Dialog>
+  );
+}
+
+const parseStir = (raw: string) => {
+  const s = raw.replace(/\s/g, '');
+  return /^\d{9}$/.test(s) ? s : undefined;
+};
+
+function IssueRow({ n, issue }: { n: number; issue: Issue }) {
+  const { t } = useTranslation();
+  const accountants = useAccountants();
+  const { client: c } = issue;
+  const save = useClientPatch(c.clientId);
+  return (
+    <tr className="border-b border-gray-100 align-top">
+      <td className="px-2 py-2 text-center text-xs text-gray-400">{n}</td>
+      <td className={cn('px-0.5 py-1 text-xs tabular-nums', issue.noStir && MISSING)}>
+        <EditableTextCell
+          value={c.stir || null}
+          display={c.stir || `${c.stirRaw || '—'} ?`}
+          parse={parseStir}
+          onSave={(v) => v && save.mutate({ stir: v })}
+          inputMode="numeric"
+          label={`${c.name} — ${t('clients.stir')}`}
+          className={issue.noStir ? 'text-amber-800 dark:text-amber-400' : undefined}
+        />
+      </td>
+      <td className="px-0.5 py-1">
+        <div className="flex items-center gap-1">
+          <EditableTextCell value={c.name} parse={parseTextCell} onSave={(v) => v && save.mutate({ name: v })} label={`${c.name} — ${t('clients.name')}`} className="font-medium" />
+          <Link to={`/clients/${c.clientId}`} className="shrink-0 px-1 text-xs text-brand-500 hover:text-ink dark:text-brand-400" title={t('clients.card')}>↗</Link>
+        </div>
+      </td>
+      <td className={cn('px-0.5 py-1 text-xs', issue.noTax && MISSING)}>
+        <SelectCell
+          value={c.taxType ?? ''}
+          options={TAX_TYPE_OPTIONS}
+          clearable={false}
+          placeholder={c.taxTypeRaw ? `${c.taxTypeRaw} ?` : t('clients.chooseTax')}
+          display={c.taxType ? taxTypeLabel(c.taxType) : undefined}
+          label={`${c.name} — ${t('clients.taxType')}`}
+          // Tur almashtirish (bor turdan boshqasiga) tasdiq bilan jadvalda; bu yerda faqat aniqlanmaganini tanlash
+          readOnly={!!c.taxType}
+          onChange={(v) => v && save.mutate({ taxType: v as TaxType })}
+        />
+      </td>
+      <td className="px-0.5 py-1 text-xs">
+        <SelectCell
+          value={c.status}
+          options={CLIENT_STATUSES.map((s) => ({ value: s, label: t(`clientStatus.${s}`) }))}
+          clearable={false}
+          label={`${c.name} — ${t('clients.status')}`}
+          onChange={(v) => v && v !== c.status && save.mutate({ status: v })}
+        />
+      </td>
+      <td className={cn('px-0.5 py-1 text-xs', issue.noAccountant && MISSING)}>
+        <SelectCell
+          value={c.accountantId ? String(c.accountantId) : ''}
+          options={accountants.data?.map((a) => ({ value: String(a.id), label: a.fullName })) ?? []}
+          placeholder={t('clients.noAccountant')}
+          label={`${c.name} — ${t('clients.accountant')}`}
+          onChange={(v) => save.mutate({ accountantId: v ? Number(v) : null })}
+        />
+      </td>
+      <td className="px-2 py-2 text-xs text-amber-800 dark:text-amber-400">
+        <ul className="list-disc space-y-0.5 pl-4">
+          {issue.problems.map((p, k) => <li key={k}>{p}</li>)}
+        </ul>
+      </td>
+    </tr>
   );
 }

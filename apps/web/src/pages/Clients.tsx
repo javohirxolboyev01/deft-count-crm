@@ -40,7 +40,7 @@ const TONE: Record<WorkState, string> = {
 };
 const LEGEND: WorkState[] = ['done', 'open', 'soon', 'waiting', 'overdue', 'na'];
 /** Katak belgilari "Hisobot topshirish" bilan bir xil: ✓ bajarildi, ○ ochiq, ! muddati o'tgan, — chiqmaydi */
-const SYM: Record<WorkState, string> = { done: '✓', open: '○', soon: '○', waiting: '○', overdue: '!', na: '—' };
+const SYM: Record<WorkState, string> = { done: '✓', open: '○', soon: '○', waiting: '○', overdue: '!', na: 'X' };
 /** Faylda 1,000,000 ko'rinishida */
 const fmtMoney = (n: number | null | undefined) => (n == null ? '' : n.toLocaleString('en-US'));
 const TH = 'border-r border-brand-400 px-2 py-2 text-left text-xs';
@@ -211,7 +211,8 @@ export default function Clients() {
           ) : (
             // ~100 qator x ~20 ustun: oddiy jadval yetarli (virtualizatsiya shart emas)
             <div className="custom-scrollbar min-h-0 flex-1 overflow-auto">
-              <table className="w-full border-separate border-spacing-0 text-sm">
+              {/* Qorong'i rejimda katak chizig'i sahifa fonidek to'q (Hisobot topshirish jadvali bilan bir xil) */}
+              <table className="w-full border-separate border-spacing-0 text-sm dark:[&_td]:border-gray-50">
                 {/* Ikki qatorli sarlavha "Бухгалтер ишлари" faylidagidek: my.mehnat.uz va Schyot-faktura guruhlari; thead yopishqoq */}
                 <thead className="table-head sticky top-0 z-20">
                   <tr>

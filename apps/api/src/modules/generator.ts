@@ -5,6 +5,7 @@ import { audit } from '../common/audit';
 import { parse } from '../common/errors';
 import { currentPeriod, periodFromMonth } from '../common/time';
 import { type Db, dryTx, one, q, tx } from '../db';
+import { reopenDue } from './taskService';
 
 // Generator qoidalari (CLAUDE.md 6.2, 6.3). "Qaysi soliq turiga qaysi hisobot" SQL funksiyasida
 // (fn_report_applicability, report_type ma'lumotidan), shu yerda qotirilmagan.
@@ -37,12 +38,12 @@ export async function generatePeriod(db: Db, period: string, clientId: number | 
     db,
     `${A}
      UPDATE task t SET status = 'TODO', prev_status = NULL, cancel_reason = NULL,
-            assignee_id = CASE WHEN rt.creates_accountant_task THEN c.accountant_id END
+            assignee_id = CASE WHEN rt.creates_accountant_task THEN c.accountant_id END, ${reopenDue('t.', '$3')}
      FROM a, report_type rt, client c
      WHERE t.client_id = a.client_id AND t.kind = 'REPORT' AND t.report_type_id = a.report_type_id
        AND t.period = $1 AND t.status = 'CANCELLED' AND rt.id = a.report_type_id AND c.id = a.client_id
      RETURNING t.id, t.client_id AS "clientId", t.kind, t.title`,
-    [period, clientId],
+    [period, clientId, dueTime],
   );
   const reports = await q(
     db,
@@ -50,9 +51,9 @@ export async function generatePeriod(db: Db, period: string, clientId: number | 
      INSERT INTO task (client_id, kind, report_type_id, period, title, assignee_id, due_at, status, overdue_notified_at)
      SELECT a.client_id, 'REPORT', a.report_type_id, $1, rt.name,
             CASE WHEN rt.creates_accountant_task THEN c.accountant_id END,
-            fn_report_due_at($1, rt.due_day, $3), 'TODO',
+            fn_report_due_at($1, rt.due_day, $3, rt.due_month_offset), 'TODO',
             -- oy o'rtasida yaratilib muddati allaqachon o'tgan bo'lsa (yangi hisobot turi, kech generatsiya) xabar yuborilmaydi
-            CASE WHEN fn_report_due_at($1, rt.due_day, $3) < now() THEN now() END
+            CASE WHEN fn_report_due_at($1, rt.due_day, $3, rt.due_month_offset) < now() THEN now() END
      FROM a
      JOIN report_type rt ON rt.id = a.report_type_id
      JOIN client c ON c.id = a.client_id
@@ -70,12 +71,13 @@ export async function generatePeriod(db: Db, period: string, clientId: number | 
   const reopenedRoutines = await q(
     db,
     `${RA}
-     UPDATE task t SET status = 'TODO', prev_status = NULL, cancel_reason = NULL, assignee_id = c.accountant_id
+     UPDATE task t SET status = 'TODO', prev_status = NULL, cancel_reason = NULL, assignee_id = c.accountant_id,
+            ${reopenDue('t.', '$3')}
      FROM ra, client c
      WHERE t.client_id = ra.client_id AND t.kind = 'ROUTINE' AND t.routine_type_id = ra.routine_type_id AND t.period = $1
        AND t.status = 'CANCELLED' AND c.id = ra.client_id
      RETURNING t.id, t.client_id AS "clientId", t.kind, t.title`,
-    [period, clientId],
+    [period, clientId, dueTime],
   );
   const routines = await q(
     db,
@@ -105,8 +107,8 @@ export async function generatePeriod(db: Db, period: string, clientId: number | 
      INSERT INTO task (client_id, kind, report_type_id, period, title, assignee_id, due_at, status, overdue_notified_at)
      SELECT a.client_id, 'REPORT', a.report_type_id, a.period, rt.name,
             CASE WHEN rt.creates_accountant_task THEN c.accountant_id END,
-            fn_report_due_at(a.period, rt.due_day, $3), 'TODO',
-            CASE WHEN fn_report_due_at(a.period, rt.due_day, $3) < now() THEN now() END
+            fn_report_due_at(a.period, rt.due_day, $3, rt.due_month_offset), 'TODO',
+            CASE WHEN fn_report_due_at(a.period, rt.due_day, $3, rt.due_month_offset) < now() THEN now() END
      FROM a
      JOIN report_type rt ON rt.id = a.report_type_id
      JOIN client c ON c.id = a.client_id

@@ -83,7 +83,7 @@ Mas'ul shaxs telefoni faqat aloqa ma'lumoti (mijozga avtomatik xabar **yuborilma
 
 ### 6.3 Hisobotlar (soliq turiga qarab avtomatik)
 
-Muddat — hisobot oyidan **keyingi** oyning shu kuni (oktyabr AOS = 15.11, QQS = 20.11, V36); rahbar sozlamadan o'zgartiradi.
+Muddat — hisobot oyidan **keyingi** oyning shu kuni (oktyabr AOS = 15.11, QQS = 20.11, V36); rahbar sozlamadan o'zgartiradi. Yillik hisobotlar: `report_type.due_month_offset` = 15 (dekabr + 15 oy = ikkinchi yilning marti, 1-kun; V38, rahbar qarori). Dividend, Norezident foyda, Norezident QQS — faqat QQS to'lovchilar (V38). Qayta ochilgan vazifa muddati qoidadan qayta hisoblanadi (`fn_task_rule_due_at`, V37).
 
 | Hisobot | Davr | Muddat | AOS | QQS |
 |---|---|---|---|---|
@@ -94,12 +94,12 @@ Muddat — hisobot oyidan **keyingi** oyning shu kuni (oktyabr AOS = 15.11, QQS 
 | INPS | oylik | 25-sana (V34, rahbar qarori) | ha | ha |
 | Poruchenya JShDS (to'lov topshiriqnomasi) | oylik, hamma mijoz | rahbar sozlamadan kiritadi | ha | ha |
 | Foyda solig'i | choraklik (1,4,7,10-oylar), ustun jadvalda har oy — chorak oralig'ida oxirgi chorak vazifasi ko'rinadi (V32) | 20-sana | yo'q | ha |
-| Dividend hisoboti | holat bo'yicha: dividend to'langan oydan keyingi oyda | 20-sana (sozlamadan) | ha | ha |
+| Dividend hisoboti | holat bo'yicha: dividend to'langan oydan keyingi oyda | 20-sana (V38, rahbar qarori) | yo'q (V38) | ha |
 | Norezident foyda (norezident daromadidan to'lov manbaida ushlanadigan foyda solig'i) | holat bo'yicha: norezidentga daromad to'langan oydan keyingi oyda | 20-sana | yo'q | ha |
 | Norezident QQS (chet ellik shaxslardan olingan tovar/xizmat bo'yicha QQS) | holat bo'yicha: chet eldan tovar/xizmat olingan oydan keyingi oyda | 20-sana | yo'q | ha |
-| Moliyaviy natijalar (yillik) | har oy chiqadi (rahbar qarori) | muddatsiz | ha | ha |
-| Buxgalteriya balansi (yillik) | har oy chiqadi (rahbar qarori) | muddatsiz | ha | ha |
-| Statistika hisoboti (yillik) | har oy chiqadi (rahbar qarori) | muddatsiz | ha | ha |
+| Moliyaviy natijalar (yillik) | yiliga bir marta, hisobot yilining dekabr katagida (V38) | bir yil orqada 1-mart: 2025 yil → 01.03.2027 | ha | ha |
+| Buxgalteriya balansi (yillik) | yiliga bir marta, dekabr katagida (V38) | bir yil orqada 1-mart | ha | ha |
+| Statistika hisoboti (yillik) | yiliga bir marta, dekabr katagida (V38) | bir yil orqada 1-mart | ha | ha |
 
 #### Asosiy qoida: soliq turi va "X"
 

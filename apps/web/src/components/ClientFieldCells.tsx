@@ -37,7 +37,7 @@ export function useClientPatch(clientId: number) {
     mutationFn: (body: ClientPatch) => api.patch(`/clients/${clientId}`, body),
     onSuccess: () => {
       toast.success(t('common.saved'));
-      for (const key of ['works', 'grid', 'clients', 'tasks', 'sheets']) void qc.invalidateQueries({ queryKey: [key] });
+      for (const key of ['works', 'grid', 'clients', 'tasks', 'sheets', 'dashboard']) void qc.invalidateQueries({ queryKey: [key] });
       void qc.invalidateQueries({ queryKey: ['client', clientId] });
     },
     onError: (e) => toast.error(errorText(e, t)),

@@ -187,6 +187,15 @@ export async function undoDone(db: Db, taskId: number, user: AuthUser) {
   return getTaskDto(db, taskId);
 }
 
+/**
+ * Qayta ochilgan vazifa muddati joriy qoidadan (fn_task_rule_due_at, V37; `time` — muddat soati parametri).
+ * Bajarilgan/bekor qilingan vazifada eski muddat qolishi mumkin (sozlama o'zgargan, V36 surilishi) — 0 tanlanganda
+ * sarlavhadagi muddat bilan bir xil bo'lsin. Muddati allaqachon o'tgan bo'lsa "muddat o'tdi" xabari yuborilmaydi.
+ */
+export const reopenDue = (alias: string, time = '$2') =>
+  `due_at = fn_task_rule_due_at(${alias}id, ${time}),
+   overdue_notified_at = CASE WHEN fn_task_rule_due_at(${alias}id, ${time}) < now() THEN coalesce(${alias}overdue_notified_at, now()) END`;
+
 /** Tizim tomonidan qayta ochish (masalan Sheet'da 1 -> 0) */
 export async function reopenBySystem(db: Db, taskId: number, reason: string) {
   const t = await lockTaskForUser(db, taskId, null);

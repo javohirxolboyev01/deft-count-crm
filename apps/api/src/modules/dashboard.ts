@@ -20,7 +20,8 @@ dashboardRouter.get('/clients', async (req, res) => {
   const period = periodFromMonth(month);
   const perClient = await q(
     pool,
-    `SELECT c.id AS "clientId", c.name, c.stir, c.status, c.tax_type AS "taxType",
+    `SELECT c.id AS "clientId", c.name, c.stir, c.status, c.tax_type AS "taxType", c.tax_type_raw AS "taxTypeRaw", c.stir_raw AS "stirRaw",
+            c.in_reports AS "inReports", c.in_works AS "inWorks",
             a.id AS "accountantId", a.full_name AS "accountantName",
             count(t.id) FILTER (WHERE t.period = $1)::int AS total,
             count(t.id) FILTER (WHERE t.period = $1 AND t.status = 'DONE')::int AS done,

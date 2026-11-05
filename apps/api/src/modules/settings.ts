@@ -5,7 +5,7 @@ import { me, requireAuth, requireLeader } from '../common/auth';
 import { audit, diff } from '../common/audit';
 import { AppError, notFound, parse } from '../common/errors';
 import { type Db, one, pool, q, tx } from '../db';
-import { currentPeriod } from '../common/time';
+import { workPeriod } from '../common/time';
 import { sharePercent } from './clients';
 import { getDueTime } from './generator';
 import { getOverdueReminder, overdueReminderSchema, reminderDays } from './overdueReminder';
@@ -84,17 +84,19 @@ settingsRouter.patch('/report-types/:id', requireLeader, async (req, res) => {
       ],
     );
     const d = diff(before, body);
-    // Muddat kuni bitta joyda: o'zgarsa ochiq vazifalar (joriy oydan) ham yangi muddatga o'tadi — jadval, karta,
-    // vazifa ranglari bir xil sanani ko'rsatsin. O'tgan davrlar va bajarilganlari tegilmaydi.
+    // Muddat kuni bitta joyda: o'zgarsa ochiq vazifalar (belgilanadigan oydan: noyabrda oktyabr — muddati shu oyda)
+    // ham yangi muddatga o'tadi — jadval, karta, vazifa ranglari bir xil sanani ko'rsatsin. Undan oldingi davrlar va
+    // bajarilganlari tegilmaydi (qayta ochilsa muddat qoidadan qayta hisoblanadi, V37).
     // Yangi muddat allaqachon o'tgan bo'lsa "muddat o'tdi" xabari qayta yuborilmaydi; keyinga surilsa yana yuboriladi.
     let retimed = 0;
     if (body.dueDay !== undefined && body.dueDay !== before.dueDay) {
       const moved = await db.query(
-        `UPDATE task SET due_at = fn_report_due_at(period, $2, $4),
-                overdue_notified_at = CASE WHEN fn_report_due_at(period, $2, $4) < now() THEN coalesce(overdue_notified_at, now()) END
+        `UPDATE task SET due_at = fn_report_due_at(period, $2, $4, (SELECT due_month_offset FROM report_type WHERE id = $1)),
+                overdue_notified_at = CASE WHEN fn_report_due_at(period, $2, $4, (SELECT due_month_offset FROM report_type WHERE id = $1)) < now()
+                                           THEN coalesce(overdue_notified_at, now()) END
          WHERE kind = 'REPORT' AND report_type_id = $1 AND period >= $3
            AND status IN ('TODO', 'IN_PROGRESS', 'WAITING_CLIENT')`,
-        [id, body.dueDay, currentPeriod(), await getDueTime(db)],
+        [id, body.dueDay, workPeriod(), await getDueTime(db)],
       );
       // Hisobotga bog'langan doimiy ish (INPS, mijoz faqat Buxgalter ishlarida) ham shu muddatda
       const linked = await db.query(
@@ -103,7 +105,7 @@ settingsRouter.patch('/report-types/:id', requireLeader, async (req, res) => {
          FROM routine_work_type w
          WHERE w.id = t.routine_type_id AND w.report_type_id = $1 AND t.kind = 'ROUTINE' AND t.period >= $2
            AND t.status IN ('TODO', 'IN_PROGRESS', 'WAITING_CLIENT')`,
-        [id, currentPeriod(), await getDueTime(db)],
+        [id, workPeriod(), await getDueTime(db)],
       );
       retimed = (moved.rowCount ?? 0) + (linked.rowCount ?? 0);
     }

@@ -4,7 +4,7 @@ import { isLeader, me, requireAuth, requireLeader } from '../common/auth';
 import { audit, diff } from '../common/audit';
 import { AppError, forbidden, notFound, parse } from '../common/errors';
 import { DateTime } from 'luxon';
-import { TZ, currentPeriod, nowTz, periodFromMonth, todayAt } from '../common/time';
+import { TZ, currentPeriod, nowTz, periodFromMonth, todayAt, workPeriod } from '../common/time';
 import { one, pool, q, tx } from '../db';
 import { getDueTime } from './generator';
 import { enqueue } from './notifications';
@@ -35,7 +35,8 @@ const WORKS_SCOPE = `(t.kind IN ('URGENT','MANUAL') OR (c.in_works AND (t.kind =
 
 tasksRouter.get('/my-day', async (req, res) => {
   const u = me(req);
-  const period = currentPeriod();
+  // Belgilanadigan oy (noyabrda oktyabr) — jadvallar va rahbar dashboardi bilan bir xil
+  const period = workPeriod();
   const tasks = await listTasks(
     pool,
     [`t.assignee_id = $1`, WORKS_SCOPE, `(t.status IN ('TODO','IN_PROGRESS','WAITING_CLIENT') OR (t.status = 'DONE' AND t.period = $2))`],
@@ -45,7 +46,7 @@ tasksRouter.get('/my-day', async (req, res) => {
   const open = tasks.filter((t: any) => t.status !== 'DONE');
   const isToday = (d: Date | null) => !!d && DateTime.fromJSDate(d).setZone(TZ).toISODate() === today;
   // Ochiq / kechikkan / bugun bajarildi — barcha oylar (o'tgan oydan qolgan qarz ham, pastdagi ro'yxatlar bilan bir xil);
-  // done / doneOnTime / monthOpen — faqat joriy oy ("Shu oy bajarildi", "O'z vaqtida")
+  // done / doneOnTime / monthOpen — faqat belgilanadigan oy ("Shu oy bajarildi", "O'z vaqtida")
   const stats = await one(
     pool,
     `SELECT count(*) FILTER (WHERE t.status = 'DONE' AND t.period = $2)::int AS done,
