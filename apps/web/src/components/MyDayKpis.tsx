@@ -8,16 +8,15 @@ import type { MyDay } from '@/lib/types';
 /**
  * Buxgalterning "Mening kunim" tepasidagi 5 ta ko'rsatkich — rahbar dashboard kartalari uslubida.
  * Ochiq / kechikkan — barcha oylar (o'tgan oydan qolgan qarz ham, pastdagi ro'yxatlar bilan bir xil);
- * "Shu oy bajarildi" va "O'z vaqtida" — joriy davr. Bo'linmalar ustunlardagi vazifalardan, yig'indi kartadagi son bilan mos.
+ * "Bugun / Shu oy bajarildi" va "O'z vaqtida" — rahbar dashboardidagi Buxgalterlar jadvali bilan bir xil
+ * (shu kalendar kun/oyda buxgalterning o'zi bosgani; o'z vaqtida foizi muddatsizlarsiz).
  */
 export function MyDayKpis({ d }: { d: MyDay }) {
   const { t } = useTranslation();
-  const s = d.stats ?? { done: 0, doneOnTime: 0, doneToday: 0, open: 0, monthOpen: 0, overdue: 0 };
-  const cur = <T extends { period: string }>(list?: T[]) => (list ?? []).filter((x) => x.period === d.period);
+  const s = d.stats ?? { done: 0, doneOnTime: 0, doneNoDue: 0, doneToday: 0, open: 0, monthOpen: 0, overdue: 0 };
   const todo = d.columns?.TODO ?? [];
   const inProgress = d.columns?.IN_PROGRESS ?? [];
   const waiting = d.columns?.WAITING_CLIENT ?? [];
-  const doneList = cur(d.columns?.DONE);
   const open = [...todo, ...inProgress, ...waiting];
 
   // 2. Kechikkan: mijozlar kesimida eng ko'p 3 tasi
@@ -33,10 +32,11 @@ export function MyDayKpis({ d }: { d: MyDay }) {
   const monthTotal = s.done + s.monthOpen;
   const monthShare = pct(s.done, monthTotal);
 
-  // 5. O'z vaqtida: d.stats bilan bir xil formula (done_at <= due_at); bo'linma — o'z vaqtida / kechikib / muddatsiz
-  const onTimePct = pct(s.doneOnTime, s.done);
-  const noDue = doneList.filter((x) => x.onTime === null).length;
-  const late = Math.max(0, s.done - s.doneOnTime - noDue);
+  // 5. O'z vaqtida: rahbar jadvalidagi formula — done_at <= due_at, muddatsizlar maxrajga kirmaydi; bo'linma — o'z vaqtida / kechikib / muddatsiz
+  const noDue = s.doneNoDue ?? 0;
+  const withDue = s.done - noDue;
+  const onTimePct = pct(s.doneOnTime, withDue);
+  const late = Math.max(0, withDue - s.doneOnTime);
 
   const statusParts = [
     { label: t('taskStatus.TODO'), value: todo.length, dot: 'bg-gray-300' },
@@ -117,7 +117,8 @@ export function MyDayKpis({ d }: { d: MyDay }) {
       >
         {s.done ? (
           <>
-            <BigValue value={onTimePct} unit="%" />
+            {/* Faqat muddatsiz vazifalar bajarilgan bo'lsa foiz yo'q (rahbar jadvalida ham "—") */}
+            {withDue ? <BigValue value={onTimePct} unit="%" /> : <span className="text-3xl font-semibold text-gray-400">—</span>}
             <div className="mt-auto pt-3">
               <div className="mb-2.5"><Segments parts={onTimeParts} total={s.done} /></div>
               <Legend items={onTimeParts} />

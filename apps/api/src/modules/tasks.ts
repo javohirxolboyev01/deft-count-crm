@@ -38,27 +38,44 @@ tasksRouter.get('/my-day', async (req, res) => {
   const u = me(req);
   // Belgilanadigan oy (noyabrda oktyabr) — jadvallar va rahbar dashboardi bilan bir xil
   const period = workPeriod();
+  // "Bajarildi" (ustun va kartalar) rahbar dashboardidagi Buxgalterlar jadvali bilan bir xil: shu kalendar oyida
+  // buxgalterning o'zi bosgan vazifalar (done_by, done_at) — davri qaysi oy bo'lishidan qat'i nazar; importdan
+  // tayyor kelgani yoki rahbar bosgani buxgalterga yozilmaydi. Buxgalteri yo'q mijoz kirmaydi (6.11).
+  const monthStart = nowTz().startOf('month').toJSDate();
   const tasks = await listTasks(
     pool,
-    [`t.assignee_id = $1`, WORKS_SCOPE, `(t.status IN ('TODO','IN_PROGRESS','WAITING_CLIENT') OR (t.status = 'DONE' AND t.period = $2))`],
-    [u.id, period],
+    [
+      `((t.assignee_id = $1 AND ${WORKS_SCOPE} AND t.status IN ('TODO','IN_PROGRESS','WAITING_CLIENT'))
+        OR (t.status = 'DONE' AND t.done_by = $1 AND t.done_at >= $2 AND c.accountant_id IS NOT NULL))`,
+    ],
+    [u.id, monthStart],
   );
   const today = nowTz().toISODate();
   const open = tasks.filter((t: any) => t.status !== 'DONE');
   const isToday = (d: Date | null) => !!d && DateTime.fromJSDate(d).setZone(TZ).toISODate() === today;
-  // Ochiq / kechikkan / bugun bajarildi — barcha oylar (o'tgan oydan qolgan qarz ham, pastdagi ro'yxatlar bilan bir xil);
-  // done / doneOnTime / monthOpen — faqat belgilanadigan oy ("Shu oy bajarildi", "O'z vaqtida")
-  const stats = await one(
+  // Ochiq / kechikkan — barcha oylar (o'tgan oydan qolgan qarz ham, pastdagi ro'yxatlar bilan bir xil);
+  // monthOpen — belgilanadigan oyning ochiqlari ("Shu oy bajarildi" kartasi maxraji uchun).
+  const openStats = await one(
     pool,
-    `SELECT count(*) FILTER (WHERE t.status = 'DONE' AND t.period = $2)::int AS done,
-            count(*) FILTER (WHERE t.status = 'DONE' AND t.period = $2 AND t.due_at IS NOT NULL AND t.done_at <= t.due_at)::int AS "doneOnTime",
-            count(*) FILTER (WHERE t.status = 'DONE' AND t.done_at >= date_trunc('day', now()))::int AS "doneToday",
-            count(*) FILTER (WHERE t.status IN ('TODO','IN_PROGRESS','WAITING_CLIENT'))::int AS open,
+    `SELECT count(*) FILTER (WHERE t.status IN ('TODO','IN_PROGRESS','WAITING_CLIENT'))::int AS open,
             count(*) FILTER (WHERE t.status IN ('TODO','IN_PROGRESS','WAITING_CLIENT') AND t.period = $2)::int AS "monthOpen",
             count(*) FILTER (WHERE t.status IN ('TODO','IN_PROGRESS','WAITING_CLIENT') AND t.due_at < now())::int AS overdue
      FROM task t JOIN client c ON c.id = t.client_id WHERE t.assignee_id = $1 AND ${WORKS_SCOPE}`,
     [u.id, period],
   );
+  // Bajarildi / bugun / o'z vaqtida — dashboard/accountants bilan aynan bir xil formula (done_by, kalendar oy/kun;
+  // "O'z vaqtida" = done_at <= due_at, muddatsizlar foizga kirmaydi)
+  const doneStats = await one(
+    pool,
+    `SELECT count(*)::int AS done,
+            count(*) FILTER (WHERE t.done_at <= t.due_at)::int AS "doneOnTime",
+            count(*) FILTER (WHERE t.due_at IS NULL)::int AS "doneNoDue",
+            count(*) FILTER (WHERE t.done_at >= $3)::int AS "doneToday"
+     FROM task t JOIN client c ON c.id = t.client_id
+     WHERE t.done_by = $1 AND t.status = 'DONE' AND t.done_at >= $2 AND c.accountant_id IS NOT NULL`,
+    [u.id, monthStart, nowTz().startOf('day').toJSDate()],
+  );
+  const stats = { ...openStats, ...doneStats };
   res.json({
     period: period.slice(0, 7),
     groups: {
