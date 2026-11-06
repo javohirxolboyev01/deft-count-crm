@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronLeft, ChevronRight, Pencil, Plus, Search } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Pencil, Plus, Search } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useSearchParams } from 'react-router-dom';
@@ -57,6 +57,44 @@ const sectionBg = (offset: number, total: number): React.CSSProperties => ({
   backgroundPosition: `${-offset}px 0`,
 });
 
+// Javobgardan keyingi mijoz maydonlari (Oylik to'lov … Parol) yig'iladi: buxgalter ko'pincha o'ngdagi ish ustunlarida ishlaydi.
+// Tanlov shu brauzerda eslab qolinadi (shaxsiy qulaylik, serverga yozilmaydi); standart — ochiq.
+const INFO_KEY = 'works-info-open';
+const readInfoOpen = () => {
+  try {
+    return localStorage.getItem(INFO_KEY) !== 'false';
+  } catch {
+    return true;
+  }
+};
+
+// Teal sarlavha ustida oq kvadrat tugma: oddiy sarlavha matnidan aniq ajralib tursin
+const INFO_BTN =
+  'inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-white text-brand-700 shadow-sm hover:bg-brand-50 dark:text-brand-300 dark:hover:bg-gray-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70';
+
+// Yig'iladigan ustunlar kengligi (px). Ustunni olib tashlash o'rniga katak ichidagi o'ram max-width 0 ga
+// silliq tushadi (jadval ustunini to'g'ridan-to'g'ri animatsiya qilib bo'lmaydi).
+const INFO_W = { fee: 96, share: 110, bankKey: 84, employees: 72, checkedAt: 120, login: 130, password: 160 } as const;
+const MEHNAT_W = INFO_W.employees + INFO_W.checkedAt + INFO_W.login + INFO_W.password;
+
+/** Yonga surilib ochiladi / yig'iladi. Yopiq holatda `invisible` — Tab bilan yashirin katakka o'tilmaydi. */
+function Slide({ open, w, className, children }: { open: boolean; w: number; className?: string; children: React.ReactNode }) {
+  return (
+    <div
+      aria-hidden={!open}
+      className={cn(
+        'overflow-hidden transition-[max-width,opacity,visibility] duration-300 ease-in-out motion-reduce:transition-none',
+        open ? 'visible opacity-100' : 'invisible opacity-0',
+      )}
+      style={{ maxWidth: open ? w : 0 }}
+    >
+      <div className={className} style={{ width: w }}>{children}</div>
+    </div>
+  );
+}
+/** Surilayotgan katak: padding o'ram ichida, yopiqda o'ng chiziq ham yo'q (aks holda 1px chiziqlar qoladi) */
+const slideCls = (open: boolean) => cn('p-0', !open && 'border-r-0');
+
 type Pair = { clientId: number; routineTypeId: number; month: string; next: NonNullable<WorkCell['next']> };
 
 export default function Clients() {
@@ -67,6 +105,16 @@ export default function Clients() {
   const [newOpen, setNewOpen] = useState(false);
   const [month, setMonth] = useState(workMonth());
   const [edit, setEdit] = useState<{ row: WorksRow; col: WorkColumn } | null>(null);
+  const [infoOpen, setInfoOpen] = useState(readInfoOpen);
+  const toggleInfo = () =>
+    setInfoOpen((v) => {
+      try {
+        localStorage.setItem(INFO_KEY, String(!v));
+      } catch {
+        /* ignore */
+      }
+      return !v;
+    });
   const accountants = useAccountants();
   const reviews = useReviewByClient('WORKS');
   const accountantOptions = accountants.data?.map((a) => ({ value: String(a.id), label: a.fullName })) ?? [];
@@ -221,13 +269,30 @@ export default function Clients() {
                     <th rowSpan={2} className={cn(TH, 'sticky left-0 z-10 w-10 min-w-10 text-center')}>{t('works.no')}</th>
                     {/* Telefonda STIR yashiriladi: aks holda yopishqoq ustunlar butun ekranni egallaydi */}
                     <th rowSpan={2} className={cn(TH, 'sticky left-10 z-10 hidden w-[104px] min-w-[104px] sm:table-cell')}>{t('works.stir')}</th>
-                    <th rowSpan={2} className={cn(TH, 'sticky left-10 z-10 min-w-[160px] px-3 sm:left-[144px] sm:min-w-[220px]')}>{t('works.company')}</th>
-                    <th rowSpan={2} className={cn(TH, 'text-center')}>{t('clients.taxType')}</th>
-                    <th rowSpan={2} className={cn(TH, 'min-w-[110px]')}>{t('works.accountant')}</th>
-                    {isLeader && <th rowSpan={2} className={cn(TH, 'min-w-[96px] text-right')}>{t('works.fee')}</th>}
-                    <th rowSpan={2} className={cn(TH, 'min-w-[110px] text-right')}><div className="whitespace-normal leading-tight">{t('works.share', { pct: q.data?.sharePercent ?? 30 })}</div></th>
-                    <th rowSpan={2} className={cn(TH, 'text-center')}>{t('works.bankKey')}</th>
-                    <th colSpan={4} className={cn(TH, 'border-b border-b-brand-400 text-center')}>my.mehnat.uz</th>
+                    {/* Nomi kengligi qat'iy: yopishqoq Soliq turi shu kenglikdan keyin turadi (40+160 / 144+220) */}
+                    <th rowSpan={2} className={cn(TH, 'sticky left-10 z-10 w-[160px] min-w-[160px] px-3 sm:left-[144px] sm:w-[220px] sm:min-w-[220px]')}>{t('works.company')}</th>
+                    {/* Soliq turi ham yonga scroll bo'lmaydi */}
+                    <th rowSpan={2} className={cn(TH, 'sticky left-[200px] z-10 w-[72px] min-w-[72px] text-center sm:left-[364px]')}>{t('clients.taxType')}</th>
+                    <th rowSpan={2} className={cn(TH, 'min-w-[150px]')}>
+                      <div className="flex items-center justify-between gap-2 whitespace-nowrap">
+                        {t('works.accountant')}
+                        {/* Yig'ish/ochish tugmasi shu ustunning o'zida (alohida ustun yo'q): ochiq — «, yig'ilgan — » */}
+                        <button
+                          type="button"
+                          onClick={toggleInfo}
+                          className={INFO_BTN}
+                          title={t(infoOpen ? 'works.infoCollapse' : 'works.infoExpand')}
+                          aria-label={t(infoOpen ? 'works.infoCollapse' : 'works.infoExpand')}
+                          aria-expanded={infoOpen}
+                        >
+                          {infoOpen ? <ChevronsLeft className="h-4 w-4" /> : <ChevronsRight className="h-4 w-4" />}
+                        </button>
+                      </div>
+                    </th>
+                    {isLeader && <th rowSpan={2} className={cn(TH, slideCls(infoOpen))}><Slide open={infoOpen} w={INFO_W.fee} className="px-2 py-2 text-right">{t('works.fee')}</Slide></th>}
+                    <th rowSpan={2} className={cn(TH, slideCls(infoOpen))}><Slide open={infoOpen} w={INFO_W.share} className="whitespace-normal px-2 py-2 text-right leading-tight">{t('works.share', { pct: q.data?.sharePercent ?? 30 })}</Slide></th>
+                    <th rowSpan={2} className={cn(TH, slideCls(infoOpen))}><Slide open={infoOpen} w={INFO_W.bankKey} className="px-2 py-2 text-center">{t('works.bankKey')}</Slide></th>
+                    <th colSpan={4} className={cn(TH, 'border-b border-b-brand-400', slideCls(infoOpen))}><Slide open={infoOpen} w={MEHNAT_W} className="px-2 py-2 text-center">my.mehnat.uz</Slide></th>
                     {headGroups.map((g) =>
                       g.label ? (
                         <th key={g.key} colSpan={g.cols.length} className={cn(TH, 'border-b border-b-brand-400 text-center')} style={bgAt(g.cols[0])}>{g.label}</th>
@@ -238,10 +303,10 @@ export default function Clients() {
                     <th rowSpan={2} className={cn(TH, NOTE_CLS, 'border-r-0 px-3')} style={sectionBg(columns.length * WORK_W, sectionW)}>{t('works.note')}</th>
                   </tr>
                   <tr>
-                    <th className={cn(TH, 'text-center')}><div className="whitespace-normal leading-tight">{t('works.employees')}</div></th>
-                    <th className={cn(TH, 'min-w-[92px] text-center')}>{t('works.checkedAt')}</th>
-                    <th className={cn(TH, 'min-w-[120px]')}>{t('works.login')}</th>
-                    <th className={cn(TH, 'min-w-[150px]')}>{t('works.password')}</th>
+                    <th className={cn(TH, slideCls(infoOpen))}><Slide open={infoOpen} w={INFO_W.employees} className="whitespace-normal px-2 py-2 text-center leading-tight">{t('works.employees')}</Slide></th>
+                    <th className={cn(TH, slideCls(infoOpen))}><Slide open={infoOpen} w={INFO_W.checkedAt} className="px-2 py-2 text-center">{t('works.checkedAt')}</Slide></th>
+                    <th className={cn(TH, slideCls(infoOpen))}><Slide open={infoOpen} w={INFO_W.login} className="px-2 py-2">{t('works.login')}</Slide></th>
+                    <th className={cn(TH, slideCls(infoOpen))}><Slide open={infoOpen} w={INFO_W.password} className="px-2 py-2">{t('works.password')}</Slide></th>
                     {headGroups.filter((g) => g.label).flatMap((g) => g.cols.map((c) => <WorkTh key={c.routineTypeId} label={colLabel(c)} title={colName(c)} due={workDueDate(month, c.dueDay)} style={bgAt(c)} />))}
                   </tr>
                 </thead>
@@ -250,7 +315,7 @@ export default function Clients() {
                     <tr key={r.clientId} className="group">
                       <td className="sticky left-0 z-10 border-b border-r bg-white px-2 text-center text-xs text-gray-500 group-hover:bg-gray-100">{(f.page - 1) * f.pageSize + i + 1}</td>
                       <td className="sticky left-10 z-10 hidden border-b border-r bg-white px-2 text-xs tabular-nums group-hover:bg-gray-100 sm:table-cell">{r.stir ?? <span className="rounded bg-amber-50 px-1 font-medium text-amber-800" title={t('clients.stirMissing')}>{r.stirRaw || '—'} ?</span>}</td>
-                      <td className="sticky left-10 z-10 border-b border-r bg-white p-0 group-hover:bg-gray-100 sm:left-[144px]">
+                      <td className="sticky left-10 z-10 w-[160px] min-w-[160px] border-b border-r bg-white p-0 group-hover:bg-gray-100 sm:left-[144px] sm:w-[220px] sm:min-w-[220px]">
                         {/* Butun katak bosiladi */}
                         <Link to={`/clients/${r.clientId}`} className="block px-3 py-1.5">
                           <div className="flex items-center gap-1.5">
@@ -260,8 +325,8 @@ export default function Clients() {
                           {r.status !== 'ACTIVE' && <div className="text-[11px] text-gray-500">{t(`clientStatus.${r.status}`)}</div>}
                         </Link>
                       </td>
-                      <td className="border-b border-r px-2 text-center"><TaxBadge taxType={r.taxType} raw={r.taxTypeRaw} /></td>
-                      <ClientFieldTds row={r} isLeader={isLeader} accountants={accountantOptions} />
+                      <td className="sticky left-[200px] z-10 border-b border-r bg-white px-2 text-center group-hover:bg-gray-100 sm:left-[364px]"><TaxBadge taxType={r.taxType} raw={r.taxTypeRaw} /></td>
+                      <ClientFieldTds row={r} isLeader={isLeader} accountants={accountantOptions} open={infoOpen} />
                       {columns.map((c) => (
                         <WorkCellView
                           key={c.routineTypeId}
@@ -451,8 +516,9 @@ function BaselineDialog({ row, col, colName, onClose }: { row: WorksRow; col: Wo
 /**
  * Mijoz maydonlari (Javobgar | Oylik to'lov | ulush | Bank-klyuch | my.mehnat.uz) jadvalda katak ichida tahrirlanadi.
  * Buxgalterga server ruxsat bergan maydonlar: bank-klyuch, xodim soni, sana, login, parol; ulush hisoblanadi.
+ * `open` = false: Javobgardan keyingilari yonga surilib yig'iladi (`Slide`).
  */
-function ClientFieldTds({ row: r, isLeader, accountants }: { row: WorksRow; isLeader: boolean; accountants: { value: string; label: string }[] }) {
+function ClientFieldTds({ row: r, isLeader, accountants, open }: { row: WorksRow; isLeader: boolean; accountants: { value: string; label: string }[]; open: boolean }) {
   const { t } = useTranslation();
   const save = useClientPatch(r.clientId);
   const P = 'border-b border-r p-0.5 text-xs';
@@ -469,53 +535,67 @@ function ClientFieldTds({ row: r, isLeader, accountants }: { row: WorksRow; isLe
         />
       </td>
       {isLeader && (
-        <td className={cn(P, 'min-w-[96px]')}>
-          <EditableTextCell
-            value={r.monthlyFee ?? null}
-            display={fmtMoney(r.monthlyFee)}
-            parse={parseIntCell(1_000_000_000_000)}
-            format={formatIntCell}
-            onSave={(v) => save.mutate({ monthlyFee: v })}
-            inputMode="numeric"
-            className="justify-end text-right tabular-nums"
-            label={`${r.name} — ${t('works.fee')}`}
-          />
+        <td className={cn(P, slideCls(open))}>
+          <Slide open={open} w={INFO_W.fee} className="p-0.5">
+            <EditableTextCell
+              value={r.monthlyFee ?? null}
+              display={fmtMoney(r.monthlyFee)}
+              parse={parseIntCell(1_000_000_000_000)}
+              format={formatIntCell}
+              onSave={(v) => save.mutate({ monthlyFee: v })}
+              inputMode="numeric"
+              className="justify-end text-right tabular-nums"
+              label={`${r.name} — ${t('works.fee')}`}
+            />
+          </Slide>
         </td>
       )}
-      <td className={cn(TD, 'text-right tabular-nums')}>{fmtMoney(r.accountantShare)}</td>
-      <td className={cn(P, 'min-w-[84px] text-center')}>
-        <SelectCell
-          value={r.bankKey == null ? '' : r.bankKey ? 'yes' : 'no'}
-          options={[{ value: 'yes', label: t('works.bankYes') }, { value: 'no', label: t('works.bankNo') }]}
-          onChange={(v) => save.mutate({ bankKey: v === '' ? null : v === 'yes' })}
-          label={`${r.name} — ${t('works.bankKey')}`}
-        />
+      <td className={cn(TD, slideCls(open))}>
+        <Slide open={open} w={INFO_W.share} className="px-2 text-right tabular-nums">{fmtMoney(r.accountantShare)}</Slide>
       </td>
-      <td className={cn(P, 'min-w-[64px]')}>
-        <EditableTextCell
-          value={r.employeeCount ?? null}
-          parse={parseIntCell(100_000)}
-          format={formatIntCell}
-          onSave={(v) => save.mutate({ employeeCount: v })}
-          inputMode="numeric"
-          className="justify-center text-center tabular-nums"
-          label={`${r.name} — ${t('works.employees')}`}
-        />
+      <td className={cn(P, slideCls(open))}>
+        <Slide open={open} w={INFO_W.bankKey} className="p-0.5 text-center">
+          <SelectCell
+            value={r.bankKey == null ? '' : r.bankKey ? 'yes' : 'no'}
+            options={[{ value: 'yes', label: t('works.bankYes') }, { value: 'no', label: t('works.bankNo') }]}
+            onChange={(v) => save.mutate({ bankKey: v === '' ? null : v === 'yes' })}
+            label={`${r.name} — ${t('works.bankKey')}`}
+          />
+        </Slide>
       </td>
-      <td className={cn(P, 'min-w-[120px]')}>
-        <DateCell value={r.mehnatCheckedAt ?? ''} onChange={(v) => save.mutate({ mehnatCheckedAt: v || null })} label={`${r.name} — ${t('works.checkedAt')}`} />
+      <td className={cn(P, slideCls(open))}>
+        <Slide open={open} w={INFO_W.employees} className="p-0.5">
+          <EditableTextCell
+            value={r.employeeCount ?? null}
+            parse={parseIntCell(100_000)}
+            format={formatIntCell}
+            onSave={(v) => save.mutate({ employeeCount: v })}
+            inputMode="numeric"
+            className="justify-center text-center tabular-nums"
+            label={`${r.name} — ${t('works.employees')}`}
+          />
+        </Slide>
       </td>
-      <td className={cn(P, 'min-w-[130px]')}>
-        <EditableTextCell
-          value={r.mehnatLogin ?? null}
-          parse={parseTextCell}
-          onSave={(v) => save.mutate({ mehnatLogin: v })}
-          mono
-          label={`${r.name} — ${t('works.login')}`}
-        />
+      <td className={cn(P, slideCls(open))}>
+        <Slide open={open} w={INFO_W.checkedAt} className="p-0.5">
+          <DateCell value={r.mehnatCheckedAt ?? ''} onChange={(v) => save.mutate({ mehnatCheckedAt: v || null })} label={`${r.name} — ${t('works.checkedAt')}`} />
+        </Slide>
       </td>
-      <td className={cn(P, 'min-w-[160px]')}>
-        <PasswordCell clientId={r.clientId} label={r.name} hasPassword={r.hasMehnatPassword} onSave={(pw) => save.mutate({ mehnatPassword: pw })} />
+      <td className={cn(P, slideCls(open))}>
+        <Slide open={open} w={INFO_W.login} className="p-0.5">
+          <EditableTextCell
+            value={r.mehnatLogin ?? null}
+            parse={parseTextCell}
+            onSave={(v) => save.mutate({ mehnatLogin: v })}
+            mono
+            label={`${r.name} — ${t('works.login')}`}
+          />
+        </Slide>
+      </td>
+      <td className={cn(P, slideCls(open))}>
+        <Slide open={open} w={INFO_W.password} className="p-0.5">
+          <PasswordCell clientId={r.clientId} label={r.name} hasPassword={r.hasMehnatPassword} onSave={(pw) => save.mutate({ mehnatPassword: pw })} />
+        </Slide>
       </td>
     </>
   );

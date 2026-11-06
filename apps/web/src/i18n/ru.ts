@@ -158,6 +158,7 @@ const ru: Dict = {
     baselineHint: 'Только для месяцев до CRM. Месяцы, по которым в системе есть задачи, закрываются нажатием на ячейку. Пусто — начальная точка удаляется.',
     current: 'Сейчас',
     accountant: 'Ответственный', fee: 'Ежемесячная оплата', share: '{{pct}}% (доля бухгалтеров)', bankKey: 'Банк-ключ',
+    infoCollapse: 'Свернуть столбцы данных', infoExpand: 'Развернуть столбцы данных',
     employees: 'Кол-во сотрудников', checkedAt: 'Дата', login: 'Логин', password: 'Пароль', bankYes: 'Есть', bankNo: 'Нет',
     showPassword: 'Показать пароль', hidePassword: 'Скрыть', newPassword: 'Новый пароль', editPassword: 'Изменить пароль', copy: 'Копировать', copied: 'Скопировано', worksGroup: 'Ежемесячные работы',
   },

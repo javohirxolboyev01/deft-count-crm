@@ -155,6 +155,7 @@ const uz = {
     baselineHint: "Faqat CRM'gacha bo'lgan oylar uchun. Tizimda vazifasi bor oylar katakni bosib \"Bajarildi\" qilinadi. Bo'sh qoldirilsa — boshlang'ich nuqta o'chiriladi.",
     current: 'Hozir',
     accountant: 'Javobgar', fee: "Oylik to'lov", share: '{{pct}}% (Buxgalterlar ulushi)', bankKey: 'Bank-klyuch',
+    infoCollapse: "Ma'lumot ustunlarini yig'ish", infoExpand: "Ma'lumot ustunlarini ochish",
     employees: 'Xodim soni', checkedAt: 'Sana', login: 'Login', password: 'Parol', bankYes: 'Bor', bankNo: "Yo'q",
     showPassword: "Parolni ko'rsatish", hidePassword: 'Yashirish', newPassword: 'Yangi parol', editPassword: "Parolni o'zgartirish", copy: 'Nusxalash', copied: 'Nusxalandi', worksGroup: 'Oylik ishlar',
   },
