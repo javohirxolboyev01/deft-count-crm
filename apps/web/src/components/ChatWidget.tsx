@@ -9,6 +9,7 @@ import { ApiError, api, qs } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
 import { TZ } from '@/lib/time';
+import { Logo } from './Logo';
 import type { ChatAttachmentKind, ChatContact, ChatMessage } from '@/lib/types';
 import {
   AttachmentView,
@@ -240,7 +241,11 @@ function ContactList({ onPick, onClose, meId }: { onPick: (id: number) => void; 
   return (
     <>
       <div className="flex h-14 shrink-0 items-center justify-between border-b border-gray-200 px-4 dark:border-[#1F2937]">
-        <h2 className="text-base font-semibold text-gray-900">{t('chat.title')}</h2>
+        <h2 className="flex items-center gap-2 text-base font-semibold text-gray-900">
+          <Logo variant="row" className="h-6 w-auto" />
+          <span className="leading-none text-gray-400" aria-hidden="true">—</span>
+          <span className="leading-none">{t('chat.title')}</span>
+        </h2>
         <button type="button" onClick={onClose} aria-label={t('common.close')} className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-full text-gray-500 hover:bg-gray-100 dark:hover:bg-[#1F2937]">
           <X className="h-5 w-5" />
         </button>
