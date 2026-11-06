@@ -32,6 +32,8 @@ export const config = {
   telegram: {
     token: process.env.TELEGRAM_BOT_TOKEN ?? '',
     username: process.env.TELEGRAM_BOT_USERNAME ?? '',
+    // Chat fayllari ombori: bot admin bo'lgan yopiq kanal id'si (-100...). Bo'sh bo'lsa chatda fayl yuborilmaydi
+    storageChatId: process.env.TELEGRAM_STORAGE_CHAT_ID ?? '',
   },
   schedulerEnabled: bool(process.env.SCHEDULER_ENABLED, env !== 'test'),
   backup: {

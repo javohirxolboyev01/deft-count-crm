@@ -26,7 +26,7 @@ export const TASK_SELECT = `
          to_char(t.period, 'YYYY-MM') AS period, t.title, t.note,
          t.assignee_id AS "assigneeId", a.full_name AS "assigneeName",
          t.due_at AS "dueAt", t.status, t.done_at AS "doneAt", t.done_by AS "doneBy",
-         t.created_by AS "createdBy", t.created_at AS "createdAt", t.updated_at AS "updatedAt",
+         t.created_by AS "createdBy", cb.full_name AS "createdByName", t.created_at AS "createdAt", t.updated_at AS "updatedAt",
          t.is_overdue AS overdue, t.is_due_soon AS "dueSoon", t.is_waiting_client AS "waitingClient",
          t.on_time AS "onTime",
          (SELECT count(*) FROM task_checklist_item ci WHERE ci.task_id = t.id)::int AS "checklistTotal",
@@ -38,7 +38,8 @@ export const TASK_SELECT = `
   JOIN client c ON c.id = t.client_id
   LEFT JOIN report_type rt ON rt.id = t.report_type_id
   LEFT JOIN routine_work_type rw ON rw.id = t.routine_type_id
-  LEFT JOIN app_user a ON a.id = t.assignee_id`;
+  LEFT JOIN app_user a ON a.id = t.assignee_id
+  LEFT JOIN app_user cb ON cb.id = t.created_by`;
 
 interface TaskRow {
   id: number;

@@ -93,8 +93,25 @@ async function download(url: string, filename: string, retry = true): Promise<vo
   setTimeout(() => URL.revokeObjectURL(href), 1000);
 }
 
+/** Fayl mazmuni Blob sifatida (Authorization kerak — <img src> to'g'ridan-to'g'ri ishlamaydi) */
+async function blob(url: string, retry = true): Promise<Blob> {
+  const headers: Record<string, string> = {};
+  if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
+  const r = await fetch(`/api${url}`, { headers, credentials: 'same-origin' });
+  if (r.status === 401 && retry) {
+    if (await tryRefresh()) return blob(url, false);
+    onAuthLost?.();
+  }
+  if (!r.ok) {
+    const data = await r.json().catch(() => ({}));
+    throw new ApiError(r.status, data.code ?? 'HTTP_' + r.status, data.message ?? r.statusText, data.details);
+  }
+  return r.blob();
+}
+
 export const api = {
   download,
+  blob,
   get: <T>(url: string) => request<T>('GET', url),
   post: <T>(url: string, body?: Body) => request<T>('POST', url, body ?? {}),
   patch: <T>(url: string, body?: Body) => request<T>('PATCH', url, body),

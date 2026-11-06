@@ -20,6 +20,7 @@ export function CellMenu({
   busy,
   onPick,
   onOpenTask,
+  locked,
 }: {
   current: CellValue;
   /** Katak tugmasining rangi (holatiga qarab) */
@@ -31,6 +32,8 @@ export function CellMenu({
   busy: boolean;
   onPick: (v: CellValue) => void;
   onOpenTask?: () => void;
+  /** Tanlab bo'lmaydigan qiymatlar (ko'rinadi, lekin o'chiq) va sababi — masalan buxgalter uchun 0 / X */
+  locked?: Partial<Record<CellValue, string>>;
 }) {
   const ref = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
@@ -60,7 +63,12 @@ export function CellMenu({
               key={v}
               role="menuitemradio"
               aria-checked={current === v}
-              className={cn('flex w-full items-center gap-2 px-3 py-2 text-left text-ink hover:bg-gray-100', current === v && 'bg-brand-100 dark:bg-brand-800')}
+              disabled={current !== v && !!locked?.[v]}
+              title={current !== v ? locked?.[v] : undefined}
+              className={cn(
+                'flex w-full items-center gap-2 px-3 py-2 text-left text-ink hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent',
+                current === v && 'bg-brand-100 dark:bg-brand-800',
+              )}
               onClick={() => {
                 setOpen(false);
                 if (current !== v) onPick(v);

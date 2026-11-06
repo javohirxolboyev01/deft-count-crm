@@ -1,11 +1,12 @@
-import { useQuery } from '@tanstack/react-query';
-import { CalendarDays, Siren } from 'lucide-react';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { CalendarDays } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { MyDayKpis } from '@/components/MyDayKpis';
 import { OverdueMatrix } from '@/components/OverdueMatrix';
 import { TaskCard } from '@/components/TaskCard';
 import { IncomingTransfers } from '@/components/TaskTransfer';
+import { UrgentList } from '@/components/UrgentList';
 import { Card, CardHeader, PageHeader } from '@/components/ui/card';
 import { QueryState } from '@/components/ui/states';
 import { KpiSkeleton, Skeleton } from '@/components/ui/skeleton';
@@ -14,9 +15,10 @@ import { useOpenTask } from '@/hooks/outlet';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
-import type { MyDay as MyDayData, Task, TaskStatus } from '@/lib/types';
+import type { MyDay as MyDayData, StatRange, Task, TaskStatus } from '@/lib/types';
 
 const COLUMNS = ['TODO', 'IN_PROGRESS', 'WAITING_CLIENT', 'DONE'] as const;
+const RANGES: StatRange[] = ['week', 'month', 'quarter', 'year'];
 
 function Group({ title, icon, tasks, tone, onOpen, onDone }: { title: string; icon: React.ReactNode; tasks?: Task[]; tone: string; onOpen: (id: number) => void; onDone: (id: number) => void }) {
   if (!tasks?.length) return null;
@@ -37,13 +39,41 @@ export default function MyDay() {
   const done = useMarkDone();
   const changeStatus = useChangeStatus();
   const [dragOver, setDragOver] = useState<string | null>(null);
-  const q = useQuery({ queryKey: ['my-day'], queryFn: () => api.get<MyDayData>('/tasks/my-day'), refetchInterval: 60_000 });
+  // Davr: "Bajarildi" ustuni va kartalari shu hafta / oy / chorak / yil boshidan (ochiq vazifalar — doim hammasi)
+  const [range, setRange] = useState<StatRange>('month');
+  const q = useQuery({
+    queryKey: ['my-day', range],
+    queryFn: () => api.get<MyDayData>(`/tasks/my-day?range=${range}`),
+    placeholderData: keepPreviousData,
+    refetchInterval: 60_000,
+  });
   const d = q.data;
   const onDone = (id: number) => done.mutate({ taskId: id });
 
   return (
     <div>
-      <PageHeader title={isLeader ? t('myDay.title') : t('myDay.myTasks')} breadcrumb={false} />
+      <PageHeader
+        title={isLeader ? t('myDay.title') : t('myDay.myTasks')}
+        breadcrumb={false}
+        actions={
+          <div className="inline-flex rounded-md bg-gray-100 p-0.5" role="group">
+            {RANGES.map((r) => (
+              <button
+                key={r}
+                type="button"
+                aria-pressed={range === r}
+                onClick={() => setRange(r)}
+                className={cn(
+                  'h-7 cursor-pointer rounded px-3 text-sm font-medium transition-colors',
+                  range === r ? 'bg-brand-500 text-on-brand shadow-sm' : 'text-gray-500 hover:text-foreground',
+                )}
+              >
+                {t(`myDay.period.ranges.${r}`)}
+              </button>
+            ))}
+          </div>
+        }
+      />
       <QueryState
         q={q}
         skeleton={
@@ -66,9 +96,10 @@ export default function MyDay() {
 
             <IncomingTransfers onOpen={openTask} />
 
-            <Group title={t('myDay.urgent')} icon={<Siren className="h-4 w-4 text-red-600" />} tasks={d.groups?.urgent} tone="border-l-red-600" onOpen={openTask} onDone={onDone} />
+            <UrgentList tasks={d.groups?.urgent} onOpen={openTask} onDone={onDone} onStatus={changeStatus} />
             <OverdueMatrix tasks={d.groups?.overdue} onOpen={openTask} onDone={onDone} />
-            <Group title={t('myDay.today')} icon={<CalendarDays className="h-4 w-4 text-soon" />} tasks={d.groups?.today} tone="border-l-soon" onOpen={openTask} onDone={onDone} />
+            {/* Shoshilinch vazifa yuqoridagi o'z blokida — Bugungida takrorlanmaydi ("Bugun qoldi" kartasi esa uni ham sanaydi) */}
+            <Group title={t('myDay.today')} icon={<CalendarDays className="h-4 w-4 text-soon" />} tasks={d.groups?.today?.filter((x) => x.kind !== 'URGENT')} tone="border-l-soon" onOpen={openTask} onDone={onDone} />
 
             <p className="text-xs text-gray-500">{t('myDay.dragHint')}</p>
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">

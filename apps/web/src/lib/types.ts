@@ -125,6 +125,7 @@ export interface Task {
   note: string | null;
   assigneeId: number | null;
   assigneeName: string | null;
+  createdByName?: string | null;
   dueAt: string | null;
   status: TaskStatus;
   doneAt: string | null;
@@ -150,10 +151,22 @@ export interface TaskDetail extends Task {
 
 export interface MyDay {
   period: string;
+  /** "Bajarildi" ustuni va kartalari qaysi kalendar davri boshidan (Hafta / Oy / Chorak / Yil) */
+  range: StatRange;
   groups: { today: Task[]; urgent: Task[]; overdue: Task[] };
   columns: Record<'TODO' | 'IN_PROGRESS' | 'WAITING_CLIENT' | 'DONE', Task[]>;
-  stats: { done: number; doneOnTime: number; doneNoDue: number; doneToday: number; open: number; monthOpen: number; overdue: number };
+  /** Tanlangan davr (range) bo'yicha — server /tasks/my-day izohiga qarang */
+  stats: {
+    /** davrning ochiq vazifalari: muddati davr oxirigacha (qarz ham) yoki muddatsiz */
+    open: number; openTodo: number; openInProgress: number; openWaiting: number;
+    /** muddati o'tgan: "Bajarilishi kerak" (kechikkan) / Jarayonda / Mijozdan kutilmoqda */
+    overdue: number; overdueInProgress: number; overdueWaiting: number;
+    /** davrda o'zi bajargan (done_at davr ichida) */
+    done: number; doneOnTime: number; doneLate: number; doneNoDue: number; doneToday: number;
+  };
 }
+
+export type StatRange = 'week' | 'month' | 'quarter' | 'year';
 
 export type CellState = '1' | '0' | '!' | 'X';
 
@@ -303,14 +316,32 @@ export interface AppNotification {
   createdAt: string;
 }
 
+export type ChatAttachmentKind = 'IMAGE' | 'VIDEO' | 'VOICE' | 'VIDEO_NOTE' | 'FILE';
+
+/** Chat fayli (V43): mazmuni Telegram kanalida, `/api/chat/files/:id` orqali olinadi */
+export interface ChatAttachment {
+  id: number;
+  kind: ChatAttachmentKind;
+  mime: string;
+  fileName: string | null;
+  sizeBytes: number;
+  durationSec: number | null;
+  width: number | null;
+  height: number | null;
+  /** Ovozli xabar to'lqini (0..31), V45; eski xabarlarda null */
+  waveform: number[] | null;
+}
+
 export interface ChatMessage {
   id: number;
   senderId: number;
   recipientId: number;
+  /** Faylli xabarda bo'sh bo'lishi mumkin (izoh) */
   body: string;
   createdAt: string;
   readAt: string | null;
   editedAt: string | null;
+  attachment: ChatAttachment | null;
 }
 
 export interface ChatContact {
@@ -319,7 +350,7 @@ export interface ChatContact {
   role: Role;
   active: boolean;
   unread: number;
-  lastMessage: Omit<ChatMessage, 'recipientId' | 'editedAt'> | null;
+  lastMessage: (Omit<ChatMessage, 'recipientId' | 'editedAt' | 'attachment'> & { attachmentKind: ChatAttachmentKind | null }) | null;
 }
 
 /** SSE `chat-message`: xabar + yuboruvchi ismi */
@@ -376,6 +407,9 @@ export interface DashboardClients {
     done: number;
     overdue: number;
     waiting: number;
+    /** Tanlangan oyda "Bajarilishi kerak" / "Jarayonda" holatidagi vazifalar */
+    todo: number;
+    inProgress: number;
     percent: number | null;
     state: 'NONE' | 'READY' | 'OVERDUE' | 'IN_PROGRESS';
   }[];

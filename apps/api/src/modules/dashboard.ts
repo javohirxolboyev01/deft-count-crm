@@ -32,7 +32,9 @@ dashboardRouter.get('/clients', async (req, res) => {
             count(t.id) FILTER (WHERE t.period = $1)::int AS total,
             count(t.id) FILTER (WHERE t.period = $1 AND t.status = 'DONE')::int AS done,
             count(t.id) FILTER (WHERE t.status IN ${OPEN} AND t.due_at < now())::int AS overdue,
-            count(t.id) FILTER (WHERE t.period = $1 AND t.status = 'WAITING_CLIENT')::int AS waiting
+            count(t.id) FILTER (WHERE t.period = $1 AND t.status = 'WAITING_CLIENT')::int AS waiting,
+            count(t.id) FILTER (WHERE t.period = $1 AND t.status = 'TODO')::int AS todo,
+            count(t.id) FILTER (WHERE t.period = $1 AND t.status = 'IN_PROGRESS')::int AS "inProgress"
      FROM client c
      LEFT JOIN app_user a ON a.id = c.accountant_id
      LEFT JOIN task t ON t.client_id = c.id AND t.status <> 'CANCELLED'
@@ -104,6 +106,8 @@ dashboardRouter.get('/accountants', async (req, res) => {
   const dayFrom = now.startOf('day').toJSDate();
   const weekFrom = now.startOf('week').toJSDate();
   const monthFrom = now.startOf('month').toJSDate();
+  // Kechikkan ustuni = muddati o'tgan "Bajarilishi kerak" vazifalar (Jarayonda / Mijozdan kutilmoqda sanalmaydi,
+  // rahbar qarori) — buxgalterning "Mening kunim" kartasi bilan bir xil
   const rows = await q(
     pool,
     `SELECT u.id, u.full_name AS "fullName",
@@ -115,7 +119,7 @@ dashboardRouter.get('/accountants', async (req, res) => {
           AND t.due_at IS NOT NULL)::int AS "doneWithDue",
        (SELECT count(*) FROM task t JOIN client tc ON tc.id = t.client_id AND ${COUNTED_CLIENT('tc')} WHERE t.done_by = u.id AND t.status = 'DONE' AND t.done_at BETWEEN $1 AND $2
           AND t.done_at <= t.due_at)::int AS "onTime",
-       (SELECT count(*) FROM task t JOIN client tc ON tc.id = t.client_id AND ${COUNTED_CLIENT('tc')} WHERE t.assignee_id = u.id AND t.status IN ${OPEN} AND t.due_at < now())::int AS overdue,
+       (SELECT count(*) FROM task t JOIN client tc ON tc.id = t.client_id AND ${COUNTED_CLIENT('tc')} WHERE t.assignee_id = u.id AND t.status = 'TODO' AND t.due_at < now())::int AS overdue,
        (SELECT count(*) FROM task t JOIN client tc ON tc.id = t.client_id AND ${COUNTED_CLIENT('tc')} WHERE t.assignee_id = u.id AND t.status = 'WAITING_CLIENT')::int AS waiting,
        (SELECT count(*) FROM task t JOIN client tc ON tc.id = t.client_id AND ${COUNTED_CLIENT('tc')} WHERE t.assignee_id = u.id AND t.status IN ${OPEN})::int AS "openTasks",
        (SELECT count(*) FROM client c WHERE c.accountant_id = u.id)::int AS clients,

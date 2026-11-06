@@ -406,7 +406,14 @@ function WorkCellView({
         ? t(cell.state === 'done' ? 'works.beforeSystemDone' : 'works.gapOrder')
         : t(`works.legend.${cell.state}`);
 
-  if (onPick && !cell.beforeSystem) {
+  // Tizimdagi oy: Excel kabi 1 / 0 / X menyusi. Rahbar — hammasi; buxgalter — faqat "1" (shu oy vazifasi
+  // ochiq bo'lsa, 6.6 oqimi + undo). 0 (qayta ochish) va X serverda rahbarniki (REOPEN_LEADER_ONLY, requireLeader)
+  if (!cell.beforeSystem) {
+    const taskNext = next?.kind === 'TASK' ? next : null;
+    const pick = onPick ?? ((v: CellValue) => v === '1' && taskNext && onAdvance(taskNext));
+    const locked: Partial<Record<CellValue, string>> | undefined = onPick
+      ? undefined
+      : { '0': t('works.leaderOnly'), X: t('works.leaderOnly'), ...(taskNext ? {} : { '1': t('works.noTask') }) };
     return (
       <td className="border-b border-r p-0.5 text-center">
         <CellMenu
@@ -414,10 +421,11 @@ function WorkCellView({
           className={cn('h-10', cell.raw ? 'bg-amber-50 text-amber-800 ring-1 ring-inset ring-amber-300' : TONE[cell.state])}
           symbol={cell.raw ? <span className="line-clamp-2 break-all px-1 text-[11px] font-medium">{cell.raw}</span> : <span className="text-sm font-semibold">{SYM[cell.state]}</span>}
           labels={{ '1': t('works.legend.done'), '0': t('works.legend.open'), X: t('works.legend.na') }}
-          title={cell.raw ? t('works.rawHint', { raw: cell.raw }) : t('works.cellHint')}
-          label={`${label}: ${t(`works.legend.${cell.state}`)}. ${t('works.cellHint')}`}
+          title={cell.raw ? t('works.rawHint', { raw: cell.raw }) : onPick ? t('works.cellHint') : title}
+          label={`${label}: ${t(`works.legend.${cell.state}`)}. ${onPick ? t('works.cellHint') : title}`}
           busy={busy}
-          onPick={onPick}
+          onPick={pick}
+          locked={locked}
           onOpenTask={cell.taskId ? () => onOpenTask(cell.taskId!) : undefined}
         />
       </td>

@@ -1,14 +1,33 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Check, CheckCheck, MessageCircle, Pencil, Search, SendHorizontal, Trash2, X } from 'lucide-react';
+import { ArrowLeft, Check, CheckCheck, File as FileIcon, Film, Image as ImageIcon, MessageCircle, Mic, Paperclip, Pencil, Search, SendHorizontal, Trash2, Video, X } from 'lucide-react';
 import { DateTime } from 'luxon';
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
-import { api, qs } from '@/lib/api';
+import { toast } from 'sonner';
+import { ApiError, api, qs } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
 import { TZ } from '@/lib/time';
-import type { ChatContact, ChatMessage } from '@/lib/types';
+import type { ChatAttachmentKind, ChatContact, ChatMessage } from '@/lib/types';
+import {
+  AttachmentView,
+  NowPlayingBar,
+  PICK_ACCEPT,
+  RecordingBar,
+  VIDEO_SOURCE_MAX_BYTES,
+  VideoNotePreview,
+  compressVideo,
+  computeWaveform,
+  fmtSize,
+  pickedKind,
+  primeChatFile,
+  readMediaMeta,
+  uploadChatFile,
+  useRecorder,
+  type RecKind,
+  type Recorded,
+} from './ChatMedia';
 import { ConfirmDialog } from './ui/dialog';
 import { Spinner } from './ui/spinner';
 
@@ -55,12 +74,79 @@ function Ticks({ read, className }: { read: boolean; className?: string }) {
   return <Icon className={cn('h-4 w-4 shrink-0', className)} aria-hidden />;
 }
 
+const KIND_EMOJI: Record<ChatAttachmentKind, string> = { IMAGE: '🖼', VIDEO: '🎬', VOICE: '🎤', VIDEO_NOTE: '⏺', FILE: '📄' };
+
+/** Ro'yxat va tahrirlash panelida xabarning qisqa matni: faylli xabarda tur belgisi + izoh */
+function previewText(body: string, kind: ChatAttachmentKind | null | undefined, t: ReturnType<typeof useTranslation>['t']) {
+  if (!kind) return body;
+  return `${KIND_EMOJI[kind]} ${body || t(`chat.kind.${kind}`)}`;
+}
+
+/**
+ * Pufakcha "ilmog'i" (Telegram kabi): guruhdagi oxirgi xabarning pastki burchagida, pufakcha rangida.
+ * O'z xabari — o'ngda, suhbatdoshniki — chapda (ko'zgu).
+ */
+function BubbleTail({ mine }: { mine: boolean }) {
+  return (
+    <svg
+      aria-hidden
+      viewBox="0 0 11 20"
+      className={cn(
+        'pointer-events-none absolute bottom-0 h-5 w-[11px]',
+        mine ? '-right-[10px] text-brand-500 dark:text-brand-600' : '-left-[10px] -scale-x-100 text-white dark:text-[#374151]',
+      )}
+    >
+      <path d="M0 0 V20 H9.5 C10.6 20 11.2 18.7 10.4 17.9 C4.8 12.3 0.6 7 0 0 Z" fill="currentColor" />
+    </svg>
+  );
+}
+
 function UnreadBadge({ n, className }: { n: number; className?: string }) {
   return (
     <span className={cn('min-w-[22px] rounded-full bg-brand-500 px-1.5 text-center text-xs font-semibold leading-[22px] text-on-brand', className)}>
       {n > 999 ? '999+' : n}
     </span>
   );
+}
+
+/** Telefonda (< sm) chat to'liq ekran: balandlik `visualViewport`dan olinadi — klaviatura ochilganda
+ *  oyna klaviatura ustida qoladi, sahifa surilmaydi va orqa fon scroll bo'lmaydi. */
+function useMobileViewport(open: boolean) {
+  const [box, setBox] = useState<{ top: number; height: number } | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    const mq = window.matchMedia('(max-width: 639px)');
+    const vv = window.visualViewport;
+    const update = () => {
+      if (!mq.matches) return setBox(null);
+      setBox({ top: vv?.offsetTop ?? 0, height: vv?.height ?? window.innerHeight });
+    };
+    update();
+    const html = document.documentElement;
+    const prev = { body: document.body.style.overflow, html: html.style.overflow };
+    const lock = () => {
+      document.body.style.overflow = mq.matches ? 'hidden' : prev.body;
+      html.style.overflow = mq.matches ? 'hidden' : prev.html;
+    };
+    lock();
+    const onChange = () => {
+      update();
+      lock();
+    };
+    vv?.addEventListener('resize', update);
+    vv?.addEventListener('scroll', update);
+    window.addEventListener('resize', update);
+    mq.addEventListener('change', onChange);
+    return () => {
+      vv?.removeEventListener('resize', update);
+      vv?.removeEventListener('scroll', update);
+      window.removeEventListener('resize', update);
+      mq.removeEventListener('change', onChange);
+      document.body.style.overflow = prev.body;
+      html.style.overflow = prev.html;
+    };
+  }, [open]);
+  return box;
 }
 
 export function ChatWidget({ pulse }: { pulse: number }) {
@@ -76,6 +162,7 @@ export function ChatWidget({ pulse }: { pulse: number }) {
     enabled: !!user,
   });
   const total = unread.data?.count ?? 0;
+  const mobileBox = useMobileViewport(open);
 
   useEffect(() => {
     if (!open) return;
@@ -96,10 +183,11 @@ export function ChatWidget({ pulse }: { pulse: number }) {
         <div
           role="dialog"
           aria-label={t('chat.title')}
-          className="fixed inset-x-2 bottom-24 top-16 z-[56] flex animate-pop-in flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-pop dark:border-[#374151] dark:bg-[#111827] sm:inset-x-auto sm:right-6 sm:top-auto sm:h-[600px] sm:max-h-[calc(100vh-128px)] sm:w-[400px]"
+          style={mobileBox ? { top: mobileBox.top, height: mobileBox.height } : undefined}
+          className="fixed inset-x-0 top-0 z-[56] flex h-[100dvh] animate-pop-in flex-col overflow-hidden overscroll-none bg-white dark:bg-[#111827] sm:inset-x-auto sm:bottom-24 sm:right-6 sm:top-auto sm:h-[680px] sm:max-h-[calc(100vh-128px)] sm:w-[440px] sm:rounded-2xl sm:border sm:border-gray-200 sm:shadow-pop sm:dark:border-[#374151]"
         >
           {activeId ? (
-            <Conversation userId={activeId} meId={user.id} onBack={() => setActiveId(null)} onClose={() => setOpen(false)} />
+            <Conversation userId={activeId} meId={user.id} meName={user.fullName} onBack={() => setActiveId(null)} onClose={() => setOpen(false)} />
           ) : (
             <ContactList onPick={setActiveId} onClose={() => setOpen(false)} meId={user.id} />
           )}
@@ -112,7 +200,7 @@ export function ChatWidget({ pulse }: { pulse: number }) {
         aria-label={total ? `${t('chat.open')} — ${t('chat.unread', { count: total })}` : t('chat.open')}
         aria-expanded={open}
         title={t('chat.title')}
-        className="fixed bottom-6 right-6 z-[56] flex h-14 w-14 cursor-pointer items-center justify-center rounded-full bg-gradient-to-tl from-[#048494] to-[#10B981] text-on-brand shadow-[0_6px_20px_rgba(4,132,148,0.45)] transition-transform hover:scale-105 active:scale-95"
+        className={cn(open && 'max-sm:hidden', 'fixed bottom-6 right-6 z-[56] flex h-14 w-14 cursor-pointer items-center justify-center rounded-full bg-gradient-to-tl from-[#048494] to-[#10B981] text-on-brand shadow-[0_6px_20px_rgba(4,132,148,0.45)] transition-transform hover:scale-105 active:scale-95')}
       >
         {open ? <X className="h-6 w-6" /> : <MessageCircle key={`chat-${pulse}`} className={cn('h-6 w-6', pulse > 0 && 'animate-bell-ring')} />}
         {!!total && (
@@ -165,12 +253,12 @@ function ContactList({ onPick, onClose, meId }: { onPick: (id: number) => void; 
             onChange={(e) => setSearch(e.target.value)}
             placeholder={t('chat.search')}
             aria-label={t('chat.search')}
-            className="w-full bg-transparent text-sm text-gray-900 outline-none placeholder:text-gray-500 focus-visible:ring-0 focus-visible:ring-offset-0"
+            className="w-full bg-transparent text-base text-gray-900 outline-none sm:text-sm placeholder:text-gray-500 focus-visible:ring-0 focus-visible:ring-offset-0"
             autoFocus
           />
         </label>
       </div>
-      <ul className="no-scrollbar min-h-0 grow overflow-y-auto">
+      <ul className="no-scrollbar min-h-0 grow overflow-y-auto overscroll-contain">
         {contacts.isLoading && (
           <li className="flex justify-center py-10">
             <Spinner />
@@ -199,7 +287,7 @@ function ContactList({ onPick, onClose, meId }: { onPick: (id: number) => void; 
                       {last ? (
                         <>
                           {mine && <span className="text-gray-700">{t('chat.you')}: </span>}
-                          {last.body}
+                          {previewText(last.body, last.attachmentKind, t)}
                         </>
                       ) : (
                         `${t(`roles.${c.role}`)}${c.active ? '' : ` · ${t('chat.inactive')}`}`
@@ -228,7 +316,7 @@ function dayLabel(iso: string, t: ReturnType<typeof useTranslation>['t']) {
   return `${d.day} ${months[d.month - 1]}${d.year !== now.year ? ` ${d.year}` : ''}`;
 }
 
-function Conversation({ userId, meId, onBack, onClose }: { userId: number; meId: number; onBack: () => void; onClose: () => void }) {
+function Conversation({ userId, meId, meName, onBack, onClose }: { userId: number; meId: number; meName: string; onBack: () => void; onClose: () => void }) {
   const { t } = useTranslation();
   const qc = useQueryClient();
   const [text, setText] = useState('');
@@ -241,9 +329,26 @@ function Conversation({ userId, meId, onBack, onClose }: { userId: number; meId:
   // Eski xabarlar yuklanganda ko'rinayotgan joy siljimasin
   const keepFromBottom = useRef<number | null>(null);
   const lastIdRef = useRef<number | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const docInputRef = useRef<HTMLInputElement>(null);
+  const [attachMenu, setAttachMenu] = useState(false);
+  // Yuborishga tayyorlangan fayl (izoh — matn maydonida) va yuklash foizi
+  const [pending, setPending] = useState<{ file: File; kind: ChatAttachmentKind; previewUrl: string | null } | null>(null);
+  const [progress, setProgress] = useState<number | null>(null);
+  // Video avval brauzerda siqiladi (convert), keyin yuklanadi (upload)
+  const [phase, setPhase] = useState<'convert' | 'upload'>('upload');
+  const [dragOver, setDragOver] = useState(false);
 
   const contacts = useQuery({ queryKey: ['chat', 'contacts'], queryFn: () => api.get<ChatContact[]>('/chat/contacts') });
   const peer = contacts.data?.find((c) => c.id === userId);
+  // ['chat'] ostida emas: SSE har xabarda ['chat']ni yangilaydi, sozlama esa o'zgarmaydi
+  const chatConfig = useQuery({
+    queryKey: ['chat-config'],
+    queryFn: () => api.get<{ attachments: boolean; maxFileBytes: number }>('/chat/config'),
+    staleTime: Infinity,
+  });
+  const filesOn = !!chatConfig.data?.attachments;
+  const maxBytes = chatConfig.data?.maxFileBytes ?? 20 * 1024 * 1024;
 
   const history = useInfiniteQuery({
     queryKey: ['chat', 'with', userId],
@@ -274,14 +379,104 @@ function Conversation({ userId, meId, onBack, onClose }: { userId: number; meId:
     mutationFn: (body: string) => api.post<ChatMessage>(`/chat/with/${userId}`, { body }),
     onSuccess: (m) => {
       // Darhol ko'rinsin (SSE keyin ham yangilaydi)
-      qc.setQueryData(['chat', 'with', userId], (d: typeof history.data) =>
-        d && !d.pages[0].items.some((x) => x.id === m.id)
-          ? { ...d, pages: [{ ...d.pages[0], items: [...d.pages[0].items, m] }, ...d.pages.slice(1)] }
-          : d,
-      );
+      appendCached(m);
       void qc.invalidateQueries({ queryKey: ['chat', 'contacts'] });
     },
   });
+
+  const appendCached = (m: ChatMessage) =>
+    qc.setQueryData(['chat', 'with', userId], (d: typeof history.data) =>
+      d && !d.pages[0].items.some((x) => x.id === m.id)
+        ? { ...d, pages: [{ ...d.pages[0], items: [...d.pages[0].items, m] }, ...d.pages.slice(1)] }
+        : d,
+    );
+
+  const fileError = (e: unknown) => {
+    const code = e instanceof ApiError ? e.code : '';
+    const key = ['FILE_TOO_LARGE', 'UNSUPPORTED_FILE_TYPE', 'TOO_LONG', 'FILE_STORAGE_UNAVAILABLE', 'FILE_STORAGE_DISABLED'].includes(code) ? code : 'GENERIC';
+    toast.error(t(`chat.fileErrors.${key}`, { max: fmtSize(maxBytes) }));
+  };
+
+  // Yuborilgan (siqilgan) fayl: o'zida qayta yuklab olinmasin
+  const sentFile = useRef<File | null>(null);
+  const sendFile = useMutation({
+    mutationFn: async (v: { file: File; kind: ChatAttachmentKind; body: string; durationSec?: number; size?: number }) => {
+      let { file, kind, durationSec } = v;
+      const { body, size } = v;
+      let meta: { width?: number; height?: number; durationSec?: number } = size ? { width: size, height: size } : {};
+      if (kind === 'VIDEO') {
+        // Tanlangan video: ≤ 60 s — dumaloq video xabar, uzunrog'i — siqilgan oddiy video
+        setPhase('convert');
+        setProgress(0);
+        try {
+          const c = await compressVideo(file, maxBytes, setProgress);
+          ({ file, kind, durationSec } = c);
+          meta = { width: c.width, height: c.height };
+        } catch (e) {
+          if ((e as Error).message === 'TOO_LONG') throw new ApiError(400, 'TOO_LONG', 'too long');
+          // Siqib bo'lmasa (brauzer qo'llamaydi) — asl fayl, 20 MB ga sig'sa
+          meta = await readMediaMeta(file, 'VIDEO');
+        }
+      } else if (kind === 'IMAGE') meta = await readMediaMeta(file, kind);
+      const waveform = kind === 'VOICE' ? await computeWaveform(file) : null;
+      if (file.size > maxBytes) throw new ApiError(413, 'FILE_TOO_LARGE', 'too large');
+      setPhase('upload');
+      const form = new FormData();
+      form.set('kind', kind);
+      form.set('body', body);
+      const dur = durationSec ?? meta.durationSec;
+      if (dur != null) form.set('durationSec', String(dur));
+      if (meta.width && meta.height) {
+        form.set('width', String(meta.width));
+        form.set('height', String(meta.height));
+      }
+      if (waveform) form.set('waveform', waveform.join(','));
+      form.set('file', file, file.name);
+      setProgress(0);
+      sentFile.current = file;
+      return uploadChatFile(userId, form, setProgress);
+    },
+    onSuccess: (m) => {
+      if (m.attachment && sentFile.current) primeChatFile(m.attachment.id, sentFile.current);
+      appendCached(m);
+      void qc.invalidateQueries({ queryKey: ['chat', 'contacts'] });
+    },
+    onError: fileError,
+    onSettled: () => {
+      setProgress(null);
+      setPhase('upload');
+      sentFile.current = null;
+    },
+  });
+
+  const recorder = useRecorder((r: Recorded) => sendFile.mutate({ file: r.file, kind: r.kind, body: '', durationSec: r.durationSec, size: r.size }));
+  const startRecording = (kind: RecKind) => {
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+      toast.error(t('chat.recordUnsupported'));
+      return;
+    }
+    recorder.start(kind).catch(() => toast.error(t(kind === 'VOICE' ? 'chat.micDenied' : 'chat.cameraDenied')));
+  };
+
+  const clearPending = () =>
+    setPending((p) => {
+      if (p?.previewUrl) URL.revokeObjectURL(p.previewUrl);
+      return null;
+    });
+  /** media — faqat rasm/video; file — hujjat (siqilmagan, yuklab olinadi); auto — sudrab tashlanganda turidan */
+  const pickFile = (file: File | undefined, mode: 'media' | 'file' | 'auto' = 'auto') => {
+    if (!file || !filesOn) return;
+    const kind: ChatAttachmentKind | null = mode === 'file' ? 'FILE' : (pickedKind(file) ?? (mode === 'auto' ? 'FILE' : null));
+    if (!kind) return toast.error(t('chat.fileErrors.UNSUPPORTED_FILE_TYPE'));
+    // Video yuborishda siqiladi: katta asl fayl ham qabul qilinadi
+    const limit = kind === 'VIDEO' ? VIDEO_SOURCE_MAX_BYTES : maxBytes;
+    if (file.size > limit) return toast.error(t('chat.fileErrors.FILE_TOO_LARGE', { max: fmtSize(limit) }));
+    if (editing) cancelEdit();
+    clearPending();
+    setPending({ file, kind, previewUrl: kind === 'IMAGE' ? URL.createObjectURL(file) : null });
+    inputRef.current?.focus();
+  };
+  useEffect(() => () => clearPending(), []);
 
   /** Keshdagi suhbat sahifalarida bitta xabarni almashtirish (null — olib tashlash) */
   const patchCached = (id: number, fn: (m: ChatMessage) => ChatMessage | null) =>
@@ -310,6 +505,7 @@ function Conversation({ userId, meId, onBack, onClose }: { userId: number; meId:
   });
 
   const startEdit = (m: ChatMessage) => {
+    clearPending();
     setEditing(m);
     setText(m.body);
     requestAnimationFrame(() => {
@@ -325,7 +521,26 @@ function Conversation({ userId, meId, onBack, onClose }: { userId: number; meId:
 
   const submit = () => {
     const body = text.trim();
-    if (!body || send.isPending || edit.isPending) return;
+    if (send.isPending || edit.isPending || sendFile.isPending) return;
+    if (pending) {
+      const p = pending;
+      setText('');
+      setPending(null);
+      sendFile.mutate(
+        { file: p.file, kind: p.kind, body },
+        {
+          onSuccess: () => p.previewUrl && URL.revokeObjectURL(p.previewUrl),
+          onError: () => {
+            setPending(p);
+            setText(body);
+          },
+        },
+      );
+      inputRef.current?.focus();
+      return;
+    }
+    // Faylli xabarning izohini butunlay olib tashlash mumkin
+    if (!body && !editing?.attachment) return;
     if (editing) {
       const target = editing;
       cancelEdit();
@@ -398,12 +613,34 @@ function Conversation({ userId, meId, onBack, onClose }: { userId: number; meId:
         </button>
       </div>
 
+      <NowPlayingBar />
+      <div className="relative flex min-h-0 grow flex-col">
+      {recorder.rec?.kind === 'VIDEO_NOTE' && <VideoNotePreview stream={recorder.rec.stream} elapsed={recorder.elapsed} />}
+      {dragOver && (
+        <div className="pointer-events-none absolute inset-2 z-[2] flex items-center justify-center rounded-2xl border-2 border-dashed border-brand-500 bg-white/85 text-sm font-medium text-brand-600 dark:bg-[#111827]/85">
+          {t('chat.dropHere')}
+        </div>
+      )}
       <div
         ref={scrollRef}
         onScroll={(e) => {
           if (e.currentTarget.scrollTop < 60) loadOlder();
         }}
-        className="no-scrollbar min-h-0 grow overflow-y-auto bg-brand-25 px-3 py-2 dark:bg-[#1F2937]"
+        onDragOver={(e) => {
+          if (!filesOn || !canSend || !e.dataTransfer.types.includes('Files')) return;
+          e.preventDefault();
+          setDragOver(true);
+        }}
+        onDragLeave={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOver(false);
+        }}
+        onDrop={(e) => {
+          if (!filesOn || !canSend) return;
+          e.preventDefault();
+          setDragOver(false);
+          pickFile(e.dataTransfer.files[0]);
+        }}
+        className="no-scrollbar min-h-0 grow overflow-y-auto overscroll-contain bg-brand-25 px-3 py-2 dark:bg-[#1F2937]"
       >
         {history.isLoading && (
           <div className="flex justify-center py-10">
@@ -429,6 +666,26 @@ function Conversation({ userId, meId, onBack, onClose }: { userId: number; meId:
           const prev = messages[i - 1];
           const newDay = !prev || !dt(prev.createdAt).hasSame(dt(m.createdAt), 'day');
           const grouped = !newDay && prev?.senderId === m.senderId;
+          const next = messages[i + 1];
+          // Telegram kabi: ketma-ket xabarlar guruhining oxirgisida pastki burchakda "ilmoq"
+          const lastInGroup = !next || next.senderId !== m.senderId || !dt(next.createdAt).hasSame(dt(m.createdAt), 'day');
+          const att = m.attachment;
+          const note = att?.kind === 'VIDEO_NOTE';
+          const voiceFooter = att?.kind === 'VOICE' && !m.body;
+          // Izohsiz rasm/video: vaqt rasm ustida (Telegram kabi)
+          const overlayTime = !!att && !m.body && att.kind !== 'VOICE' && att.kind !== 'FILE';
+          const timeInner = (
+            <>
+              {m.editedAt && <span className="mr-0.5 italic">{t('chat.edited')}</span>}
+              {dt(m.createdAt).toFormat('HH:mm')}
+              {mine && <Ticks read={!!m.readAt} className="h-3.5 w-3.5" />}
+            </>
+          );
+          const timeFloat = (
+            <span className={cn('float-right ml-2 mt-1.5 flex translate-y-0.5 items-center gap-0.5 text-[11px] leading-none', mine ? 'text-on-brand/80' : 'text-gray-500')}>
+              {timeInner}
+            </span>
+          );
           return (
             <Fragment key={m.id}>
               {newDay && (
@@ -436,52 +693,170 @@ function Conversation({ userId, meId, onBack, onClose }: { userId: number; meId:
                   <span className="rounded-full bg-black/25 px-3 py-0.5 text-xs font-medium text-on-brand backdrop-blur-sm dark:bg-[#374151]/90">{dayLabel(m.createdAt, t)}</span>
                 </div>
               )}
-              <div className={cn('flex', mine ? 'justify-end' : 'justify-start', grouped ? 'mt-0.5' : 'mt-2')}>
+              <div className={cn('flex', mine ? 'justify-end pr-2' : 'justify-start pl-2', grouped ? 'mt-0.5' : 'mt-2')}>
                 <div
                   onClick={mine ? (e) => openMenu(m, e) : undefined}
                   onContextMenu={mine ? (e) => openMenu(m, e) : undefined}
                   className={cn(
-                    'relative max-w-[82%] rounded-2xl px-3 py-1.5 text-sm shadow-sm',
+                    'relative max-w-[82%] text-sm',
                     mine && 'cursor-pointer',
-                    menu?.msg.id === m.id && 'ring-2 ring-brand-300',
-                    mine ? 'bg-brand-500 text-on-brand dark:bg-brand-600' : 'bg-white text-gray-900 dark:bg-[#374151]',
-                    !grouped && (mine ? 'rounded-br-md' : 'rounded-bl-md'),
+                    // Dumaloq video xabar — pufakchasiz, faqat doira
+                    note && menu?.msg.id === m.id && 'rounded-full ring-2 ring-brand-300',
+                    !note && [
+                      'rounded-2xl shadow-sm',
+                      att ? 'p-1' : 'px-3 py-1.5',
+                      menu?.msg.id === m.id && 'ring-2 ring-brand-300',
+                      mine ? 'bg-brand-500 text-on-brand dark:bg-brand-600' : 'bg-white text-gray-900 dark:bg-[#374151]',
+                      lastInGroup && (mine ? 'rounded-br-none' : 'rounded-bl-none'),
+                    ],
                   )}
                 >
-                  <span className="whitespace-pre-wrap break-words">{m.body}</span>
-                  {/* Vaqt va ✓ — Telegram'dagidek matn oxirida, o'ng pastda */}
-                  <span className={cn('float-right ml-2 mt-1.5 flex translate-y-0.5 items-center gap-0.5 text-[11px] leading-none', mine ? 'text-on-brand/80' : 'text-gray-500')}>
-                    {m.editedAt && <span className="mr-0.5 italic">{t('chat.edited')}</span>}
-                    {dt(m.createdAt).toFormat('HH:mm')}
-                    {mine && <Ticks read={!!m.readAt} className="h-3.5 w-3.5" />}
-                  </span>
+                  {!note && lastInGroup && <BubbleTail mine={mine} />}
+                  {att && (
+                    <AttachmentView
+                      att={att}
+                      mine={mine}
+                      footer={
+                        voiceFooter ? (
+                          <span className={cn('flex items-center gap-0.5 text-[11px] leading-none', mine ? 'text-on-brand/80' : 'text-gray-500')}>{timeInner}</span>
+                        ) : null
+                      }
+                      sender={{
+                        avatar: <Avatar id={m.senderId} name={mine ? meName : name} size={44} />,
+                        name: mine ? meName : name,
+                        time: `${dayLabel(m.createdAt, t)}, ${dt(m.createdAt).toFormat('HH:mm')}`,
+                      }}
+                      overlay={
+                        overlayTime ? (
+                          <span className="pointer-events-none absolute bottom-1.5 right-1.5 flex items-center gap-0.5 rounded-full bg-black/45 px-1.5 py-0.5 text-[11px] leading-none text-on-brand">
+                            {timeInner}
+                          </span>
+                        ) : null
+                      }
+                    />
+                  )}
+                  {(!att || m.body) && (
+                    <div className={cn(att && 'px-2 pb-0.5 pt-1')}>
+                      <span className="whitespace-pre-wrap break-words">{m.body}</span>
+                      {/* Vaqt va ✓ — Telegram'dagidek matn oxirida, o'ng pastda */}
+                      {timeFloat}
+                    </div>
+                  )}
+                  {att?.kind === 'FILE' && !m.body && <div className="flow-root px-2 pb-0.5">{timeFloat}</div>}
                 </div>
               </div>
             </Fragment>
           );
         })}
       </div>
+      </div>
 
+      {canSend && sendFile.isPending && (
+        <div className="flex shrink-0 items-center gap-3 border-t border-gray-200 px-3 py-1.5 dark:border-[#1F2937]">
+          <Spinner size="small" className="text-brand-500" />
+          <div className="min-w-0 grow">
+            <div className="text-xs font-semibold text-brand-500">{phase === 'convert' ? t('chat.converting') : t('chat.uploading')}</div>
+            <div className="mt-1 h-1 overflow-hidden rounded-full bg-gray-100 dark:bg-[#374151]">
+              <div className="h-full bg-brand-500 transition-[width]" style={{ width: `${Math.round((progress ?? 0) * 100)}%` }} />
+            </div>
+          </div>
+          <span className="text-xs tabular-nums text-gray-500">{Math.round((progress ?? 0) * 100)}%</span>
+        </div>
+      )}
+      {canSend && pending && (
+        <div className="flex shrink-0 items-center gap-3 border-t border-gray-200 px-3 py-1.5 dark:border-[#1F2937]">
+          {pending.previewUrl ? (
+            <img src={pending.previewUrl} alt="" className="h-10 w-10 shrink-0 rounded-md object-cover" />
+          ) : (
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-brand-50 text-brand-500 dark:bg-[#374151]">
+              {pending.kind === 'IMAGE' ? <ImageIcon className="h-5 w-5" /> : pending.kind === 'FILE' ? <FileIcon className="h-5 w-5" /> : <Film className="h-5 w-5" />}
+            </span>
+          )}
+          <div className="min-w-0 grow border-l-2 border-brand-500 pl-2">
+            <div className="text-xs font-semibold text-brand-500">{t(`chat.kind.${pending.kind}`)}</div>
+            <div className="truncate text-xs text-gray-500">
+              {pending.file.name} · {fmtSize(pending.file.size)}
+            </div>
+          </div>
+          <button type="button" onClick={clearPending} aria-label={t('chat.removeFile')} title={t('chat.removeFile')} className="flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-full text-gray-500 hover:bg-gray-100 dark:hover:bg-[#1F2937]">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
       {canSend && editing && (
         <div className="flex shrink-0 items-center gap-3 border-t border-gray-200 px-3 py-1.5 dark:border-[#1F2937]">
           <Pencil className="h-4 w-4 shrink-0 text-brand-500" />
           <div className="min-w-0 grow border-l-2 border-brand-500 pl-2">
             <div className="text-xs font-semibold text-brand-500">{t('chat.editing')}</div>
-            <div className="truncate text-xs text-gray-500">{editing.body}</div>
+            <div className="truncate text-xs text-gray-500">{previewText(editing.body, editing.attachment?.kind, t)}</div>
           </div>
           <button type="button" onClick={cancelEdit} aria-label={t('chat.cancelEdit')} title={t('chat.cancelEdit')} className="flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-full text-gray-500 hover:bg-gray-100 dark:hover:bg-[#1F2937]">
             <X className="h-4 w-4" />
           </button>
         </div>
       )}
-      {canSend ? (
+      {canSend && recorder.rec ? (
+        <RecordingBar
+          kind={recorder.rec.kind}
+          elapsed={recorder.elapsed}
+          onCancel={() => recorder.stop(false)}
+          onSend={() => recorder.stop(true)}
+          sendIcon={<SendHorizontal className="h-5 w-5" />}
+        />
+      ) : canSend ? (
         <form
-          className={cn('flex shrink-0 items-end gap-2 p-2', !editing && 'border-t border-gray-200 dark:border-[#1F2937]')}
+          className={cn('flex shrink-0 items-end gap-2 p-2', !editing && !pending && !sendFile.isPending && 'border-t border-gray-200 dark:border-[#1F2937]')}
           onSubmit={(e) => {
             e.preventDefault();
             submit();
           }}
         >
+          {filesOn && !editing && (
+            <div className="relative shrink-0">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept={PICK_ACCEPT}
+                className="hidden"
+                onChange={(e) => {
+                  pickFile(e.target.files?.[0], 'media');
+                  e.target.value = '';
+                }}
+              />
+              <input
+                ref={docInputRef}
+                type="file"
+                className="hidden"
+                onChange={(e) => {
+                  pickFile(e.target.files?.[0], 'file');
+                  e.target.value = '';
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => setAttachMenu((v) => !v)}
+                disabled={sendFile.isPending}
+                aria-label={t('chat.attach')}
+                aria-expanded={attachMenu}
+                title={t('chat.attach')}
+                className={cn(
+                  'flex h-10 w-10 cursor-pointer items-center justify-center rounded-full text-gray-500 hover:bg-gray-100 hover:text-brand-500 disabled:cursor-default disabled:opacity-40 dark:hover:bg-[#1F2937]',
+                  attachMenu && 'text-brand-500',
+                )}
+              >
+                <Paperclip className="h-5 w-5" />
+              </button>
+              {attachMenu && (
+                <AttachMenu
+                  onClose={() => setAttachMenu(false)}
+                  items={[
+                    { icon: ImageIcon, label: t('chat.attachMedia'), onClick: () => fileInputRef.current?.click() },
+                    { icon: FileIcon, label: t('chat.attachFile'), onClick: () => docInputRef.current?.click() },
+                  ]}
+                />
+              )}
+            </div>
+          )}
           <textarea
             ref={inputRef}
             rows={1}
@@ -493,9 +868,10 @@ function Conversation({ userId, meId, onBack, onClose }: { userId: number; meId:
               if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault();
                 submit();
-              } else if (e.key === 'Escape' && editing) {
+              } else if (e.key === 'Escape' && (editing || pending)) {
                 e.preventDefault();
-                cancelEdit();
+                if (editing) cancelEdit();
+                else clearPending();
               } else if (e.key === 'ArrowUp' && !text) {
                 // Telegram kabi: bo'sh maydonda ↑ — oxirgi o'z xabarini tahrirlash
                 const lastMine = messages.findLast((x) => x.senderId === meId);
@@ -505,19 +881,53 @@ function Conversation({ userId, meId, onBack, onClose }: { userId: number; meId:
                 }
               }
             }}
-            placeholder={t('chat.placeholder')}
-            aria-label={t('chat.placeholder')}
-            className="no-scrollbar max-h-[140px] min-h-10 grow resize-none rounded-2xl border border-gray-200 bg-gray-50 px-3.5 py-2 dark:border-[#374151] dark:bg-[#1F2937] dark:focus:border-brand-500 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-brand-500 focus-visible:ring-0 focus-visible:ring-offset-0"
+            onPaste={(e) => {
+              // Skrinshotni to'g'ridan-to'g'ri qo'yish (Ctrl+V)
+              const f = Array.from(e.clipboardData.files).find((x) => pickedKind(x));
+              if (f && filesOn && !editing) {
+                e.preventDefault();
+                pickFile(f);
+              }
+            }}
+            placeholder={pending ? t('chat.captionPlaceholder') : t('chat.placeholder')}
+            aria-label={pending ? t('chat.captionPlaceholder') : t('chat.placeholder')}
+            className="no-scrollbar max-h-[140px] min-h-10 grow resize-none rounded-2xl border border-gray-200 bg-gray-50 px-3.5 py-2 dark:border-[#374151] dark:bg-[#1F2937] dark:focus:border-brand-500 text-base text-gray-900 outline-none placeholder:text-gray-500 focus:border-brand-500 sm:text-sm focus-visible:ring-0 focus-visible:ring-offset-0"
           />
-          <button
-            type="submit"
-            disabled={!text.trim() || send.isPending || edit.isPending}
-            aria-label={editing ? t('common.save') : t('chat.send')}
-            title={editing ? t('common.save') : t('chat.send')}
-            className="flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-full bg-brand-500 text-on-brand transition-[opacity,transform] hover:opacity-90 active:scale-95 disabled:cursor-default disabled:opacity-40"
-          >
-            {editing ? <Check className="h-5 w-5" /> : <SendHorizontal className="h-5 w-5" />}
-          </button>
+          {filesOn && !editing && !pending && !text.trim() ? (
+            // Matn bo'sh: Telegram kabi ovozli va dumaloq video xabar tugmalari
+            <>
+              <button
+                type="button"
+                onClick={() => startRecording('VOICE')}
+                disabled={sendFile.isPending}
+                aria-label={t('chat.recordVoice')}
+                title={t('chat.recordVoice')}
+                className="flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-full text-gray-500 hover:bg-gray-100 hover:text-brand-500 disabled:cursor-default disabled:opacity-40 dark:hover:bg-[#1F2937]"
+              >
+                <Mic className="h-5 w-5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => startRecording('VIDEO_NOTE')}
+                disabled={sendFile.isPending}
+                aria-label={t('chat.recordVideo')}
+                title={t('chat.recordVideo')}
+                className="flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-full text-gray-500 hover:bg-gray-100 hover:text-brand-500 disabled:cursor-default disabled:opacity-40 dark:hover:bg-[#1F2937]"
+              >
+                <Video className="h-5 w-5" />
+              </button>
+            </>
+          ) : (
+            <button
+              type="submit"
+              disabled={(!text.trim() && !pending && !editing?.attachment) || send.isPending || edit.isPending || sendFile.isPending}
+              aria-label={editing ? t('common.save') : t('chat.send')}
+              title={editing ? t('common.save') : t('chat.send')}
+              className="flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-full bg-brand-500 text-on-brand transition-[opacity,transform] hover:opacity-90 active:scale-95 disabled:cursor-default disabled:opacity-40"
+            >
+              {editing ? <Check className="h-5 w-5" /> : <SendHorizontal className="h-5 w-5" />}
+            </button>
+          )}
         </form>
       ) : (
         <div className="shrink-0 border-t border-gray-200 p-3 text-center text-xs text-gray-500 dark:border-[#1F2937]">{t('chat.inactiveHint')}</div>
@@ -618,5 +1028,51 @@ function MessageMenu({
       ))}
     </div>,
     document.body,
+  );
+}
+
+/** 📎 menyusi (Telegram kabi): tugma ustida ochiladi, tashqariga bosish yoki Esc — yopiladi */
+function AttachMenu({ items, onClose }: { items: { icon: typeof Pencil; label: string; onClick: () => void }[]; onClose: () => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const onDown = (e: MouseEvent) => {
+      const btn = ref.current?.parentElement?.querySelector('button[aria-expanded]');
+      if (!ref.current?.contains(e.target as Node) && !btn?.contains(e.target as Node)) onClose();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      e.stopPropagation();
+      onClose();
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey, true);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey, true);
+    };
+  }, [onClose]);
+  return (
+    <div
+      ref={ref}
+      role="menu"
+      className="absolute bottom-full left-0 z-[3] mb-2 min-w-[200px] animate-pop-in overflow-hidden rounded-xl border border-gray-200 bg-white py-1 shadow-pop dark:border-[#4B5563] dark:bg-[#374151]"
+    >
+      {items.map((it) => (
+        <button
+          key={it.label}
+          type="button"
+          role="menuitem"
+          onClick={() => {
+            onClose();
+            it.onClick();
+          }}
+          className="flex w-full cursor-pointer items-center gap-3 px-3.5 py-2.5 text-left text-sm text-gray-900 outline-none hover:bg-gray-100 focus-visible:bg-gray-100 focus-visible:ring-0 focus-visible:ring-offset-0 dark:hover:bg-[#4B5563] dark:focus-visible:bg-[#4B5563]"
+        >
+          <it.icon className="h-5 w-5 text-gray-500" />
+          {it.label}
+        </button>
+      ))}
+    </div>
   );
 }

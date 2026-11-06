@@ -28,7 +28,12 @@ export function createApp() {
   const app = express();
   app.set('trust proxy', 1);
   app.disable('x-powered-by');
-  app.use(helmet());
+  app.use(
+    helmet({
+      // Chat fayllari (rasm, video, ovoz) brauzerga blob: URL sifatida beriladi (Authorization sarlavhasi bilan olinadi)
+      contentSecurityPolicy: { directives: { 'img-src': ["'self'", 'data:', 'blob:'], 'media-src': ["'self'", 'blob:'] } },
+    }),
+  );
   app.use(
     cors({
       origin: (origin, cb) => cb(null, !origin || config.corsOrigins.includes(origin)),

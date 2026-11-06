@@ -58,6 +58,7 @@ Bu fayl loyiha ildizida `CLAUDE.md` nomi bilan turadi. Har bosqichda shu konteks
 - `notification`: user_id, kind, payload, deliver_at, delivered_at, cancelled_at
 - `setting`: key/value (urgent shablonlar, va h.k.)
 - `chat_message` (V41, V42): sender_id, recipient_id, body, created_at, read_at, edited_at, deleted_at — xodimlar orasidagi 1:1 chat
+- `chat_attachment` (V43): message_id (unique — bitta xabarda bitta fayl), kind (IMAGE | VIDEO | VOICE | VIDEO_NOTE | FILE — V44), waveform (V45, ovozli xabar to'lqini 0..31), mime, file_name, size_bytes, duration_sec, width, height, tg_file_id, tg_file_unique_id, tg_chat_id, tg_message_id
 
 ## 6. Biznes qoidalari
 
@@ -178,10 +179,13 @@ Shartnoma tugasa rahbar qatorni jadvaldan olib tashlaydi (№ katagidagi savat, 
 - Mijozlar bo'yicha: joriy oy tayyor / jarayonda / kechikkan, umumiy foiz, muddati o'tganlar ro'yxati.
 - Buxgalterlar bo'yicha: bajargan (kun/hafta/oy), o'z vaqtida foiz, kechikkan, ochiq vazifa (yuklama), ishga sarflangan vaqt.
 - "O'z vaqtida" = `done_at <= due_at`.
+- Buxgalterlar jadvalidagi va "Mening kunim" kartasidagi "Kechikkan" = muddati o'tgan **"Bajarilishi kerak"** vazifalar (rahbar qarori): "Jarayonda" yoki "Mijozdan kutilmoqda"ga o'tkazilgani sanalmaydi. Vazifaning qizil rangi va kunlik eslatma (6.7) o'zgarmaydi.
 - Buxgalter biriktirilmagan mijoz (`accountant_id` NULL) dashboarddagi hech bir natijaga kirmaydi (rahbar qarori): kartalar, foizlar, kechikkan vazifalar, mijozlar va Buxgalterlar jadvali. Ular faqat "Kamchiliklar" sahifasida (`unassignedClients`) — biriktirilgach hisobga qaytadi.
 
 ### 6.12 Ichki chat (V41)
 Barcha xodimlar (rahbar, buxgalter, sotuv operatori) bir-biri bilan yakkama-yakka yozishadi (guruh yo'q). O'ng pastki burchakda yumaloq chat tugmasi — jami o'qilmaganlar soni; ichida Telegram'dagidek suhbatdoshlar ro'yxati (oxirgi xabar, vaqt, har biridan o'qilmaganlar soni, ✓/✓✓). Real vaqt SSE orqali (`chat-message`, `chat-read`); Telegram'ga yuborilmaydi. Suhbat ochilganda xabarlar o'qilgan bo'ladi. O'z xabarini (faqat yuboruvchi, vaqt cheklovisiz) tahrirlash — "tahrirlangan" belgisi bilan; o'chirish — ikkala tomonda yo'qoladi (yumshoq, `deleted_at`, V42). Xabar bosilganda yoki o'ng tugma bilan menyu chiqadi; bo'sh maydonda ↑ — oxirgi xabarni tahrirlash. Faolsizlantirilgan xodimga yozilmaydi, yozishma ro'yxatda qoladi. API: `/api/chat` (hamma rol, faqat o'z yozishmalari).
+
+Chatda fayl (V43, V44, rahbar qarori): 📎 menyusi Telegram kabi — «Rasm yoki video» va «Fayl» (istalgan hujjat: faqat yuklab olinadi, `attachment` + `sandbox`); rasm, video (tanlash, sudrab tashlash, Ctrl+V), ovozli xabar va dumaloq video xabar (brauzerda MediaRecorder bilan yoziladi, video xabar ≤ 60 s). Bitta xabarda bitta fayl, matn — izoh (bo'sh bo'lishi mumkin). **Ombor — Telegram yopiq kanali** (`TELEGRAM_STORAGE_CHAT_ID`, bot kanal admini): server faylni `sendDocument` bilan kanalga yuklaydi (siqilmaydi); dumaloq video xabar kanalda ham dumaloq — brauzer kvadrat (384×384) MP4 yozadi, server `sendVideoNote` qiladi (MP4 yozolmaydigan brauzerda, masalan Firefox, hujjat bo'lib qoladi), bazada faqat `file_id` va kanal posti saqlanadi. Brauzerga fayl doim server orqali (`GET /api/chat/files/:id`, faqat suhbat ishtirokchilariga, bot tokeni chiqmaydi). Chegara 20 MB (Bot API `getFile` yuklab olish chegarasi). Tanlangan video yuborishdan oldin brauzerda siqiladi (rahbar qarori, `compressVideo`): ≤ 60 s — dumaloq video xabar (384×384 MP4), uzunrog'i — oddiy video (≤ 640px, bitreyt 20 MB ga sig'adigan); asl fayl 1 GB gacha. Siqish video davomiyligicha vaqt oladi. Turlar: rasm JPG/PNG/WEBP/GIF, video MP4/WEBM/MOV, ovoz webm/ogg/mp4 (SVG/HTML rasm sifatida yo'q, faqat «Fayl» bo'lib). Rasm Telegram Desktop kabi ochiladi: pastda yuboruvchi va vaqt, kattalashtirish/burish/yuklab olish. Kanalga ism yoki matn yuborilmaydi — faqat texnik belgi. Kanal sozlanmagan bo'lsa chatda faqat matn. O'chirilgan xabarning fayli ilovada berilmaydi, kanalda arxiv sifatida qoladi (`TODO(tasdiqlash)`).
 
 ## 7. Excel import (jadval fayllari)
 
@@ -201,7 +205,7 @@ Haqiqiy jadval ustunlari:
 ## 8. Tizimda yo'q (qilmang)
 
 - CRM'dan qo'ng'iroq qilish
-- Fayl yuklash
+- Fayl yuklash (istisno: ichki chatdagi rasm/video/ovozli xabar/hujjat, V43–V44 — 6.12)
 - 1C va soliq.uz bilan avtomatik bog'lanish
 - To'lov qabul qilish
 - Mijozga SMS/Telegram xabar
@@ -216,3 +220,4 @@ Haqiqiy jadval ustunlari:
 
 1. YaTT uchun jadvalda ustuni yo'q hisobotlar (Poruchenya, dividend, norezident, yillik) X deb olingan (V33).
 2. Vazifa faqat buxgalterga o'tkaziladi, rahbarga emas (V40).
+3. Chatda o'chirilgan xabar fayli Telegram kanalidan o'chirilmaydi (arxiv), fayl chegarasi 20 MB (V43).

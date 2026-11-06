@@ -22,11 +22,11 @@ export function KpiCard({ title, pill, children }: { title: string; pill?: React
 }
 
 export type PillTone = 'done' | 'overdue' | 'brand' | 'waiting';
-export function Pill({ tone, icon: Icon, tip, children }: { tone: PillTone; icon: typeof CheckCircle2; tip?: ReactNode; children: ReactNode }) {
+export function Pill({ tone, icon: Icon, tip, children }: { tone: PillTone; icon?: typeof CheckCircle2; tip?: ReactNode; children: ReactNode }) {
   const cls = { done: 'bg-done-bg text-done', overdue: 'bg-overdue-bg text-overdue', brand: 'bg-brand-light text-brand', waiting: 'bg-waiting-bg text-waiting' }[tone];
   const pill = (
     <span className={cn('inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums', cls)}>
-      <Icon className="h-3.5 w-3.5" aria-hidden /> {children}
+      {Icon && <Icon className="h-3.5 w-3.5" aria-hidden />} {children}
     </span>
   );
   return tip ? <Tooltip content={tip}>{pill}</Tooltip> : pill;
@@ -165,44 +165,42 @@ function ReadyCard({ s }: { s: DashboardClients['summary'] }) {
 }
 
 /**
- * 3. Jarayonda: jarayondagi mijozlar bajarilish darajasi bo'yicha. Ketma-ket (sequential) bir rang:
- * daraja oshgani sari to'qroq; har ustun o'z izi (track) ustida. Pill — mijozdan hujjat kutilayotganlar (6.5, to'q sariq).
+ * 3. Jarayonda: jarayondagi mijozlarning tanlangan oydagi vazifalari holat bo'yicha (6.4, oqim tartibida) — har holat
+ * o'z ustuni: tepada rangli son, balandligi songa mos, pastda nomi.
+ * Pill — mijozdan hujjat kutilayotgan mijozlar soni (6.5, to'q sariq).
  */
 function InProgressCard({ data }: { data: DashboardClients }) {
   const { t } = useTranslation();
   const list = (data.clients ?? []).filter((c) => c.state === 'IN_PROGRESS');
-  const waiting = list.filter((c) => c.waiting > 0).length;
-  const avg = list.length ? Math.round(list.reduce((n, c) => n + (c.percent ?? 0), 0) / list.length) : 0;
-  const shades = ['from-amber-200 to-amber-300', 'from-amber-300 to-amber-400', 'from-amber-400 to-amber-500', 'from-amber-500 to-amber-600'];
-  const buckets = [0, 25, 50, 75].map((from, i) => ({
-    label: `${from}–${from + 25}%`,
-    shade: shades[i],
-    value: list.filter((c) => {
-      const p = c.percent ?? 0;
-      return p >= from && (p < from + 25 || from === 75);
-    }).length,
-  }));
-  const max = Math.max(1, ...buckets.map((b) => b.value));
+  const waitingClients = list.filter((c) => c.waiting > 0).length;
+  const sum = (k: 'done' | 'inProgress' | 'waiting' | 'todo') => list.reduce((n, c) => n + (c[k] ?? 0), 0);
+  const total = list.reduce((n, c) => n + c.total, 0);
+  const parts = [
+    { label: t('taskStatus.TODO'), value: sum('todo'), dot: 'bg-gray-400', text: 'text-gray-500' },
+    { label: t('taskStatus.IN_PROGRESS'), value: sum('inProgress'), dot: 'bg-brand-500', text: 'text-brand-500 dark:text-brand-400' },
+    { label: t('taskStatus.WAITING_CLIENT'), value: sum('waiting'), dot: 'bg-waiting', text: 'text-waiting' },
+    { label: t('taskStatus.DONE'), value: sum('done'), dot: 'bg-done', text: 'text-done' },
+  ];
+  const max = Math.max(1, ...parts.map((p) => p.value));
   return (
     <KpiCard
       title={t('dashboard.inProgress')}
-      pill={waiting ? <Pill tone="waiting" icon={Hourglass} tip={<Tip label={t('dashboard.waiting')} value={waiting} dot="bg-waiting" />}><CountUp value={waiting} /></Pill> : undefined}
+      pill={waitingClients ? <Pill tone="waiting" icon={Hourglass} tip={<Tip label={t('dashboard.waiting')} value={`${waitingClients} ${t('dashboard.kpi.clientsUnit')}`} dot="bg-waiting" />}><CountUp value={waitingClients} /></Pill> : undefined}
     >
       <BigValue value={data.summary.inProgress} unit={t('dashboard.kpi.clientsUnit')} />
       <p className="mt-0.5 text-xs text-gray-500">
-        {t('dashboard.kpi.avgProgress')} <b className="font-semibold tabular-nums text-gray-900"><CountUp value={avg} />%</b>
+        <b className="font-semibold tabular-nums text-gray-900"><CountUp value={total} /></b> {t('dashboard.kpi.tasks')}
       </p>
-      <div className="mt-auto grid grid-cols-4 gap-2 pt-3">
-        {buckets.map((b) => (
-          <Tooltip key={b.label} className="flex min-w-0 flex-col items-center" content={<Tip label={b.label} value={`${b.value} ${t('dashboard.kpi.clientsUnit')}`} share={pct(b.value, list.length)} />}>
-            <span className="relative flex h-12 w-full items-end overflow-hidden rounded-md bg-amber-50">
-              <span
-                className={cn('w-full rounded-md bg-gradient-to-t transition-[height] duration-700', b.shade)}
-                style={{ height: b.value ? `${Math.max(14, (b.value / max) * 100)}%` : '0%' }}
-              />
-              <span className="absolute inset-x-0 top-1 text-center text-[11px] font-semibold tabular-nums text-gray-700"><CountUp value={b.value} /></span>
-            </span>
-            <span className="mt-1 w-full truncate text-center text-[10px] text-gray-500">{b.label}</span>
+      <div className="mt-auto grid grid-cols-4 items-end gap-1.5 pt-3">
+        {parts.map((p) => (
+          <Tooltip key={p.label} className="flex min-w-0 flex-col items-center" content={<Tip label={p.label} value={p.value} dot={p.dot} share={pct(p.value, total)} />}>
+            <span className={cn('mb-1 text-sm font-semibold tabular-nums', p.text)}><CountUp value={p.value} /></span>
+            {/* Balandlik: 0 — ingichka iz, aks holda 10–28px songa mos */}
+            <span
+              className={cn('block w-full rounded-md transition-[height] duration-700', p.value ? p.dot : 'bg-gray-100')}
+              style={{ height: p.value ? `${10 + (p.value / max) * 18}px` : '4px' }}
+            />
+            <span className="mt-1.5 w-full truncate text-center text-[10px] text-gray-500">{p.label}</span>
           </Tooltip>
         ))}
       </div>
