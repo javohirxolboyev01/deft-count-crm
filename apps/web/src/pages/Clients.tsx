@@ -216,16 +216,16 @@ export default function Clients() {
                 {/* Ikki qatorli sarlavha "Бухгалтер ишлари" faylidagidek: my.mehnat.uz va Schyot-faktura guruhlari; thead yopishqoq */}
                 <thead className="table-head sticky top-0 z-20">
                   <tr>
-                    {/* № | STIR | Nomi | Soliq turi | Oylik to'lov | 30% | Javobgar | Bank-klyuch | my.mehnat.uz (xodim soni, sana, login, parol) |
+                    {/* № | STIR | Nomi | Soliq turi | Javobgar | Oylik to'lov | 30% | Bank-klyuch | my.mehnat.uz (xodim soni, sana, login, parol) |
                         INPS hisobot | Ish haqi | Bank vipiska | Schyot-faktura (kirim, chiqim) | Debitor-Kreditor | Oylar yopilishi | Boshqa ishlar | Izoh */}
                     <th rowSpan={2} className={cn(TH, 'sticky left-0 z-10 w-10 min-w-10 text-center')}>{t('works.no')}</th>
                     {/* Telefonda STIR yashiriladi: aks holda yopishqoq ustunlar butun ekranni egallaydi */}
                     <th rowSpan={2} className={cn(TH, 'sticky left-10 z-10 hidden w-[104px] min-w-[104px] sm:table-cell')}>{t('works.stir')}</th>
                     <th rowSpan={2} className={cn(TH, 'sticky left-10 z-10 min-w-[160px] px-3 sm:left-[144px] sm:min-w-[220px]')}>{t('works.company')}</th>
                     <th rowSpan={2} className={cn(TH, 'text-center')}>{t('clients.taxType')}</th>
+                    <th rowSpan={2} className={cn(TH, 'min-w-[110px]')}>{t('works.accountant')}</th>
                     {isLeader && <th rowSpan={2} className={cn(TH, 'min-w-[96px] text-right')}>{t('works.fee')}</th>}
                     <th rowSpan={2} className={cn(TH, 'min-w-[110px] text-right')}><div className="whitespace-normal leading-tight">{t('works.share', { pct: q.data?.sharePercent ?? 30 })}</div></th>
-                    <th rowSpan={2} className={cn(TH, 'min-w-[110px]')}>{t('works.accountant')}</th>
                     <th rowSpan={2} className={cn(TH, 'text-center')}>{t('works.bankKey')}</th>
                     <th colSpan={4} className={cn(TH, 'border-b border-b-brand-400 text-center')}>my.mehnat.uz</th>
                     {headGroups.map((g) =>
@@ -449,7 +449,7 @@ function BaselineDialog({ row, col, colName, onClose }: { row: WorksRow; col: Wo
  */
 
 /**
- * Mijoz maydonlari (Oylik to'lov | ulush | Javobgar | Bank-klyuch | my.mehnat.uz) Excel'dagidek katak ichida tahrirlanadi.
+ * Mijoz maydonlari (Javobgar | Oylik to'lov | ulush | Bank-klyuch | my.mehnat.uz) jadvalda katak ichida tahrirlanadi.
  * Buxgalterga server ruxsat bergan maydonlar: bank-klyuch, xodim soni, sana, login, parol; ulush hisoblanadi.
  */
 function ClientFieldTds({ row: r, isLeader, accountants }: { row: WorksRow; isLeader: boolean; accountants: { value: string; label: string }[] }) {
@@ -458,6 +458,16 @@ function ClientFieldTds({ row: r, isLeader, accountants }: { row: WorksRow; isLe
   const P = 'border-b border-r p-0.5 text-xs';
   return (
     <>
+      <td className={cn(P, 'min-w-[150px]')}>
+        <SelectCell
+          value={r.accountantId ? String(r.accountantId) : ''}
+          options={accountants}
+          onChange={(v) => save.mutate({ accountantId: v ? Number(v) : null })}
+          readOnly={!isLeader}
+          display={r.accountantName ?? <span className="text-gray-400">{t('clients.noAccountant')}</span>}
+          label={`${r.name} — ${t('works.accountant')}`}
+        />
+      </td>
       {isLeader && (
         <td className={cn(P, 'min-w-[96px]')}>
           <EditableTextCell
@@ -473,16 +483,6 @@ function ClientFieldTds({ row: r, isLeader, accountants }: { row: WorksRow; isLe
         </td>
       )}
       <td className={cn(TD, 'text-right tabular-nums')}>{fmtMoney(r.accountantShare)}</td>
-      <td className={cn(P, 'min-w-[150px]')}>
-        <SelectCell
-          value={r.accountantId ? String(r.accountantId) : ''}
-          options={accountants}
-          onChange={(v) => save.mutate({ accountantId: v ? Number(v) : null })}
-          readOnly={!isLeader}
-          display={r.accountantName ?? <span className="text-gray-400">{t('clients.noAccountant')}</span>}
-          label={`${r.name} — ${t('works.accountant')}`}
-        />
-      </td>
       <td className={cn(P, 'min-w-[84px] text-center')}>
         <SelectCell
           value={r.bankKey == null ? '' : r.bankKey ? 'yes' : 'no'}
