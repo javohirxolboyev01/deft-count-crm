@@ -56,6 +56,27 @@ export function renderNotification(kind: string, p: any, lang: Lang): string {
       return uz
         ? `🤝 Yangi mijoz topildi: ${p.leadName}\nSTIR: ${p.stir}\nOperator: ${p.actorName}${p.comment ? `\nIzoh: ${p.comment}` : ''}\nBuxgalter biriktiring.`
         : `🤝 Найден новый клиент: ${p.leadName}\nИНН: ${p.stir}\nОператор: ${p.actorName}${p.comment ? `\nКомментарий: ${p.comment}` : ''}\nНазначьте бухгалтера.`;
+    case 'SERVER_PAYMENT': {
+      if (p.paymentFailed) {
+        return uz
+          ? `⚠️ Server to'lovi o'tmadi. Kartani tekshiring yoki to'lang, aks holda CRM to'xtab qolishi mumkin.\nTo'lash: ${p.billingUrl}`
+          : `⚠️ Оплата сервера не прошла. Проверьте карту или оплатите, иначе CRM может остановиться.\nОплатить: ${p.billingUrl}`;
+      }
+      const date = p.nextPaymentDate ? DateTime.fromISO(p.nextPaymentDate).toFormat('dd.MM.yyyy') : '—';
+      const amount = p.amount != null ? ` (~$${Number(p.amount).toFixed(2)})` : '';
+      const when = p.daysLeft === 0 ? (uz ? 'bugun' : 'сегодня') : uz ? `${p.daysLeft} kundan keyin` : `через ${p.daysLeft} дн.`;
+      if (p.trial) {
+        return uz
+          ? `⏳ Server sinov muddati ${when} tugaydi (${date}).\nCRM to'xtamasligi uchun Railway'da Hobby tarifini tanlang va karta ulang.\nTo'lash: ${p.billingUrl}`
+          : `⏳ Пробный период сервера закончится ${when} (${date}).\nЧтобы CRM не остановилась, выберите тариф Hobby в Railway и привяжите карту.\nОплатить: ${p.billingUrl}`;
+      }
+      const card = p.hasCard
+        ? uz ? "Kartadan o'zi yechiladi — kartada pul borligini tekshiring." : 'Спишется с карты автоматически — проверьте баланс карты.'
+        : uz ? "Karta ulanmagan — Railway'da karta ulang." : 'Карта не привязана — привяжите карту в Railway.';
+      return uz
+        ? `💳 Server to'lovi ${when}: ${date}${amount}\n${card}\nTo'lash: ${p.billingUrl}`
+        : `💳 Оплата сервера ${when}: ${date}${amount}\n${card}\nОплатить: ${p.billingUrl}`;
+    }
     default:
       return uz ? `Bildirishnoma: ${kind}` : `Уведомление: ${kind}`;
   }

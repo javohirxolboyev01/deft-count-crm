@@ -34,6 +34,24 @@ export const config = {
     username: process.env.TELEGRAM_BOT_USERNAME ?? '',
     // Chat fayllari ombori: bot admin bo'lgan yopiq kanal id'si (-100...). Bo'sh bo'lsa chatda fayl yuborilmaydi
     storageChatId: process.env.TELEGRAM_STORAGE_CHAT_ID ?? '',
+    // Qo'ng'iroq audio yozuvlari kanali (V48). Bo'sh bo'lsa chat fayllari kanali ishlatiladi.
+    // Alohida kanal tavsiya etiladi: yozuvlarni faqat rahbarlar ko'radigan kanal.
+    callsChatId: process.env.TELEGRAM_CALLS_CHAT_ID || process.env.TELEGRAM_STORAGE_CHAT_ID || '',
+  },
+  // IP telefoniya (Asterisk CDR): ofisdagi pbx-agent shu token bilan POST /api/calls/ingest qiladi. Bo'sh bo'lsa o'chiq
+  pbx: {
+    ingestToken: process.env.PBX_INGEST_TOKEN ?? '',
+    // CDR faylidagi vaqtlar qaysi zonada (cdr_csv usegmtime=no bo'lsa — server lokal vaqti)
+    // TODO(tasdiqlash): Asterisk serveri vaqt zonasi Asia/Tashkent ekani
+    cdrTimezone: process.env.PBX_CDR_TIMEZONE ?? 'Asia/Tashkent',
+  },
+  // Server holati va to'lovi (Railway API): rahbar sahifasi + to'lov eslatmasi. Token bo'sh bo'lsa o'chiq
+  railway: {
+    token: process.env.RAILWAY_TOKEN ?? '',
+    projectId: process.env.RAILWAY_PROJECT_ID ?? '',
+    serviceId: process.env.RAILWAY_SERVICE_ID ?? '',
+    environmentId: process.env.RAILWAY_ENVIRONMENT_ID ?? '',
+    apiUrl: process.env.RAILWAY_API_URL ?? 'https://backboard.railway.com/graphql/v2',
   },
   schedulerEnabled: bool(process.env.SCHEDULER_ENABLED, env !== 'test'),
   backup: {
@@ -55,6 +73,7 @@ export function assertSecrets() {
   ] as const) {
     if (!value || value.length < 32 || value.startsWith('change-me')) bad.push(name);
   }
+  if (process.env.PBX_INGEST_TOKEN && process.env.PBX_INGEST_TOKEN.length < 32) bad.push('PBX_INGEST_TOKEN');
   if (process.env.JWT_ACCESS_SECRET && process.env.JWT_ACCESS_SECRET === process.env.JWT_REFRESH_SECRET) {
     bad.push('JWT_ACCESS_SECRET == JWT_REFRESH_SECRET');
   }

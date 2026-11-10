@@ -15,6 +15,7 @@ export const NOTIFICATION_KINDS = [
   'TASK_TRANSFER',
   'TASK_TRANSFER_RESULT',
   'LEAD_WON',
+  'SERVER_PAYMENT',
 ] as const;
 export type NotificationKind = (typeof NOTIFICATION_KINDS)[number];
 

@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next';
 import { Link, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { FileDrop } from '@/components/FileDrop';
+import { ContactCalls } from '@/components/CallLog';
 import { NewClientDialog } from '@/components/NewClientDialog';
 import { Button } from '@/components/ui/button';
 import { Badge, Card, CardHeader, PageHeader, Stat } from '@/components/ui/card';
@@ -245,6 +246,12 @@ function LeadDialog({ id, onClose, onConvert }: { id: number | null; onClose: ()
                   ))}
                 </ol>
               )}
+            </section>
+
+            {/* IP telefoniya (V46): lead telefoni bo'yicha haqiqiy qo'ng'iroqlar */}
+            <section>
+              <h3 className="mb-2 text-sm font-semibold text-foreground">{t('calls.title')}</h3>
+              <ContactCalls kind="lead" id={lead.id} card={false} />
             </section>
           </div>
         )}

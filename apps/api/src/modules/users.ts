@@ -4,10 +4,27 @@ import { me, requireAuth, requireLeader, requireStaff } from '../common/auth';
 import { audit, diff } from '../common/audit';
 import { AppError, notFound, parse } from '../common/errors';
 import { one, pool, q, tx } from '../db';
+import { backfillCallUser } from './calls';
 import { reassignOpenTasks } from './generator';
 import { hashPassword, passwordSchema } from './auth';
 
-const USER = `id, role, full_name AS "fullName", login, language, active,
+// Asterisk ichki raqami (V46): '101'; bo'sh satr = olib tashlash
+const phoneExt = z
+  .string()
+  .trim()
+  .max(32)
+  .regex(/^[0-9A-Za-z_.-]*$/, 'Ichki raqam: faqat raqam/harf')
+  .transform((v) => v || null);
+
+/** Bitta ichki raqam bitta xodimda (ux_app_user_phone_ext) */
+function extTaken(e: unknown): never {
+  if ((e as { code?: string; constraint?: string }).code === '23505' && (e as { constraint?: string }).constraint === 'ux_app_user_phone_ext') {
+    throw new AppError(409, 'PHONE_EXT_TAKEN', 'Bu ichki raqam boshqa xodimga biriktirilgan');
+  }
+  throw e;
+}
+
+const USER = `id, role, full_name AS "fullName", login, language, active, phone_ext AS "phoneExt",
   (telegram_chat_id IS NOT NULL) AS "telegramLinked", created_at AS "createdAt"`;
 
 export const usersRouter = Router();
@@ -47,19 +64,21 @@ usersRouter.post('/', async (req, res) => {
       password: passwordSchema,
       role: z.enum(['LEADER', 'ACCOUNTANT', 'OPERATOR']),
       language: z.enum(['uz', 'ru']).default('uz'),
+      phoneExt: phoneExt.optional(),
     }),
     req.body,
   );
   const user = await tx(async (db) => {
     const u = await one(
       db,
-      `INSERT INTO app_user (full_name, login, password_hash, role, language)
-       VALUES ($1, $2, $3, $4, $5) RETURNING ${USER}`,
-      [body.fullName, body.login, await hashPassword(body.password), body.role, body.language],
+      `INSERT INTO app_user (full_name, login, password_hash, role, language, phone_ext)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING ${USER}`,
+      [body.fullName, body.login, await hashPassword(body.password), body.role, body.language, body.phoneExt ?? null],
     );
+    if (u.phoneExt) await backfillCallUser(db, u.id, u.phoneExt);
     await audit(db, { actorId: actor.id, entity: 'app_user', entityId: u.id, action: 'CREATE', after: u });
     return u;
-  });
+  }).catch(extTaken);
   res.status(201).json(user);
 });
 
@@ -72,6 +91,7 @@ usersRouter.patch('/:id', async (req, res) => {
       role: z.enum(['LEADER', 'ACCOUNTANT', 'OPERATOR']).optional(),
       language: z.enum(['uz', 'ru']).optional(),
       active: z.boolean().optional(),
+      phoneExt: phoneExt.optional(),
     }),
     req.body,
   );
@@ -84,10 +104,13 @@ usersRouter.patch('/:id', async (req, res) => {
     const u = await one(
       db,
       `UPDATE app_user SET full_name = coalesce($2, full_name), role = coalesce($3, role),
-         language = coalesce($4, language), active = coalesce($5, active)
+         language = coalesce($4, language), active = coalesce($5, active),
+         phone_ext = CASE WHEN $6 THEN $7 ELSE phone_ext END
        WHERE id = $1 RETURNING ${USER}`,
-      [id, body.fullName ?? null, body.role ?? null, body.language ?? null, body.active ?? null],
+      [id, body.fullName ?? null, body.role ?? null, body.language ?? null, body.active ?? null,
+       body.phoneExt !== undefined, body.phoneExt ?? null],
     );
+    if (body.phoneExt) await backfillCallUser(db, id, body.phoneExt);
     // Faolsizlantirilsa (o'chirilmaydi) sessiyalari yopiladi
     if (body.active === false) {
       await db.query('UPDATE refresh_token SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL', [id]);
@@ -95,7 +118,7 @@ usersRouter.patch('/:id', async (req, res) => {
     const d = diff(before, body);
     if (d.changed) await audit(db, { actorId: actor.id, entity: 'app_user', entityId: id, action: 'UPDATE', before: d.before, after: d.after });
     return u;
-  });
+  }).catch(extTaken);
   res.json(user);
 });
 
@@ -142,7 +165,8 @@ usersRouter.delete('/:id', async (req, res) => {
     await db.query("UPDATE notification SET cancelled_at = now() WHERE user_id = $1 AND delivered_at IS NULL AND cancelled_at IS NULL", [id]);
     // '~' login qoidasida yo'q: yangi xodim shu loginni bemalol oladi
     await db.query(
-      `UPDATE app_user SET deleted_at = now(), active = false, telegram_chat_id = NULL, login = login || '~' || id WHERE id = $1`,
+      `UPDATE app_user SET deleted_at = now(), active = false, telegram_chat_id = NULL, phone_ext = NULL,
+         login = login || '~' || id WHERE id = $1`,
       [id],
     );
     await audit(db, { actorId: actor.id, entity: 'app_user', entityId: id, action: 'DELETE', before });

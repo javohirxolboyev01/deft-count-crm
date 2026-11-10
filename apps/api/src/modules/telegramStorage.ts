@@ -55,14 +55,16 @@ export async function uploadToTelegram(
   mime: string,
   caption: string,
   videoNote?: { durationSec?: number; length?: number },
+  // Boshqa kanal (qo'ng'iroq yozuvlari, V48); bo'sh — chat ombori
+  chatId: string = config.telegram.storageChatId,
 ): Promise<StoredFile> {
-  if (!storageEnabled()) throw new AppError(503, 'FILE_STORAGE_DISABLED', 'Fayl ombori sozlanmagan');
+  if (!config.telegram.token || !chatId) throw new AppError(503, 'FILE_STORAGE_DISABLED', 'Fayl ombori sozlanmagan');
   if (videoNote && mime === 'video/mp4') {
     const note = await sendVideoNote(buf, fileName, mime, videoNote.durationSec, videoNote.length);
     if (note) return note;
   }
   const form = new FormData();
-  form.set('chat_id', config.telegram.storageChatId);
+  form.set('chat_id', chatId);
   form.set('caption', caption);
   form.set('disable_notification', 'true');
   form.set('disable_content_type_detection', 'true');

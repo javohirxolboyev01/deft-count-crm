@@ -23,6 +23,7 @@ Bu fayl loyiha ildizida `CLAUDE.md` nomi bilan turadi. Har bosqichda shu konteks
 - ORM ishlatilmaydi: partial unique index, trigger, view va SQL funksiyalar (X qoidasi) to'g'ridan-to'g'ri SQL'da.
 - Bildirishnoma: Telegram bot (faqat xodimlarga, long polling) + ilova ichidagi bildirishnoma (SSE).
 - Import: `.xlsx` (exceljs). Google Sheets API ishlatilmaydi.
+- IP telefoniya (V46): ofisdagi Asterisk (LTS, web panelsiz, CDR `cdr_csv` faylga). `apps/pbx-agent` — Python stdlib skripti Asterisk serverida (systemd), `Master.csv` yangi qatorlarini HTTPS bilan `POST /api/calls/ingest` ga yuboradi (`PBX_INGEST_TOKEN`). Asterisk konfiguratsiyasi o'zgarmaydi, serverda port ochilmaydi.
 - Testlar: vitest + supertest (haqiqiy PostgreSQL test bazasi), Playwright smoke (alohida e2e bazasi).
 
 ## 3. Ishlash qoidalari (Claude uchun)
@@ -58,6 +59,8 @@ Bu fayl loyiha ildizida `CLAUDE.md` nomi bilan turadi. Har bosqichda shu konteks
 - `notification`: user_id, kind, payload, deliver_at, delivered_at, cancelled_at
 - `setting`: key/value (urgent shablonlar, va h.k.)
 - `chat_message` (V41, V42): sender_id, recipient_id, body, created_at, read_at, edited_at, deleted_at — xodimlar orasidagi 1:1 chat
+- `call_log` (V46): source_key (CDR qatori sha1, takrordan himoya), direction (IN | OUT | INTERNAL | UNKNOWN), external_number (oxirgi 9 raqam), ext/user_id, peer_ext/peer_user_id, started_at, billsec, disposition, raw. `app_user.phone_ext` — xodimning ichki raqami (unique)
+- `call_recording` (V48): source_path (agent ombordagi yo'l, unique), uniqueid (fayl nomidan → `call_log.uniqueid`), file_name, mime, size_bytes, tg_file_id, tg_chat_id, tg_message_id
 - `chat_attachment` (V43): message_id (unique — bitta xabarda bitta fayl), kind (IMAGE | VIDEO | VOICE | VIDEO_NOTE | FILE — V44), waveform (V45, ovozli xabar to'lqini 0..31), mime, file_name, size_bytes, duration_sec, width, height, tg_file_id, tg_file_unique_id, tg_chat_id, tg_message_id
 
 ## 6. Biznes qoidalari
@@ -187,6 +190,9 @@ Barcha xodimlar (rahbar, buxgalter, sotuv operatori) bir-biri bilan yakkama-yakk
 
 Chatda fayl (V43, V44, rahbar qarori): 📎 menyusi Telegram kabi — «Rasm yoki video» va «Fayl» (istalgan hujjat: faqat yuklab olinadi, `attachment` + `sandbox`); rasm, video (tanlash, sudrab tashlash, Ctrl+V), ovozli xabar va dumaloq video xabar (brauzerda MediaRecorder bilan yoziladi, video xabar ≤ 60 s). Bitta xabarda bitta fayl, matn — izoh (bo'sh bo'lishi mumkin). **Ombor — Telegram yopiq kanali** (`TELEGRAM_STORAGE_CHAT_ID`, bot kanal admini): server faylni `sendDocument` bilan kanalga yuklaydi (siqilmaydi); dumaloq video xabar kanalda ham dumaloq — brauzer kvadrat (384×384) MP4 yozadi, server `sendVideoNote` qiladi (MP4 yozolmaydigan brauzerda, masalan Firefox, hujjat bo'lib qoladi), bazada faqat `file_id` va kanal posti saqlanadi. Brauzerga fayl doim server orqali (`GET /api/chat/files/:id`, faqat suhbat ishtirokchilariga, bot tokeni chiqmaydi). Chegara 20 MB (Bot API `getFile` yuklab olish chegarasi). Tanlangan video yuborishdan oldin brauzerda siqiladi (rahbar qarori, `compressVideo`): ≤ 60 s — dumaloq video xabar (384×384 MP4), uzunrog'i — oddiy video (≤ 640px, bitreyt 20 MB ga sig'adigan); asl fayl 1 GB gacha. Siqish video davomiyligicha vaqt oladi. Turlar: rasm JPG/PNG/WEBP/GIF, video MP4/WEBM/MOV, ovoz webm/ogg/mp4 (SVG/HTML rasm sifatida yo'q, faqat «Fayl» bo'lib). Rasm Telegram Desktop kabi ochiladi: pastda yuboruvchi va vaqt, kattalashtirish/burish/yuklab olish. Kanalga ism yoki matn yuborilmaydi — faqat texnik belgi. Kanal sozlanmagan bo'lsa chatda faqat matn. O'chirilgan xabarning fayli ilovada berilmaydi, kanalda arxiv sifatida qoladi (`TODO(tasdiqlash)`).
 
+### 6.14 Server va to'lov (Railway, rahbar qarori)
+Faqat rahbar: "Server" sahifasi (`GET /api/server/status`, `requireLeader`). Railway GraphQL API'dan (faqat o'qish, `RAILWAY_TOKEN` + project/service/environment ID, 1 daqiqa kesh): server holati oddiy tilda (Ishlayapti / Ishlamayapti / Uxlab turibdi / Yangilanmoqda), yuklama (CPU, RAM), keyingi to'lov sanasi va qolgan kun, bu davr xarajati, tarif, karta (oxirgi 4 raqam). Deploy tarixi va restart tugmasi yo'q (rahbar qarori). Sana va summa API'dan, qo'lda kiritilmaydi. To'lov Railway'da (karta ulanadi, har oy o'zi yechiladi) — "Railway'da to'lash" havolasi. Eslatma `SERVER_PAYMENT` — barcha faol rahbarlarga 3 va 1 kun oldin va to'lov kuni (09:00 dan keyin), to'lov o'tmasa (PAST_DUE/UNPAID) har kuni; ilova + Telegram. Server yiqilsa xabar yuborilmaydi (rahbar qarori). Token bo'lmasa sahifada "Railway ulanmagan". Sinov (trial) davrida to'lov yo'q: sana — sinov tugashi (`trialDaysRemaining`, billing davri oxiri emas), bepul kredit qoldig'i va "Hobby tarifini tanlang, karta ulang" ogohlantirishi; eslatma ham sinov tugashiga (3, 1, 0 kun). `currentUsage` dollarda (haqiqiy javobda tasdiqlandi). `TODO(tasdiqlash)`: `nextInvoiceCurrentTotal` sentda deb olingan (obuna bo'lgach tekshiriladi).
+
 ## 7. Excel import (jadval fayllari)
 
 Haqiqiy jadval ustunlari:
@@ -202,10 +208,15 @@ Haqiqiy jadval ustunlari:
 - Har sahifada "Excel yuklash" (faqat rahbar): avval dry-run + hisobot, keyin yuklash. Buxgalter ishlari sahifasi faqat «Бухгалтер ишлари» faylini, Hisobot topshirish faqat hisobot jadvalini qabul qiladi (`kind`, mos kelmasa `WRONG_FILE_KIND`). Bir xil fayl (SHA-256) qayta yozilmaydi. Davriy sinxron yo'q.
 - Import kamchiliklari (V27) — alohida "Qo'lda tekshirish" ro'yxati/tugmasi yo'q (rahbar qarori): hammasi jadvalda korxona nomi yonidagi ⚠ belgisida (ustiga olib borilsa matni). Har sahifada faqat o'z jadvali faylining kamchiliklari: ma'lumot yo'q yoki tizimdagidan farq qiladi. Import faqat o'z bo'limidagi eski yozuvlarni yopadi. Izoh farqi kamchilik emas: izoh bo'sh bo'lsa fayldan to'ldiriladi, aks holda tizimdagisi qoladi. Kartadagi blokda "Hal qilindi" yo'q (V28): yozuv o'z maydoni (`fields`) o'zgartirilib saqlansa yoki ish katagida oy kiritilsa o'zi yopiladi; maydonsiz "tekshiring" yozuvi karta to'liq saqlanganda (`reviewed`).
 
+### 6.13 Qo'ng'iroqlar jurnali (V46, rahbar tasdiqlagan "a" varianti)
+Faqat jurnal va statistika: CRM'dan qo'ng'iroq qilinmaydi, kiruvchi qo'ng'iroqda karta ochilmaydi. Yo'nalish va xodimni server CDR qatoridan aniqlaydi (`resolveCall`: ichki raqam `app_user.phone_ext` yoki 2–5 xonali raqam, tashqi raqam ≥ 7 raqam). Raqam xodimga keyinroq biriktirilsa, egasiz eski qo'ng'iroqlar unga o'tadi. Mijoz yoki lead bog'lanishi saqlanmaydi, o'qish paytida telefon bo'yicha topiladi (`fn_phone_keys`: oxirgi 9 raqam, vergul bilan bir nechta). Ruxsat: rahbar hammasini va statistikani ko'radi, boshqa xodim faqat o'z qo'ng'iroqlarini; mijoz kartasida — mijozni ko'ra oladigan xodim; lead oynasida — rahbar va operator. CDR vaqti `PBX_CDR_TIMEZONE` (standart Asia/Tashkent).
+
+Audio yozuvlar (V48, rahbar qarori — xodimlarni nazorat qilish uchun): Asterisk yozgan suhbatlarni agent (`REC_DIR`) `POST /api/calls/recordings` ga yuboradi (ffmpeg bo'lsa OGG/Opus'ga siqib); CRM ularni Telegram yopiq kanaliga yuklaydi (`TELEGRAM_CALLS_CHAT_ID`, bo'sh bo'lsa chat ombori). Yozuvlar o'chirilmaydi — kanalda doimiy. **Faqat rahbar** eshitadi (`GET /api/calls/recordings/:id`, `requireLeader`); boshqa rollarga `recordingId` ham berilmaydi. Qo'ng'iroqqa bog'lanish o'qishda: fayl nomidagi UNIQUEID = `call_log.uniqueid`. Ilovada 20 MB gacha eshitiladi (getFile), kattasi faqat kanalda. Mijozlar yozib olinayotganidan xabardor qilinmaydi (rahbar qarori).
+
 ## 8. Tizimda yo'q (qilmang)
 
-- CRM'dan qo'ng'iroq qilish
-- Fayl yuklash (istisno: ichki chatdagi rasm/video/ovozli xabar/hujjat, V43–V44 — 6.12)
+- CRM'dan qo'ng'iroq qilish (qo'ng'iroqlar jurnali bor — 6.13)
+- Fayl yuklash (istisno: ichki chatdagi rasm/video/ovozli xabar/hujjat, V43–V44 — 6.12; qo'ng'iroq audio yozuvlari, V48 — 6.13)
 - 1C va soliq.uz bilan avtomatik bog'lanish
 - To'lov qabul qilish
 - Mijozga SMS/Telegram xabar
@@ -221,3 +232,6 @@ Haqiqiy jadval ustunlari:
 1. YaTT uchun jadvalda ustuni yo'q hisobotlar (Poruchenya, dividend, norezident, yillik) X deb olingan (V33).
 2. Vazifa faqat buxgalterga o'tkaziladi, rahbarga emas (V40).
 3. Chatda o'chirilgan xabar fayli Telegram kanalidan o'chirilmaydi (arxiv), fayl chegarasi 20 MB (V43).
+4. Telefoniya (V46): Asterisk server vaqti Asia/Tashkent; CDR ustunlari cdr_csv standarti (uniqueid, userfield bilan) — serverchidan `--dry-run` natijasi bilan tasdiqlanadi; navbat/guruh qo'ng'iroqlarida javobsiz qolgan har bir tarmoq alohida qator bo'lishi mumkin.
+5. Audio yozuvlar (V48): fayl nomida Asterisk UNIQUEID bor deb olingan (yozuvlar papkasi `/var/spool/asterisk/monitor`) — serverchi tasdiqlaydi; ilovada eshitish 20 MB gacha.
+5. Server to'lovi (6.14): Railway API'dagi keyingi to'lov summasi (`nextInvoiceCurrentTotal`) sentda deb olingan — Hobby obunasi ochilgach dashboard bilan solishtiriladi.

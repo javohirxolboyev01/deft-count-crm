@@ -16,8 +16,8 @@ import { errorText } from '@/lib/errors';
 import { fmtDate } from '@/lib/time';
 import type { Lang, Role, User } from '@/lib/types';
 
-type Edit = { id?: number; fullName: string; login: string; password: string; role: Role; language: Lang };
-const blank: Edit = { fullName: '', login: '', password: '', role: 'ACCOUNTANT', language: 'uz' };
+type Edit = { id?: number; fullName: string; login: string; password: string; role: Role; language: Lang; phoneExt: string };
+const blank: Edit = { fullName: '', login: '', password: '', role: 'ACCOUNTANT', language: 'uz', phoneExt: '' };
 
 function IconAction({ label, onClick, children }: { label: string; onClick: () => void; children: ReactNode }) {
   return (
@@ -52,12 +52,13 @@ export default function Users() {
   const save = useMutation({
     mutationFn: (e: Edit) =>
       e.id
-        ? api.patch(`/users/${e.id}`, { fullName: e.fullName, role: e.role, language: e.language })
-        : api.post('/users', { fullName: e.fullName, login: e.login, password: e.password, role: e.role, language: e.language }),
+        ? api.patch(`/users/${e.id}`, { fullName: e.fullName, role: e.role, language: e.language, phoneExt: e.phoneExt })
+        : api.post('/users', { fullName: e.fullName, login: e.login, password: e.password, role: e.role, language: e.language, phoneExt: e.phoneExt }),
     onSuccess: () => {
       setEdit(null);
       toast.success(t('common.saved'));
       refresh();
+      void qc.invalidateQueries({ queryKey: ['calls'] });
     },
     onError: onErr,
   });
@@ -88,7 +89,7 @@ export default function Users() {
     <div>
       <PageHeader title={t('users.title')} actions={<Button onClick={() => setEdit({ ...blank })}><Plus className="h-4 w-4" /> {t('users.new')}</Button>} />
       <Card>
-        <QueryState q={q} skeleton={<TableSkeleton rows={10} cols={7} />}>
+        <QueryState q={q} skeleton={<TableSkeleton rows={10} cols={8} />}>
           {!q.data?.length ? <Empty /> : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -98,6 +99,7 @@ export default function Users() {
                   <th className="px-4 py-2.5">{t('users.login')}</th>
                   <th className="px-4 py-2.5">{t('users.role')}</th>
                   <th className="px-4 py-2.5">{t('users.language')}</th>
+                  <th className="px-4 py-2.5">{t('users.phoneExt')}</th>
                   <th className="px-4 py-2.5">Telegram</th>
                   <th className="px-4 py-2.5">{t('users.created')}</th>
                   <th className="px-4 py-2.5" />
@@ -110,12 +112,13 @@ export default function Users() {
                     <td className="px-4 py-2.5 font-mono text-xs">{u.login}</td>
                     <td className="px-4 py-2.5">{t(`roles.${u.role}`)}</td>
                     <td className="px-4 py-2.5 uppercase">{u.language}</td>
+                    <td className="px-4 py-2.5 font-mono text-xs">{u.phoneExt ?? '—'}</td>
                     <td className="px-4 py-2.5">{u.telegramLinked ? '✓' : '—'}</td>
                     <td className="px-4 py-2.5 text-xs">{fmtDate(u.createdAt)}</td>
                     <td className="whitespace-nowrap px-4 py-1.5">
                       {/* Ikonka tugmalar: matn title/aria-label'da (Sozlamalar sahifasidagidek) */}
                       <div className="flex justify-end gap-1.5">
-                        <IconAction label={t('common.edit')} onClick={() => setEdit({ id: u.id, fullName: u.fullName, login: u.login, password: '', role: u.role, language: u.language })}>
+                        <IconAction label={t('common.edit')} onClick={() => setEdit({ id: u.id, fullName: u.fullName, login: u.login, password: '', role: u.role, language: u.language, phoneExt: u.phoneExt ?? '' })}>
                           <Pencil className="h-4 w-4" />
                         </IconAction>
                         <IconAction label={t('users.resetPassword')} onClick={() => setReset({ id: u.id, name: u.fullName, password: '' })}>
@@ -167,6 +170,9 @@ export default function Users() {
             </Field>
             <Field label={t('users.language')}>
               <Select value={edit.language} onChange={(v) => setEdit({ ...edit, language: v as Lang })} options={[{ value: 'uz', label: "O'zbekcha" }, { value: 'ru', label: 'Русский' }]} />
+            </Field>
+            <Field label={t('users.phoneExt')} hint={t('users.phoneExtHint')}>
+              <Input value={edit.phoneExt} inputMode="numeric" maxLength={32} placeholder="101" onChange={(e) => setEdit({ ...edit, phoneExt: e.target.value.replace(/[^0-9A-Za-z_.-]/g, '') })} />
             </Field>
           </div>
         )}

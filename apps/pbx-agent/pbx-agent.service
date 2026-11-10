@@ -1,0 +1,21 @@
+[Unit]
+Description=CRM pbx-agent (Asterisk CDR -> CRM qo'ng'iroqlar jurnali)
+After=network-online.target asterisk.service
+Wants=network-online.target
+
+[Service]
+EnvironmentFile=/etc/pbx-agent.env
+ExecStart=/usr/bin/python3 /opt/pbx-agent/pbx_agent.py
+Restart=always
+RestartSec=10
+# Faqat o'qish: CDR fayli va o'z holat fayli
+User=asterisk
+Group=asterisk
+StateDirectory=pbx-agent
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/pbx-agent
+
+[Install]
+WantedBy=multi-user.target

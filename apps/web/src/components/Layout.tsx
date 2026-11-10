@@ -10,8 +10,10 @@ import {
   LogOut,
   PanelRightClose,
   PanelRightOpen,
+  Phone,
   PhoneCall,
   Plus,
+  Server,
   Settings,
   Sheet,
   Users,
@@ -126,6 +128,8 @@ export function Layout() {
         duration: 15000,
         action: n.taskId ? { label: t('common.open'), onClick: () => setOpenTask(n.taskId) } : undefined,
       });
+    } else if (n.kind === 'SERVER_PAYMENT') {
+      toast.warning(text, { duration: 15000, action: { label: t('common.open'), onClick: () => navigate('/server') } });
     } else if (n.kind === 'LEAD_WON') {
       toast.success(text, {
         duration: 10000,
@@ -148,8 +152,10 @@ export function Layout() {
     { to: '/monthly', label: t('nav.monthly'), icon: Sheet, staff: true },
     { to: '/client-issues', label: t('nav.issues'), icon: AlertTriangle, leader: true },
     ...(isLeader || isOperator ? [{ to: '/leads', label: t('nav.leads'), icon: PhoneCall }] : []),
+    { to: '/calls', label: t('nav.calls'), icon: Phone },
     { to: '/audit', label: t('nav.audit'), icon: History, leader: true },
     { to: '/users', label: t('nav.users'), icon: Users, leader: true },
+    { to: '/server', label: t('nav.server'), icon: Server, leader: true },
     { to: '/settings', label: t('nav.settings'), icon: Settings, leader: true },
   ].filter((n) => (!n.leader || isLeader) && (!n.staff || !isOperator));
 

@@ -17,6 +17,8 @@ const Profile = lazy(() => import('./pages/Profile'));
 const Audit = lazy(() => import('./pages/Audit'));
 const Leads = lazy(() => import('./pages/Leads'));
 const ClientIssues = lazy(() => import('./pages/ClientIssues'));
+const Calls = lazy(() => import('./pages/Calls'));
+const Server = lazy(() => import('./pages/Server'));
 
 /** UI darajasidagi himoya (qulaylik uchun). Haqiqiy ruxsat tekshiruvi serverda. */
 function Protected({ roles, children }: { roles?: Role[]; children: React.ReactNode }) {
@@ -56,6 +58,10 @@ export default function App() {
           <Route path="monthly" element={<Protected roles={S}><Monthly /></Protected>} />
           {/* Hisobot topshirish detail: faqat rahbar (buxgalter jadvalni faqat ko'radi) */}
           <Route path="leads" element={<Protected roles={['LEADER', 'OPERATOR']}><Leads /></Protected>} />
+          {/* Qo'ng'iroqlar (V46): rahbar hammasini, boshqa xodim faqat o'zinikini (server cheklaydi) */}
+          <Route path="calls" element={<Calls />} />
+          {/* Server holati va to'lovi (Railway): faqat rahbar */}
+          <Route path="server" element={<Protected roles={L}><Server /></Protected>} />
           <Route path="settings" element={<Protected roles={L}><Settings /></Protected>} />
           <Route path="users" element={<Protected roles={L}><Users /></Protected>} />
           <Route path="audit" element={<Protected roles={L}><Audit /></Protected>} />

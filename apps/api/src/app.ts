@@ -9,6 +9,7 @@ import { errorHandler } from './common/errors';
 import { config } from './config';
 import { pool } from './db';
 import { authRouter, meRouter } from './modules/auth';
+import { callsRouter } from './modules/calls';
 import { chatRouter } from './modules/chat';
 import { clientsRouter } from './modules/clients';
 import { auditRouter, dashboardRouter } from './modules/dashboard';
@@ -17,6 +18,7 @@ import { generatorRouter } from './modules/generator';
 import { gridRouter } from './modules/grid';
 import { leadsRouter } from './modules/leads';
 import { notificationsRouter } from './modules/notifications';
+import { serverRouter } from './modules/railway';
 import { settingsRouter } from './modules/settings';
 import { sheetsRouter } from './modules/sheets/routes';
 import { tasksRouter } from './modules/tasks';
@@ -67,6 +69,10 @@ export function createApp() {
   app.use('/api/leads', leadsRouter);
   // Chat hamma rol uchun (operator ham): ruxsat — faqat o'z yozishmalari (router ichida)
   app.use('/api/chat', chatRouter);
+  // Qo'ng'iroqlar jurnali (V46): /ingest — pbx-agent tokeni bilan, qolgani xodim JWT bilan (ruxsat router ichida)
+  app.use('/api/calls', callsRouter);
+  // Server holati va to'lovi (Railway): faqat rahbar (router ichida requireLeader)
+  app.use('/api/server', staff, serverRouter);
   app.get('/api/events', sseHandler);
 
   app.use('/api', (_req, res) => {

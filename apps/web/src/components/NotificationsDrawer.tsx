@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { TFunction } from 'i18next';
-import { ArrowLeftRight, CalendarClock, CheckCheck, CircleCheck, Clock, Handshake, Siren, Undo2, UserCheck, X, type LucideIcon } from 'lucide-react';
+import { ArrowLeftRight, CalendarClock, CheckCheck, CircleCheck, Clock, CreditCard, Handshake, Siren, Undo2, UserCheck, X, type LucideIcon } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
@@ -8,7 +8,7 @@ import { Pagination } from '@/components/ui/pagination';
 import { Empty, QueryState } from '@/components/ui/states';
 import { api, qs } from '@/lib/api';
 import { cn } from '@/lib/cn';
-import { fmtDateTime, fmtRelative } from '@/lib/time';
+import { fmtDateTime, fmtIsoDate, fmtRelative } from '@/lib/time';
 import type { AppNotification, NotificationKind, Paged } from '@/lib/types';
 
 const params = (n: AppNotification, t: TFunction) => {
@@ -31,13 +31,25 @@ const params = (n: AppNotification, t: TFunction) => {
     to: p.toName ?? '',
     reason: p.reasonCode ? (p.reasonText ? (p.reasonCode === 'OTHER' ? p.reasonText : `${t(`transfer.reasons.${p.reasonCode}`)} — ${p.reasonText}`) : t(`transfer.reasons.${p.reasonCode}`)) : '',
     rejectReason: p.rejectReason ? ` (${p.rejectReason})` : '',
+    // SERVER_PAYMENT
+    payDate: p.nextPaymentDate ? fmtIsoDate(p.nextPaymentDate) : '—',
+    payWhen: p.daysLeft === 0 ? t('server.today') : t('server.inDays', { n: p.daysLeft ?? 0 }),
+    payAmount: p.amount != null ? ` (~$${Number(p.amount).toFixed(2)})` : '',
   };
 };
 
 /** Matn kaliti: o'tkazish natijasi qabul/rad bo'yicha ikki xil ko'rinadi */
-type TextKey = Exclude<NotificationKind, 'TASK_TRANSFER_RESULT'> | 'TASK_TRANSFER_ACCEPTED' | 'TASK_TRANSFER_REJECTED';
-const textKey = (n: AppNotification): TextKey =>
-  n.kind === 'TASK_TRANSFER_RESULT' ? (n.payload?.accepted ? 'TASK_TRANSFER_ACCEPTED' : 'TASK_TRANSFER_REJECTED') : n.kind;
+type TextKey =
+  | Exclude<NotificationKind, 'TASK_TRANSFER_RESULT'>
+  | 'TASK_TRANSFER_ACCEPTED'
+  | 'TASK_TRANSFER_REJECTED'
+  | 'SERVER_PAYMENT_FAILED'
+  | 'SERVER_TRIAL';
+const textKey = (n: AppNotification): TextKey => {
+  if (n.kind === 'TASK_TRANSFER_RESULT') return n.payload?.accepted ? 'TASK_TRANSFER_ACCEPTED' : 'TASK_TRANSFER_REJECTED';
+  if (n.kind === 'SERVER_PAYMENT') return n.payload?.paymentFailed ? 'SERVER_PAYMENT_FAILED' : n.payload?.trial ? 'SERVER_TRIAL' : n.kind;
+  return n.kind;
+};
 
 /** Bir qatorli matn (toast xabarlari uchun) */
 export function notificationText(n: AppNotification, t: TFunction) {
@@ -60,6 +72,9 @@ const KIND_STYLE: Record<TextKey, { icon: LucideIcon; border: string; tile: stri
   TASK_TRANSFER: { icon: ArrowLeftRight, border: 'border-l-blue-500', tile: 'bg-blue-50 text-blue-600' },
   TASK_TRANSFER_ACCEPTED: { icon: UserCheck, border: 'border-l-green-500', tile: 'bg-green-50 text-green-600' },
   TASK_TRANSFER_REJECTED: { icon: Undo2, border: 'border-l-amber-400', tile: 'bg-amber-50 text-amber-500' },
+  SERVER_PAYMENT: { icon: CreditCard, border: 'border-l-amber-400', tile: 'bg-amber-50 text-amber-500' },
+  SERVER_PAYMENT_FAILED: { icon: CreditCard, border: 'border-l-red-500', tile: 'bg-red-50 text-red-500' },
+  SERVER_TRIAL: { icon: CreditCard, border: 'border-l-amber-400', tile: 'bg-amber-50 text-amber-500' },
 };
 
 /** Bildirishnomalar: alohida sahifa emas, headerdagi qo'ng'iroqdan o'ngdan ochiladigan panel */
@@ -143,6 +158,9 @@ export function NotificationsDrawer({ open, onClose, onOpenTask }: { open: boole
                         } else if (n.kind === 'CLIENTS_OVERDUE') {
                           onClose();
                           navigate(n.payload?.scope === 'ALL' ? '/dashboard' : '/my-day');
+                        } else if (n.kind === 'SERVER_PAYMENT') {
+                          onClose();
+                          navigate('/server');
                         } else if (n.payload?.leadId) {
                           onClose();
                           navigate(`/leads?lead=${n.payload.leadId}`);

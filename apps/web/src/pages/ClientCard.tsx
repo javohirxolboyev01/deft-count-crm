@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useParams } from 'react-router-dom';
 import { toast } from 'sonner';
+import { ContactCalls } from '@/components/CallLog';
 import { ClientReportCards } from '@/components/ClientReportCards';
 import { ClientReviewBanner, clientNeeds } from '@/components/SheetImport';
 import { TaskStatusBadge } from '@/components/StatusBadge';
@@ -271,6 +272,8 @@ export default function ClientCard() {
             </ul>
           </QueryState>
         </Card>
+        {/* IP telefoniya (V46): kartadagi telefon raqamlari bo'yicha */}
+        <ContactCalls kind="client" id={Number(id)} />
       </div>
     </div>
   );

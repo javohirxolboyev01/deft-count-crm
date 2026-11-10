@@ -6,6 +6,7 @@ import { currentPeriod } from './common/time';
 import { runGenerator } from './modules/generator';
 import { dispatchDue, remindOverdue } from './modules/notifications';
 import { remindOverdueClients } from './modules/overdueReminder';
+import { REMIND_AT, captureRailwayCost, remindServerPayment } from './modules/railway';
 
 const tz = { timezone: config.timezone };
 const intervals: NodeJS.Timeout[] = [];
@@ -29,6 +30,16 @@ export function startScheduler() {
   intervals.push(setInterval(safe('overdue', remindOverdue), 60_000));
   // Kechikkan mijozlar: har daqiqa tekshiradi, kuniga bir marta (sozlamadagi soatdan keyin) yuboradi
   intervals.push(setInterval(safe('overdue-clients', () => remindOverdueClients()), 60_000));
+  // Railway (server xarajati grafigi + to'lov eslatmasi): kuniga bir marta 09:00 da va ishga tushganda.
+  // Ikkalasi bitta keshlangan billing javobini ishlatadi — Railway'ga bitta so'rov. Eslatma 09:00 dan oldin ketmaydi,
+  // takror ishga tushishda dedupe_key bilan qayta yuborilmaydi.
+  const railwayDaily = async () => {
+    await captureRailwayCost();
+    await remindServerPayment();
+  };
+  const [remindH, remindM] = REMIND_AT.split(':').map(Number);
+  cron.schedule(`${remindM} ${remindH} * * *`, safe('railway-daily', railwayDaily), tz);
+  void safe('railway-daily(startup)', railwayDaily)();
 
   if (config.backup.enabled) {
     // Kunlik zaxira 02:30

@@ -9,7 +9,7 @@ export type ClientStatus = 'ACTIVE' | 'ZERO_REPORT' | 'LIQUIDATING' | 'ARCHIVED'
 export const CLIENT_STATUSES: ClientStatus[] = ['ACTIVE', 'ZERO_REPORT', 'LIQUIDATING', 'ARCHIVED'];
 export type TaskStatus = 'TODO' | 'IN_PROGRESS' | 'WAITING_CLIENT' | 'DONE' | 'CANCELLED';
 export type TaskKind = 'ROUTINE' | 'REPORT' | 'URGENT' | 'MANUAL';
-export type NotificationKind = 'TASK_DONE' | 'TASK_OVERDUE' | 'CLIENTS_OVERDUE' | 'URGENT_TASK' | 'TASK_TRANSFER' | 'TASK_TRANSFER_RESULT' | 'LEAD_WON';
+export type NotificationKind = 'TASK_DONE' | 'TASK_OVERDUE' | 'CLIENTS_OVERDUE' | 'URGENT_TASK' | 'TASK_TRANSFER' | 'TASK_TRANSFER_RESULT' | 'LEAD_WON' | 'SERVER_PAYMENT';
 export type TransferReason = 'NOT_MINE' | 'BUSY' | 'OTHER';
 export const TRANSFER_REASONS: TransferReason[] = ['NOT_MINE', 'BUSY', 'OTHER'];
 
@@ -54,6 +54,7 @@ export interface User {
   language: Lang;
   active: boolean;
   telegramLinked: boolean;
+  phoneExt: string | null;
   createdAt: string;
 }
 
@@ -524,4 +525,92 @@ export interface LeadImportReport {
   summary: { total: number; created: number; existingLead: number; existingClient: number; duplicateRow: number; invalid: number; withoutPhone: number };
   rows: { row: number; stir: string; name: string; action: 'NEW' | 'EXISTING_LEAD' | 'EXISTING_CLIENT' | 'DUPLICATE_ROW' }[];
   invalid: { row: number; stir: string; name: string; reason: 'BAD_STIR' | 'NO_NAME' }[];
+}
+
+/** IP telefoniya qo'ng'iroqlar jurnali (V46) */
+export type CallDirection = 'IN' | 'OUT' | 'INTERNAL' | 'UNKNOWN';
+export interface CallRecord {
+  id: number;
+  direction: CallDirection;
+  src: string | null;
+  dst: string | null;
+  externalNumber: string | null;
+  ext: string | null;
+  userId: number | null;
+  userName: string | null;
+  peerUserId: number | null;
+  peerUserName: string | null;
+  startedAt: string;
+  answeredAt: string | null;
+  durationSec: number;
+  billsec: number;
+  disposition: string;
+  /** Audio yozuv (V48): faqat rahbarga keladi */
+  recordingId?: number | null;
+  recordingBytes?: number | null;
+  client?: { id: number; name: string } | null;
+  lead?: { id: number; name: string } | null;
+}
+export interface CallList {
+  items: CallRecord[];
+  total: number;
+  page: number;
+  pageSize: number;
+  from: string;
+  to: string;
+}
+export interface CallsOfContact {
+  phone: string | null;
+  items: CallRecord[];
+  total: number;
+  talkSec: number;
+  lastAt: string | null;
+}
+export interface CallStatRow {
+  userId: number | null;
+  userName: string | null;
+  ext: string | null;
+  total: number;
+  outgoing: number;
+  outgoingAnswered: number;
+  incoming: number;
+  missed: number;
+  internal: number;
+  talkSec: number;
+}
+export interface CallsStatus {
+  enabled: boolean;
+  lastSeenAt: string | null;
+  lastCallAt: string | null;
+  total: number;
+  unassignedExts: { ext: string; calls: number; lastAt: string }[];
+}
+
+/** Server holati va to'lovi (Railway, faqat rahbar) */
+export interface ServerStatus {
+  configured: boolean;
+  fetchedAt: string | null;
+  server: { state: 'UP' | 'DOWN' | 'SLEEPING' | 'DEPLOYING' | 'UNKNOWN'; since: string | null } | null;
+  usage: {
+    cpu: number;
+    cpuLimit: number | null;
+    memoryGb: number;
+    memoryLimitGb: number | null;
+    history: { at: string; cpu: number | null; memoryGb: number | null }[];
+  } | null;
+  billing: {
+    plan: string | null;
+    state: string;
+    paymentFailed: boolean;
+    nextPaymentDate: string | null;
+    daysLeft: number | null;
+    nextAmount: number | null;
+    currentUsage: number | null;
+    card: { brand: string; last4: string } | null;
+    /** Sinov davri: nextPaymentDate/daysLeft — sinov tugashi */
+    trial: { creditLeft: number | null; creditTotal: number | null } | null;
+  } | null;
+  costHistory: { at: string; amount: number }[];
+  billingUrl: string;
+  errors: ('server' | 'usage' | 'billing')[];
 }

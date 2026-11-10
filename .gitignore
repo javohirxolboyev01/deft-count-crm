@@ -1,6 +1,8 @@
 node_modules/
 dist/
 .env
+# pbx-agent tayyor sozlamalari (token bor)
+apps/pbx-agent/pbx-agent.env
 *.log
 backups/
 apps/api/secrets/
