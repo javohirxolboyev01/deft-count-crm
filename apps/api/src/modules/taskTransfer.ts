@@ -39,6 +39,19 @@ export async function transfersForTask(db: Db, taskId: number) {
   return { pendingTransfer: history.find((h) => h.status === 'PENDING') ?? null, transfers: history };
 }
 
+/** Ro'yxat uchun (dashboard "Zanjir" ustuni): bir nechta vazifaning butun o'tkazish tarixi, eskisidan yangisiga — bitta so'rov */
+export async function transfersForTasks(db: Db, taskIds: number[]) {
+  const byTask = new Map<number, any[]>();
+  if (!taskIds.length) return byTask;
+  const rows = await q<any>(db, `${TRANSFER_SELECT} WHERE tr.task_id = ANY($1::bigint[]) ORDER BY tr.created_at, tr.id`, [taskIds]);
+  for (const r of rows) {
+    const k = Number(r.taskId);
+    if (!byTask.has(k)) byTask.set(k, []);
+    byTask.get(k)!.push(r);
+  }
+  return byTask;
+}
+
 /** Qabul qiluvchi vazifani (o'ziga hali o'tmagan bo'lsa ham) ko'rib qaror qila olishi uchun */
 export async function hasPendingTransferTo(db: Db, taskId: number, userId: number) {
   return !!(await one(db, `SELECT 1 FROM task_transfer WHERE task_id = $1 AND to_user_id = $2 AND status = 'PENDING'`, [taskId, userId]));

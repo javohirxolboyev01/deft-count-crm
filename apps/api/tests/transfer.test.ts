@@ -66,6 +66,16 @@ describe("vazifani boshqa xodimga o'tkazish", () => {
     const actions = await q<{ action: string }>(pool, `SELECT action FROM audit_log WHERE entity = 'task' AND entity_id = $1 ORDER BY id`, [String(taskId)]);
     expect(actions.map((a) => a.action)).toEqual(['CREATE_URGENT', 'TRANSFER_REQUEST', 'TRANSFER_ACCEPT', 'TRANSFER_REQUEST', 'TRANSFER_ACCEPT']);
     expect((await A3.get(`/api/tasks/${taskId}`)).body.transfers).toHaveLength(2);
+
+    // Dashboard "Zanjir": ro'yxatda `transfers=true` bo'lsa butun zanjir eskisidan yangisiga; aks holda maydon yo'q
+    const list = await L.get('/api/tasks?kind=URGENT&status=OPEN&transfers=true');
+    const row = list.body.find((x: any) => x.id === taskId);
+    expect(row.transfers.map((x: any) => [x.fromName, x.toName, x.status])).toEqual([
+      ['Aziza', 'Bobur', 'ACCEPTED'],
+      ['Bobur', 'Yorqin', 'ACCEPTED'],
+    ]);
+    const plain = await L.get('/api/tasks?kind=URGENT&status=OPEN');
+    expect(plain.body.find((x: any) => x.id === taskId).transfers).toBeUndefined();
   });
 
   it('rad etilsa vazifa egasida qoladi, egasiga sabab bilan xabar boradi', async () => {

@@ -619,6 +619,33 @@ describe('shoshilinch vazifa va dashboard', () => {
     expect((await A1.get('/api/dashboard/clients')).status).toBe(403);
   });
 
+  it("Jarayonda / Mijozdan kutilmoqda: boshqa oy davridagi (shoshilinch) vazifa ham sanaladi", async () => {
+    // Dashboard belgilanadigan oyni so'raydi (noyabrda oktyabr); shoshilinch vazifa joriy oy davrida
+    const prevMonth = (await one(pool, `SELECT to_char(date_trunc('month', now()) - interval '1 month', 'YYYY-MM') AS m`)).m;
+    const sum = (d: any, k: string) => d.clients.reduce((n: number, c: any) => n + c[k], 0);
+    const before = (await L.get(`/api/dashboard/clients?month=${prevMonth}`)).body;
+    const u1 = (await L.post('/api/tasks/urgent', { clientId: aosClient, text: 'Jarayon testi', assigneeId: team.acc1 })).body.id;
+    const u2 = (await L.post('/api/tasks/urgent', { clientId: aosClient, text: 'Kutish testi', assigneeId: team.acc1 })).body.id;
+    expect((await A1.patch(`/api/tasks/${u1}/status`, { status: 'IN_PROGRESS' })).status).toBe(200);
+    expect((await A1.patch(`/api/tasks/${u2}/status`, { status: 'WAITING_CLIENT' })).status).toBe(200);
+
+    const after = (await L.get(`/api/dashboard/clients?month=${prevMonth}`)).body;
+    expect(sum(after, 'inProgress')).toBe(sum(before, 'inProgress') + 1);
+    expect(sum(after, 'waiting')).toBe(sum(before, 'waiting') + 1);
+    // Oy jamisi va "Bajarilishi kerak" tanlangan oy bo'yicha qoladi
+    expect(after.summary.tasksTotal).toBe(before.summary.tasksTotal);
+    expect(sum(after, 'todo')).toBe(sum(before, 'todo'));
+    const db = await one(
+      pool,
+      `SELECT count(*) FILTER (WHERE t.status = 'IN_PROGRESS')::int AS ip, count(*) FILTER (WHERE t.status = 'WAITING_CLIENT')::int AS w
+       FROM task t JOIN client c ON c.id = t.client_id WHERE c.accountant_id IS NOT NULL AND c.status <> 'ARCHIVED'`,
+    );
+    expect(sum(after, 'inProgress')).toBe(db.ip);
+    expect(sum(after, 'waiting')).toBe(db.w);
+    await L.del(`/api/tasks/${u1}`);
+    await L.del(`/api/tasks/${u2}`);
+  });
+
   it("buxgalter biriktirilmagan mijoz dashboard hisobiga kirmaydi, faqat unassignedClients'da", async () => {
     const before = (await L.get('/api/dashboard/clients')).body;
     const accBefore = (await L.get('/api/dashboard/accountants')).body.accountants.find((x: any) => x.id === team.acc1);

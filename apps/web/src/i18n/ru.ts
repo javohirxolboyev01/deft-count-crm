@@ -144,7 +144,7 @@ const ru: Dict = {
     },
   },
   task: {
-    title: 'Задача', client: 'Клиент', kind: 'Тип', due: 'Срок', assignee: 'Ответственный', status: 'Статус', spent: 'Затрачено времени',
+    title: 'Задача', client: 'Клиент', kind: 'Тип', due: 'Срок', assignee: 'Ответственный', createdBy: 'Поставил', chain: 'Цепочка', status: 'Статус', spent: 'Затрачено времени',
     doneAt: 'Выполнено', late: 'с опозданием', noDue: 'Без срока', overdue: 'просрочено', dueSoon: 'осталось меньше 24 часов',
     unassigned: 'Не назначено', timerOn: 'таймер включён', checklist: 'Чек-лист', addItem: 'Новый пункт…', note: 'Комментарий',
     notePlaceholder: 'Напишите комментарий…', freeTextHint: 'Запишите сюда прочие работы за этот месяц.', timeEntries: 'Учёт времени',

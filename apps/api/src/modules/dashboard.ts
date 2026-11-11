@@ -18,8 +18,10 @@ const OPEN = `('TODO','IN_PROGRESS','WAITING_CLIENT')`;
 const COUNTED_CLIENT = (alias: string) => `${alias}.accountant_id IS NOT NULL`;
 
 /**
- * Mijozlar bo'yicha: bajarilish (jami/bajarildi) — tanlangan oy; kechikish — BARCHA oylar (o'tgan oydan qolgan
- * ochiq vazifa ham kechikish, "Muddati o'tgan vazifalar" ro'yxati va Buxgalterlar jadvali bilan bir xil).
+ * Mijozlar bo'yicha: bajarilish (jami/bajarildi, "Bajarilishi kerak") — tanlangan oy; kechikish — BARCHA oylar (o'tgan
+ * oydan qolgan ochiq vazifa ham kechikish, "Muddati o'tgan vazifalar" ro'yxati va Buxgalterlar jadvali bilan bir xil).
+ * "Jarayonda" va "Mijozdan kutilmoqda" — hozirgi holat, BARCHA oylar: tanlangan (belgilanadigan) oy noyabrda oktyabr,
+ * shoshilinch/qo'lda yaratilgan vazifa esa joriy oy davrida — oy bo'yicha sanalsa ular kartada doim 0 ko'rinardi.
  */
 dashboardRouter.get('/clients', async (req, res) => {
   const { month } = parse(z.object({ month: z.string().optional() }), req.query);
@@ -32,13 +34,13 @@ dashboardRouter.get('/clients', async (req, res) => {
             count(t.id) FILTER (WHERE t.period = $1)::int AS total,
             count(t.id) FILTER (WHERE t.period = $1 AND t.status = 'DONE')::int AS done,
             count(t.id) FILTER (WHERE t.status IN ${OPEN} AND t.due_at < now())::int AS overdue,
-            count(t.id) FILTER (WHERE t.period = $1 AND t.status = 'WAITING_CLIENT')::int AS waiting,
+            count(t.id) FILTER (WHERE t.status = 'WAITING_CLIENT')::int AS waiting,
             count(t.id) FILTER (WHERE t.period = $1 AND t.status = 'TODO')::int AS todo,
-            count(t.id) FILTER (WHERE t.period = $1 AND t.status = 'IN_PROGRESS')::int AS "inProgress"
+            count(t.id) FILTER (WHERE t.status = 'IN_PROGRESS')::int AS "inProgress"
      FROM client c
      LEFT JOIN app_user a ON a.id = c.accountant_id
      LEFT JOIN task t ON t.client_id = c.id AND t.status <> 'CANCELLED'
-       AND (t.period = $1 OR (t.status IN ${OPEN} AND t.due_at < now()))
+       AND (t.period = $1 OR (t.status IN ${OPEN} AND t.due_at < now()) OR t.status IN ('IN_PROGRESS','WAITING_CLIENT'))
      WHERE c.status <> 'ARCHIVED'
      GROUP BY c.id, a.id ORDER BY c.name_normalized`,
     [period],

@@ -165,8 +165,9 @@ function ReadyCard({ s }: { s: DashboardClients['summary'] }) {
 }
 
 /**
- * 3. Jarayonda: katta son — jarayondagi mijozlar; ustunlar — tanlangan oyning BARCHA vazifalari holat bo'yicha
- * (6.4, oqim tartibida). Faqat "Jarayonda" holatidagi mijozlar olinmaydi: "Jarayonda"/"Mijozdan kutilmoqda"
+ * 3. Jarayonda: katta son — jarayondagi mijozlar; ustunlar — vazifalar holat bo'yicha (6.4, oqim tartibida):
+ * "Bajarilishi kerak" / "Bajarildi" — tanlangan oy, "Jarayonda" / "Mijozdan kutilmoqda" — hozirgi holat, barcha oylar
+ * (shoshilinch vazifa joriy oy davrida, tanlangan oy esa o'tgan oy bo'lishi mumkin — server shunday sanaydi). Faqat "Jarayonda" holatidagi mijozlar olinmaydi: "Jarayonda"/"Mijozdan kutilmoqda"
  * vazifasi ko'pincha kechikkan mijozda bo'ladi va u holda kartada doim 0 ko'rinardi.
  * Pill — mijozdan hujjat kutilayotgan mijozlar soni (6.5, to'q sariq).
  */

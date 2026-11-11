@@ -127,6 +127,8 @@ export interface Task {
   assigneeId: number | null;
   assigneeName: string | null;
   createdByName?: string | null;
+  /** Faqat `?transfers=true` ro'yxatida: o'tkazish tarixi, eskisidan yangisiga */
+  transfers?: TaskTransfer[];
   dueAt: string | null;
   status: TaskStatus;
   doneAt: string | null;

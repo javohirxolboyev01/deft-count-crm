@@ -9,7 +9,7 @@ import { one, pool, q, tx } from '../db';
 import { getDueTime } from './generator';
 import { enqueue } from './notifications';
 import { WORKS_SCOPE } from './taskScope';
-import { hasPendingTransferTo, transfersForTask } from './taskTransfer';
+import { hasPendingTransferTo, transfersForTask, transfersForTasks } from './taskTransfer';
 import {
   assertTaskAccess,
   changeStatus,
@@ -189,6 +189,8 @@ tasksRouter.get('/', async (req, res) => {
       kind: z.enum(['ROUTINE', 'REPORT', 'URGENT', 'MANUAL']).optional(),
       month: z.string().optional(),
       overdue: z.enum(['true']).optional(),
+      // O'tkazish zanjiri (dashboard: shoshilinch vazifalar jadvali) — har vazifaga `transfers` qo'shiladi
+      transfers: z.enum(['true']).optional(),
       limit: z.coerce.number().int().min(1).max(1000).default(500),
     }),
     req.query,
@@ -218,6 +220,11 @@ tasksRouter.get('/', async (req, res) => {
      ORDER BY t.due_at NULLS LAST, t.id LIMIT $${params.length}`,
     params,
   );
+  if (f.transfers) {
+    const byTask = await transfersForTasks(pool, rows.map((r: any) => Number(r.id)));
+    res.json(rows.map((r: any) => ({ ...r, transfers: byTask.get(Number(r.id)) ?? [] })));
+    return;
+  }
   res.json(rows);
 });
 

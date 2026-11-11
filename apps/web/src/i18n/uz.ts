@@ -141,7 +141,7 @@ const uz = {
     },
   },
   task: {
-    title: 'Vazifa', client: 'Mijoz', kind: 'Turi', due: 'Muddat', assignee: "Mas'ul", status: 'Holat', spent: 'Sarflangan vaqt',
+    title: 'Vazifa', client: 'Mijoz', kind: 'Turi', due: 'Muddat', assignee: "Mas'ul", createdBy: 'Kim berdi', chain: 'Zanjir', status: 'Holat', spent: 'Sarflangan vaqt',
     doneAt: 'Bajarilgan vaqt', late: 'kechikib', noDue: "Muddatsiz", overdue: "muddati o'tgan", dueSoon: '24 soatdan kam qoldi',
     unassigned: 'Biriktirilmagan', timerOn: 'taymer yoqilgan', checklist: "Checklist", addItem: "Yangi band…", note: 'Izoh',
     notePlaceholder: 'Izoh yozing…', freeTextHint: 'Bu oy qilingan boshqa ishlarni shu yerga yozing.', timeEntries: 'Vaqt yozuvlari',

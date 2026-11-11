@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Siren, Trash2 } from 'lucide-react';
+import { AlertTriangle, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router-dom';
@@ -19,7 +19,7 @@ import { api, qs } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { errorText } from '@/lib/errors';
 import { fmtDateTime, fmtDuration, startOfMonthIso, startOfWeekIso, todayIso } from '@/lib/time';
-import type { DashboardAccountants, Task } from '@/lib/types';
+import type { DashboardAccountants, Task, TaskTransfer } from '@/lib/types';
 
 type Range = 'day' | 'week' | 'month';
 
@@ -34,6 +34,58 @@ function Bar({ value }: { value: number }) {
 function Avatar({ name }: { name: string }) {
   const initials = name.split(/\s+/).slice(0, 2).map((w) => w[0]).join('').toUpperCase();
   return <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-brand-light text-xs font-semibold text-brand" aria-hidden>{initials}</span>;
+}
+
+/**
+ * Qisqartirilgan katak: sichqoncha ustiga borsa katak joyida oq (karta rangi) quti ochilib to'liq matn ko'rinadi.
+ * Quti katakdan o'ngga kengayadi (max-w-sm), sig'masa keyingi qatorga o'tadi.
+ */
+function FullTextCell({ text, className }: { text: string; className?: string }) {
+  return (
+    <td className={cn('group/cell relative px-4 py-2', className)}>
+      <div className="truncate">{text}</div>
+      <div className="pointer-events-none absolute left-0 top-0 z-20 hidden w-max min-w-full max-w-sm whitespace-normal break-words rounded-md bg-white px-4 py-2 shadow-pop ring-1 ring-gray-200 group-hover/cell:block">
+        {text}
+      </div>
+    </td>
+  );
+}
+
+/**
+ * O'tkazish zanjiri (rahbar nazorati): birinchi egasi → qabul qilganlar; kutilayotgan so'rov sariq, rad etilgani
+ * qizil chizilgan, qaytarib olingani ko'rsatilmaydi. Ustiga olib borilsa to'liq tarix (sana, kim so'radi, sabab).
+ */
+function TransferChain({ transfers }: { transfers: TaskTransfer[] }) {
+  const { t } = useTranslation();
+  const steps = transfers.filter((tr) => tr.status !== 'CANCELLED');
+  if (!steps.length) return <span className="text-gray-400">—</span>;
+  const history = transfers
+    .map((tr) => {
+      const reason = tr.reasonCode === 'OTHER' ? tr.reasonText : t(`transfer.reasons.${tr.reasonCode}`);
+      const reject = tr.status === 'REJECTED' && tr.rejectReason ? ` (${tr.rejectReason})` : '';
+      return `${fmtDateTime(tr.createdAt)}: ${tr.fromName ?? '—'} → ${tr.toName} — ${t(`transfer.status.${tr.status}`)}${reject}. ${t('transfer.reason')}: ${reason ?? '—'}. ${t('transfer.requestedBy', { name: tr.requestedByName })}`;
+    })
+    .join('\n');
+  return (
+    <span className="flex flex-wrap items-center gap-x-1 gap-y-0.5 text-xs" title={history}>
+      <span className="text-gray-600">{steps[0].fromName ?? '—'}</span>
+      {steps.map((tr) => (
+        <span key={tr.id} className="flex items-center gap-1 whitespace-nowrap">
+          <span className="text-gray-400">→</span>
+          <span
+            className={cn(
+              tr.status === 'ACCEPTED' && 'font-medium text-gray-900',
+              tr.status === 'PENDING' && 'rounded bg-amber-50 px-1 font-medium text-amber-700',
+              tr.status === 'REJECTED' && 'text-red-600 line-through',
+            )}
+          >
+            {tr.toName}
+          </span>
+          {tr.status === 'PENDING' && <span className="text-amber-700">({t('transfer.status.PENDING')})</span>}
+        </span>
+      ))}
+    </span>
+  );
 }
 
 /** Bo'sh holat rasmi: bo'sh planshet + yashil belgi. Ranglar palitradan: gray/green/white qorong'i rejimda o'zi aylanadi, `dark:` kerak emas */
@@ -85,7 +137,7 @@ export default function Dashboard() {
   // Barcha ochiq shoshilinch vazifalar (rahbar hammasini ko'radi). 'tasks' kaliti: o'chirish/holat o'zgarsa yangilanadi
   const urgent = useQuery({
     queryKey: ['tasks', 'urgent-open'],
-    queryFn: () => api.get<Task[]>(`/tasks${qs({ kind: 'URGENT', status: 'OPEN' })}`),
+    queryFn: () => api.get<Task[]>(`/tasks${qs({ kind: 'URGENT', status: 'OPEN', transfers: 'true' })}`),
     refetchInterval: 60_000,
   });
   // Shoshilinch vazifani kartaning o'zidan o'chirish (serverda CANCELLED / LEADER_DELETED, audit'da qoladi)
@@ -151,40 +203,53 @@ export default function Dashboard() {
           )}
         </Card>
 
-        <Card className="flex min-w-0 flex-col border-l-4 border-l-red-500">
-          <CardHeader title={<span className="flex items-center gap-2 text-red-600"><Siren className="h-4 w-4" /> {t('dashboard.urgent')} ({urgent.data?.length ?? 0})</span>} />
+        <Card className="flex min-w-0 flex-col">
+          <CardHeader title={<span className="text-red-600">{t('dashboard.urgent')} ({urgent.data?.length ?? 0})</span>} />
           <QueryState q={urgent}>
             {!urgent.data?.length ? (
               <CardEmpty text={t('dashboard.noUrgent')} />
             ) : (
-              <ul className="max-h-72 divide-y overflow-y-auto text-sm">
-                {urgent.data.map((u) => (
-                  <li key={u.id} className="flex items-stretch transition-colors hover:bg-red-50">
-                    <button className="min-w-0 flex-1 py-2 pl-4 text-left sm:pl-5" onClick={() => openTask(u.id)}>
-                      <span className="flex items-center gap-2">
-                        <span className="truncate font-medium">{u.title}</span>
-                        <span className="ml-auto shrink-0"><TaskStatusBadge status={u.status} /></span>
-                      </span>
-                      <span className="flex gap-2 text-xs text-gray-500">
-                        <span className="truncate">{u.clientName}</span>
-                        <span className={cn('ml-auto shrink-0', u.overdue ? 'font-medium text-overdue' : u.dueSoon ? 'text-soon' : '')}>{u.dueAt ? fmtDateTime(u.dueAt) : '—'}</span>
-                        <span className="w-28 shrink-0 truncate text-right">{u.assigneeName ?? t('task.unassigned')}</span>
-                      </span>
-                    </button>
-                    <span className="flex shrink-0 items-center px-3 sm:pr-4">
-                      <button
-                        type="button"
-                        className="flex h-8 w-8 items-center justify-center rounded-md border border-red-200 bg-red-50 text-red-600 transition-colors hover:border-red-500 hover:bg-red-500 hover:text-on-brand"
-                        title={t('task.delete')}
-                        aria-label={t('task.delete')}
-                        onClick={() => setDeleting(u)}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
-                    </span>
-                  </li>
-                ))}
-              </ul>
+              /* Jadval ko'rinishi (WinPro: teal sarlavha), har katak chiziq bilan ajralgan. Qator bosilsa vazifa paneli, savat — o'chirish (tasdiq bilan) */
+              <div className="max-h-80 overflow-auto">
+                <table className="w-full text-sm">
+                  <thead className="table-head sticky top-0 z-10">
+                    <tr className="[&>th:not(:last-child)]:border-r [&>th]:border-on-brand/30">
+                      <th className="px-4 py-2.5">{t('task.title')}</th>
+                      <th className="px-4 py-2.5">{t('task.client')}</th>
+                      <th className="px-4 py-2.5 text-center">{t('task.status')}</th>
+                      <th className="px-4 py-2.5 text-right">{t('task.due')}</th>
+                      <th className="px-4 py-2.5">{t('task.assignee')}</th>
+                      <th className="px-4 py-2.5">{t('task.createdBy')}</th>
+                      <th className="px-4 py-2.5">{t('task.chain')}</th>
+                      <th className="w-24 px-4 py-2.5 text-center">{t('common.delete')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {urgent.data.map((u) => (
+                      <tr key={u.id} className="cursor-pointer border-b border-gray-300 transition-colors last:border-b-0 hover:bg-red-50 [&>td:not(:last-child)]:border-r [&>td]:border-gray-300" onClick={() => openTask(u.id)}>
+                        <FullTextCell text={u.title} className="max-w-64 font-medium" />
+                        <FullTextCell text={u.clientName} className="max-w-48 text-gray-600" />
+                        <td className="whitespace-nowrap px-4 py-2 text-center"><TaskStatusBadge status={u.status} /></td>
+                        <td className={cn('whitespace-nowrap px-4 py-2 text-right', u.overdue ? 'font-medium text-overdue' : u.dueSoon ? 'text-soon' : 'text-gray-600')}>{u.dueAt ? fmtDateTime(u.dueAt) : '—'}</td>
+                        <td className="max-w-40 truncate px-4 py-2 text-gray-600">{u.assigneeName ?? t('task.unassigned')}</td>
+                        <td className="max-w-40 truncate px-4 py-2 text-gray-600">{u.createdByName ?? '—'}</td>
+                        <td className="px-4 py-2"><TransferChain transfers={u.transfers ?? []} /></td>
+                        <td className="px-4 py-2 text-center">
+                          <button
+                            type="button"
+                            className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-red-200 bg-red-50 text-red-600 transition-colors hover:border-red-500 hover:bg-red-500 hover:text-on-brand"
+                            title={t('task.delete')}
+                            aria-label={t('task.delete')}
+                            onClick={(e) => { e.stopPropagation(); setDeleting(u); }}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </QueryState>
           <ConfirmDialog
