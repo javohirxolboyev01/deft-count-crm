@@ -8,6 +8,7 @@ import { TZ, currentPeriod, nowTz, periodFromMonth, todayAt, workPeriod } from '
 import { one, pool, q, tx } from '../db';
 import { getDueTime } from './generator';
 import { enqueue } from './notifications';
+import { WORKS_SCOPE } from './taskScope';
 import { hasPendingTransferTo, transfersForTask } from './taskTransfer';
 import {
   assertTaskAccess,
@@ -29,12 +30,8 @@ const id = z.coerce.number().int().positive();
 /**
  * Bosh sahifa = Buxgalter ishlari sahifasidagi ishlar (rahbar qarori): bo'limdagi mijozning doimiy ishlari va
  * ish ustuni bor hisobot (INPS, routine_work_type.report_type_id) + rahbar bergan shoshilinch/qo'lda vazifalar.
- * Hisobot topshirish vazifalari bu yerga kirmaydi — buxgalter u jadvalni faqat ko'radi.
- */
-const WORKS_SCOPE = `(t.kind IN ('URGENT','MANUAL') OR (c.in_works AND (t.kind = 'ROUTINE' OR (t.kind = 'REPORT' AND t.report_type_id IN (
-  SELECT report_type_id FROM routine_work_type WHERE active AND report_type_id IS NOT NULL)))))`;
-
-/**
+ * Hisobot topshirish vazifalari bu yerga kirmaydi — buxgalter u jadvalni faqat ko'radi (WORKS_SCOPE, taskScope.ts).
+ *
  * Davr tugmalari (Hafta / Oy / Chorak / Yil) — tepadagi 5 ta karta va "Bajarildi" ustuni shu davr bo'yicha.
  * Davr = joriy kalendar hafta/oy/chorak/yil, Asia/Tashkent, yarim ochiq [boshi, oxiri). Bitta qoida:
  *  - Davrda bajarilgan: o'zi bosgan (done_by) DONE vazifa, done_at davr ichida — rahbar dashboardidagi Buxgalterlar

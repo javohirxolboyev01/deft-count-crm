@@ -6,6 +6,7 @@ import { AppError, notFound, parse } from '../common/errors';
 import { one, pool, q, tx } from '../db';
 import { backfillCallUser } from './calls';
 import { reassignOpenTasks } from './generator';
+import { clearChatCommands, refreshUserCommands } from './telegram';
 import { hashPassword, passwordSchema } from './auth';
 
 // Asterisk ichki raqami (V46): '101'; bo'sh satr = olib tashlash
@@ -119,6 +120,8 @@ usersRouter.patch('/:id', async (req, res) => {
     if (d.changed) await audit(db, { actorId: actor.id, entity: 'app_user', entityId: id, action: 'UPDATE', before: d.before, after: d.after });
     return u;
   }).catch(extTaken);
+  // Telegram menyusi rolga mos bo'lsin (rahbar buyruqlari buxgalterga ko'rinmasin)
+  if (body.role || body.language || body.active !== undefined) refreshUserCommands(id);
   res.json(user);
 });
 
@@ -131,6 +134,8 @@ usersRouter.delete('/:id', async (req, res) => {
   if (id === actor.id) throw new AppError(400, 'SELF_DELETE', 'O\'zingizni o\'chira olmaysiz');
   const before = await one(pool, `SELECT ${USER} FROM app_user WHERE id = $1 AND deleted_at IS NULL`, [id]);
   if (!before) throw notFound('Foydalanuvchi');
+  const tg = await one<{ chatId: string | null }>(pool, 'SELECT telegram_chat_id AS "chatId" FROM app_user WHERE id = $1', [id]);
+  if (tg?.chatId) void clearChatCommands(Number(tg.chatId));
   try {
     await tx(async (db) => {
       await db.query('DELETE FROM refresh_token WHERE user_id = $1', [id]);

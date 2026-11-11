@@ -10,7 +10,7 @@ import { AppError, parse } from '../common/errors';
 import { config } from '../config';
 import { one, pool, tx } from '../db';
 import { NOTIFICATION_KINDS, notificationKindsFor } from './notifications';
-import { telegramEnabled } from './telegram';
+import { clearChatCommands, refreshUserCommands, telegramEnabled } from './telegram';
 
 const MAX_FAILED = 5;
 const LOCK_MINUTES = 15;
@@ -147,6 +147,7 @@ meRouter.patch('/', async (req, res) => {
     if (d.changed) await audit(db, { actorId: u.id, entity: 'app_user', entityId: u.id, action: 'UPDATE_PROFILE', before: d.before, after: d.after });
     return r;
   });
+  if (body.language) refreshUserCommands(u.id);
   res.json(user);
 });
 
@@ -185,9 +186,11 @@ meRouter.post('/telegram/code', async (req, res) => {
 
 meRouter.delete('/telegram', async (req, res) => {
   const u = me(req);
+  const tg = await one<{ chatId: string | null }>(pool, 'SELECT telegram_chat_id AS "chatId" FROM app_user WHERE id = $1', [u.id]);
   await tx(async (db) => {
     await db.query('UPDATE app_user SET telegram_chat_id = NULL WHERE id = $1', [u.id]);
     await audit(db, { actorId: u.id, entity: 'app_user', entityId: u.id, action: 'TELEGRAM_UNLINK' });
   });
+  if (tg?.chatId) void clearChatCommands(Number(tg.chatId));
   res.json({ ok: true });
 });

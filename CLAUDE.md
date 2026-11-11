@@ -164,6 +164,7 @@ Rahbar mijozga boshqa buxgalter tayinlaydi; tugallanmagan vazifalar yangisiga o'
 
 ### 6.9.1 Vazifani boshqa xodimga o'tkazish (V40)
 Faqat Shoshilinch va qo'lda yaratilgan (URGENT/MANUAL) ochiq vazifa. So'rovni vazifa egasi (mas'ul) yoki rahbar yuboradi; sabab majburiy (Menga tegishli emas / Bandman / Boshqa sabab + matn). Qabul qiluvchi rozilik beradi ("Qabul qilaman / Rad etaman" — "Mening kunim" yuqorisida va vazifa panelida); qabul qilinguncha vazifa eski egasida. Bitta vazifada bitta kutilayotgan so'rov (`task_transfer`), zanjir cheklanmaydi. Qabul qilinsa "Jarayonda" → "Bajarilishi kerak" (taymer to'xtaydi). Bildirishnomalar: `TASK_TRANSFER` (qabul qiluvchiga), `TASK_TRANSFER_RESULT` (so'rovchi, eski egasi; qabulda vazifa muallifi ham). Hammasi `audit_log`'da. Faqat buxgalterga o'tkaziladi (`TODO(tasdiqlash)`).
+Telegram bot buyruqlari (faqat o'qish, holat CRM'da o'zgaradi): rahbar — `/urgent` (barcha shoshilinch, mas'ul va holat bilan), `/overdue` (kechikkanlar buxgalter bo'yicha), `/team` (xodimlar kesimi); buxgalter — `/tasks`, `/urgent` (faqat o'zi); operator — buyruq yo'q. Chat → xodim har so'rovda bazadan (faol), rol serverda tekshiriladi; menyu har chatga rolga qarab (`setMyCommands` scope chat).
 Shoshilinch va o'tkazilayotgan vazifa — kompyuter (brauzer Notification API) bildirishnomasi ham: CRM brauzerda ochiq tursa, boshqa dasturda ishlayotganda ham ekranda chiqadi. Brauzer yopiq bo'lsa — Telegram.
 
 ### 6.10 Oylik jadval (Google Sheet ko'rinishi)
