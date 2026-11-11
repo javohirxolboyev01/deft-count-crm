@@ -271,6 +271,17 @@ function RoutinesTab() {
   const onErr = (e: unknown) =>
     toast.error(e instanceof ApiError && e.code === 'ROUTINE_LIMIT' ? t('settings.routineLimit', { max: MAX_ROUTINES }) : errorText(e, t));
 
+  const [removing, setRemoving] = useState<RoutineWork | null>(null);
+  const del = useMutation({
+    mutationFn: (id: number) => api.del<{ deleted: 'HARD' | 'SOFT'; cancelled: number }>(`/settings/routine-works/${id}`),
+    onSuccess: (r) => {
+      setRemoving(null);
+      toast.success(r?.cancelled ? t('settings.routineDeletedCancelled', { n: r.cancelled }) : t('settings.routineDeleted'));
+      void refresh();
+    },
+    onError: onErr,
+  });
+
   const add = useMutation({
     mutationFn: () => api.post('/settings/routine-works', { name: adding.name, nameRu: adding.nameRu || undefined }),
     onSuccess: () => {
@@ -370,12 +381,27 @@ function RoutinesTab() {
                   update(w.id, { active: v });
                 }}
               />
+              {/* INPS hisobot bilan bog'langan — o'chirilmaydi (server ham ROUTINE_LINKED) */}
+              {!w.reportTypeId && (
+                <Button variant="ghost" size="icon" onClick={() => setRemoving(w)} aria-label={`${w.name} — ${t('common.delete')}`} title={t('common.delete')}>
+                  <Trash2 className="h-4 w-4 text-red-600" />
+                </Button>
+              )}
             </li>
           ))}
         </ul>
         <p className="px-4 py-3 text-xs text-gray-500">{t('settings.routinesHint')}</p>
       </QueryState>
       <Summary open={summary} onClose={() => setSummary(false)} onConfirm={() => save.mutate()} lines={lines} busy={save.isPending} />
+      <ConfirmDialog
+        open={!!removing}
+        onClose={() => setRemoving(null)}
+        onConfirm={() => removing && del.mutate(removing.id)}
+        loading={del.isPending}
+        title={removing ? t('settings.routineDeleteTitle', { name: removing.name }) : undefined}
+        text={t('settings.routineDeleteText')}
+        confirmLabel={t('common.delete')}
+      />
       <Dialog
         open={adding.open}
         onClose={() => setAdding({ ...adding, open: false })}

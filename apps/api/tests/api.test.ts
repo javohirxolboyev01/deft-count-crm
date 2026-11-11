@@ -207,6 +207,60 @@ describe('sozlamalar', () => {
     expect((await A1.get('/api/settings/report-types')).status).toBe(200);
   });
 
+  it("oylik ishni o'chirish: vazifasiz — butunlay, vazifali — yumshoq (ochiq vazifa bekor), INPS o'chirilmaydi", async () => {
+    const list = async () => (await L.get('/api/settings/routine-works')).body as any[];
+    const inps = (await list()).find((x) => x.reportTypeId);
+    expect((await L.del(`/api/settings/routine-works/${inps.id}`)).status).toBe(409);
+    // Vazifasiz ish (yangi ish endi darhol vazifali, shuning uchun to'g'ridan-to'g'ri, faolsiz yoziladi)
+    const xato = await one<{ id: number }>(
+      pool,
+      `INSERT INTO routine_work_type (name, name_ru, sort_order, active) VALUES ('xato-ish', 'xato-ish', 99, false) RETURNING id`,
+    );
+    expect((await A1.del(`/api/settings/routine-works/${xato!.id}`)).status).toBe(403);
+    const hard = await L.del(`/api/settings/routine-works/${xato!.id}`);
+    expect(hard.status).toBe(200);
+    expect(hard.body).toEqual({ deleted: 'HARD', cancelled: 0 });
+    expect(await one(pool, 'SELECT id FROM routine_work_type WHERE id = $1', [xato!.id])).toBeFalsy();
+    // Vazifasi bor ish: qo'shilganda joriy ish oyidan vazifalari yaratilgan
+    const w9 = (await list()).find((x) => x.name === '9-ish');
+    const open = (await one<{ n: number }>(
+      pool,
+      `SELECT count(*)::int AS n FROM task WHERE routine_type_id = $1 AND status = 'TODO'`,
+      [w9.id],
+    ))!.n;
+    expect(open).toBeGreaterThan(0);
+    const soft = await L.del(`/api/settings/routine-works/${w9.id}`);
+    expect(soft.body).toEqual({ deleted: 'SOFT', cancelled: open });
+    expect((await list()).some((x) => x.id === w9.id)).toBe(false);
+    expect(await one(pool, `SELECT 1 FROM task WHERE routine_type_id = $1 AND status <> 'CANCELLED'`, [w9.id])).toBeFalsy();
+    expect((await L.patch(`/api/settings/routine-works/${w9.id}`, { active: true })).status).toBe(404);
+    expect((await L.del(`/api/settings/routine-works/${w9.id}`)).status).toBe(404);
+    // Avvalgi holat: 10 ta faol ish
+    expect((await L.post('/api/settings/routine-works', { name: '9-ish' })).status).toBe(201);
+  });
+
+  it("yangi ish joriy ish oyidan darhol chiqadi: Buxgalter ishlarida katak bosiladi, qayta yoqilsa ham", async () => {
+    const work = (await L.get('/api/settings/routine-works')).body.find((x: any) => x.name === '9-ish');
+    const wp = addMonthsIso(currentPeriod(), -1);
+    expect(work.effectiveFrom.slice(0, 10)).toBe(wp);
+    const periods = await q<{ period: string }>(
+      pool,
+      `SELECT DISTINCT to_char(period, 'YYYY-MM-DD') AS period FROM task WHERE routine_type_id = $1 AND status = 'TODO' ORDER BY 1`,
+      [work.id],
+    );
+    expect(periods.map((p) => p.period)).toEqual([wp, currentPeriod()]);
+    // Ish oyi jadvalida katak "na" emas va bosiladigan vazifa bor
+    const works = (await L.get(`/api/works?month=${monthOf(wp)}`)).body;
+    const cells = works.items.map((r: any) => r.cells[work.id]).filter((c: any) => c.taskId);
+    expect(cells.length).toBeGreaterThan(0);
+    expect(cells[0].next).toMatchObject({ kind: 'TASK', month: monthOf(wp) });
+    // Faolsizlantirib qayta yoqish: bekor qilingan/yetishmayotgan vazifalar qaytadi
+    await pool.query(`UPDATE task SET status = 'CANCELLED', prev_status = status WHERE routine_type_id = $1`, [work.id]);
+    expect((await L.patch(`/api/settings/routine-works/${work.id}`, { active: false })).status).toBe(200);
+    expect((await L.patch(`/api/settings/routine-works/${work.id}`, { active: true })).status).toBe(200);
+    expect(await one(pool, `SELECT 1 FROM task WHERE routine_type_id = $1 AND period = $2 AND status = 'TODO'`, [work.id, wp])).toBeTruthy();
+  });
+
   it('muddat kuni o\'zgarsa joriy oyning ochiq vazifalari ko\'chadi, bajarilgani tegilmaydi', async () => {
     const tasks = await q(
       pool,

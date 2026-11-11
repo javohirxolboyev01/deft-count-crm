@@ -80,7 +80,8 @@ Mas'ul shaxs telefoni faqat aloqa ma'lumoti (mijozga avtomatik xabar **yuborilma
 8. Oyni yopish
 
 - **Oy joyida, muddat keyingi oyda** (V34/V36, rahbar qarori): oktyabr katagi = oktyabr vazifasi (`task.period` = ish/hisobot oyi), muddati noyabrda. Doimiy ish — keyingi oyning `routine_work_type.due_day`-kuni (sozlamadan): Ish haqi 5, Bank 10, Kirim 15, Chiqim 10, Debitor-kreditor 20, Oyni yopish 20; INPS — hisobot muddati (25); "Boshqa ishlar" — keyingi oy oxiri (`fn_work_due_at`).
-- Ishlar soni ko'pi bilan 10; rahbar sozlamada qo'shadi/olib tashlaydi/nomini o'zgartiradi; yangi ish keyingi oydan chiqadi.
+- Ishlar soni ko'pi bilan 10; rahbar sozlamada qo'shadi/olib tashlaydi/nomini o'zgartiradi; yangi (yoki qayta yoqilgan) ish **joriy ish oyidan** darhol chiqadi (rahbar qarori): noyabrda qo'shilsa oktyabr va noyabr vazifalari shu zahoti yaratiladi, Buxgalter ishlarida darhol bosiladi.
+- Ishni o'chirish (V50, savat tugmasi, tasdiq bilan): vazifasi yo'q ish butunlay o'chiriladi; vazifasi bor ish yumshoq (`deleted_at`) — ro'yxat va jadvaldan yo'qoladi, ochiq vazifalari bekor (`WORK_DELETED`), bajarilganlari tarixda. INPS (hisobot bilan bog'langan) o'chirilmaydi.
 - INPS ham "ish", ham "hisobot": **bitta** vazifa (ikki marta yaratilmaydi).
 - **Nol hisobot** mijozlarga 8 ta oylik ish chiqmaydi, faqat hisobotlar.
 - **Tugatilmoqda** mijozga hisobot vazifasi chiqmaydi.

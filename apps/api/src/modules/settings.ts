@@ -5,9 +5,10 @@ import { me, requireAuth, requireLeader } from '../common/auth';
 import { audit, diff } from '../common/audit';
 import { AppError, notFound, parse } from '../common/errors';
 import { type Db, one, pool, q, tx } from '../db';
-import { workPeriod } from '../common/time';
+import { currentPeriod, workPeriod } from '../common/time';
 import { sharePercent } from './clients';
 import { getDueTime } from './generator';
+import { reopenDue, stopTimersForTask } from './taskService';
 import { getOverdueReminder, overdueReminderSchema, reminderDays } from './overdueReminder';
 
 // Sozlamalar: hamma o'qiydi, faqat rahbar yozadi. O'zgarishlar keyingi generatsiyadan kuchga kiradi;
@@ -119,8 +120,45 @@ settingsRouter.patch('/report-types/:id', requireLeader, async (req, res) => {
 
 // ---------- Oylik doimiy ishlar (maks. 10 faol, DB trigger) ----------
 settingsRouter.get('/routine-works', async (_req, res) => {
-  res.json(await q(pool, `SELECT ${ROUTINE} FROM routine_work_type ORDER BY active DESC, sort_order, id`));
+  res.json(await q(pool, `SELECT ${ROUTINE} FROM routine_work_type WHERE deleted_at IS NULL ORDER BY active DESC, sort_order, id`));
 });
+
+/**
+ * Yangi yoki qayta yoqilgan ish joriy ish oyidan chiqadi (rahbar qarori): noyabrda qo'shilsa oktyabr ishi
+ * (muddati noyabrda) va noyabr ishi darhol yaratiladi — Buxgalter ishlari jadvalida shu zahoti bosiladi.
+ * Qaror: generatePeriod butun davrni qayta yuritadi (hisobotlar ham), shuning uchun faqat shu ish uchun
+ * generator 2-qadami takrorlanadi. Muddati o'tib ketgan vazifaga "muddat o'tdi" xabari yuborilmaydi.
+ */
+async function startRoutineWork(db: Db, id: number, actorId: number) {
+  const dueTime = await getDueTime(db);
+  let created = 0;
+  for (const period of [workPeriod(), currentPeriod()]) {
+    const RA = `WITH ra AS (SELECT client_id FROM fn_routine_applicability($1) WHERE applicable AND routine_type_id = $2)`;
+    const reopened = await db.query(
+      `${RA}
+       UPDATE task t SET status = 'TODO', prev_status = NULL, cancel_reason = NULL, assignee_id = c.accountant_id,
+              ${reopenDue('t.', '$3')}
+       FROM ra, client c
+       WHERE t.client_id = ra.client_id AND t.kind = 'ROUTINE' AND t.routine_type_id = $2 AND t.period = $1
+         AND t.status = 'CANCELLED' AND c.id = ra.client_id`,
+      [period, id, dueTime],
+    );
+    const inserted = await db.query(
+      `${RA}
+       INSERT INTO task (client_id, kind, routine_type_id, period, title, assignee_id, due_at, status, overdue_notified_at)
+       SELECT c.id, 'ROUTINE', w.id, $1, w.name, c.accountant_id, fn_work_due_at($1, w.id, $3), 'TODO',
+              CASE WHEN fn_work_due_at($1, w.id, $3) < now() THEN now() END
+       FROM ra JOIN client c ON c.id = ra.client_id JOIN routine_work_type w ON w.id = $2
+       ON CONFLICT (client_id, kind, coalesce(routine_type_id, 0), coalesce(report_type_id, 0), period)
+         WHERE kind IN ('ROUTINE', 'REPORT') DO NOTHING`,
+      [period, id, dueTime],
+    );
+    created += (reopened.rowCount ?? 0) + (inserted.rowCount ?? 0);
+  }
+  if (created) {
+    await audit(db, { actorId, entity: 'routine_work_type', entityId: id, action: 'GENERATE', after: { tasks: created, from: workPeriod() } });
+  }
+}
 
 async function activeRoutineCount(db: Db) {
   return (await one<{ n: number }>(db, 'SELECT count(*) AS n FROM routine_work_type WHERE active'))!.n;
@@ -136,14 +174,15 @@ settingsRouter.post('/routine-works', requireLeader, async (req, res) => {
     if ((await activeRoutineCount(db)) >= 10) {
       throw new AppError(409, 'ROUTINE_LIMIT', 'Faol oylik ishlar soni 10 tadan oshmasligi kerak', { max: 10 });
     }
-    // effective_from standart: keyingi oyning 1-kuni (yangi ish keyingi oydan chiqadi)
+    // Yangi ish joriy ish oyidan chiqadi (rahbar qarori; oldin keyingi oydan edi)
     const r = await one(
       db,
-      `INSERT INTO routine_work_type (name, name_ru, is_free_text, sort_order)
-       VALUES ($1, $2, $3, coalesce((SELECT max(sort_order) + 1 FROM routine_work_type), 1)) RETURNING ${ROUTINE}`,
-      [body.name, body.nameRu || body.name, body.isFreeText],
+      `INSERT INTO routine_work_type (name, name_ru, is_free_text, sort_order, effective_from)
+       VALUES ($1, $2, $3, coalesce((SELECT max(sort_order) + 1 FROM routine_work_type), 1), $4) RETURNING ${ROUTINE}`,
+      [body.name, body.nameRu || body.name, body.isFreeText, workPeriod()],
     );
     await audit(db, { actorId: u.id, entity: 'routine_work_type', entityId: r.id, action: 'CREATE', after: r });
+    await startRoutineWork(db, r.id, u.id);
     return r;
   });
   res.status(201).json(row);
@@ -158,7 +197,7 @@ settingsRouter.put('/routine-works/order', requireLeader, async (req, res) => {
     }
     await audit(db, { actorId: u.id, entity: 'routine_work_type', entityId: null, action: 'REORDER', after: { ids } });
   });
-  res.json(await q(pool, `SELECT ${ROUTINE} FROM routine_work_type ORDER BY active DESC, sort_order, id`));
+  res.json(await q(pool, `SELECT ${ROUTINE} FROM routine_work_type WHERE deleted_at IS NULL ORDER BY active DESC, sort_order, id`));
 });
 
 settingsRouter.patch('/routine-works/:id', requireLeader, async (req, res) => {
@@ -177,7 +216,7 @@ settingsRouter.patch('/routine-works/:id', requireLeader, async (req, res) => {
     req.body,
   );
   const row = await tx(async (db) => {
-    const before = await one(db, `SELECT ${ROUTINE} FROM routine_work_type WHERE id = $1 FOR UPDATE`, [id]);
+    const before = await one(db, `SELECT ${ROUTINE} FROM routine_work_type WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`, [id]);
     if (!before) throw notFound('Oylik ish');
     if (body.active === true && !before.active && (await activeRoutineCount(db)) >= 10) {
       throw new AppError(409, 'ROUTINE_LIMIT', 'Faol oylik ishlar soni 10 tadan oshmasligi kerak', { max: 10 });
@@ -187,12 +226,13 @@ settingsRouter.patch('/routine-works/:id', requireLeader, async (req, res) => {
       `UPDATE routine_work_type SET name = coalesce($2, name), name_ru = coalesce($3, name_ru),
          sort_order = coalesce($4, sort_order), active = coalesce($5, active), is_free_text = coalesce($6, is_free_text),
          due_day = CASE WHEN $7 THEN $8::int ELSE due_day END,
-         -- Qayta yoqilgan ish ham keyingi oydan chiqadi
+         -- Qayta yoqilgan ish ham joriy ish oyidan chiqadi (oldingi tarix saqlanadi: LEAST)
          effective_from = CASE WHEN $5 IS TRUE AND NOT active
-                               THEN (date_trunc('month', now()) + interval '1 month')::date ELSE effective_from END
+                               THEN LEAST(effective_from, $9::date) ELSE effective_from END
        WHERE id = $1 RETURNING ${ROUTINE}`,
-      [id, body.name ?? null, body.nameRu ?? null, body.sortOrder ?? null, body.active ?? null, body.isFreeText ?? null, body.dueDay !== undefined, body.dueDay ?? null],
+      [id, body.name ?? null, body.nameRu ?? null, body.sortOrder ?? null, body.active ?? null, body.isFreeText ?? null, body.dueDay !== undefined, body.dueDay ?? null, workPeriod()],
     );
+    if (body.active === true && !before.active) await startRoutineWork(db, id, u.id);
     const d = diff(before, body);
     // Muddat kuni hisobotdagidek darhol: ochiq vazifalar (bajarilmagan barcha oylar) yangi muddatga o'tadi
     let retimed = 0;
@@ -212,15 +252,46 @@ settingsRouter.patch('/routine-works/:id', requireLeader, async (req, res) => {
   res.json(row);
 });
 
-// O'chirish = faolsizlantirish (mavjud vazifalar tarixda qoladi)
+// O'chirish (V50). Hisobot bilan bog'langan ish (INPS) o'chirilmaydi — u hisobotlar orqali ishlaydi.
+// Vazifasi yo'q ish (masalan, xato qo'shilgan) butunlay o'chiriladi; vazifasi bor ish yumshoq o'chiriladi:
+// ro'yxatdan yo'qoladi, ochiq vazifalari bekor qilinadi, bajarilganlari tarixda qoladi. Hammasi audit'da.
 settingsRouter.delete('/routine-works/:id', requireLeader, async (req, res) => {
   const u = me(req);
   const id = parse(intId, req.params.id);
-  await tx(async (db) => {
-    const r = await db.query('UPDATE routine_work_type SET active = false WHERE id = $1 AND active', [id]);
-    if (r.rowCount) await audit(db, { actorId: u.id, entity: 'routine_work_type', entityId: id, action: 'DEACTIVATE' });
+  const result = await tx(async (db) => {
+    const before = await one<{ id: number; reportTypeId: number | null }>(
+      db, `SELECT ${ROUTINE} FROM routine_work_type WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`, [id],
+    );
+    if (!before) throw notFound('Oylik ish');
+    if (before.reportTypeId) throw new AppError(409, 'ROUTINE_LINKED', "Hisobot bilan bog'langan ishni o'chirib bo'lmaydi");
+    const used = await one(db, 'SELECT 1 FROM task WHERE routine_type_id = $1 LIMIT 1', [id]);
+    if (!used) {
+      for (const tbl of ['client_routine_baseline', 'client_routine_raw', 'client_routine_cell']) {
+        await db.query(`DELETE FROM ${tbl} WHERE routine_type_id = $1`, [id]);
+      }
+      await db.query('DELETE FROM routine_work_type WHERE id = $1', [id]);
+      await audit(db, { actorId: u.id, entity: 'routine_work_type', entityId: id, action: 'DELETE', before });
+      return { deleted: 'HARD' as const, cancelled: 0 };
+    }
+    await db.query('UPDATE routine_work_type SET active = false, deleted_at = now() WHERE id = $1', [id]);
+    const cancelled = await q<{ id: number; clientId: number; title: string; prevStatus: string }>(
+      db,
+      `UPDATE task SET prev_status = status, status = 'CANCELLED', cancel_reason = 'WORK_DELETED'
+       WHERE kind = 'ROUTINE' AND routine_type_id = $1 AND status IN ('TODO', 'IN_PROGRESS', 'WAITING_CLIENT')
+       RETURNING id, client_id AS "clientId", title, prev_status AS "prevStatus"`,
+      [id],
+    );
+    for (const t of cancelled) {
+      await stopTimersForTask(db, t.id);
+      await audit(db, {
+        actorId: u.id, entity: 'task', entityId: t.id, clientId: t.clientId, action: 'CANCEL_WORK_DELETED',
+        before: { status: t.prevStatus }, after: { status: 'CANCELLED', title: t.title },
+      });
+    }
+    await audit(db, { actorId: u.id, entity: 'routine_work_type', entityId: id, action: 'DELETE', before, after: { deleted: 'SOFT', tasksCancelled: cancelled.length } });
+    return { deleted: 'SOFT' as const, cancelled: cancelled.length };
   });
-  res.status(204).end();
+  res.json(result);
 });
 
 // ---------- Shoshilinch vazifa shablonlari ----------
