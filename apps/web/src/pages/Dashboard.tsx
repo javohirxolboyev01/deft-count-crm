@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Siren } from 'lucide-react';
+import { AlertTriangle, Siren, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router-dom';
@@ -8,10 +8,11 @@ import { DashboardKpis } from '@/components/DashboardKpis';
 import { ClientStatusBadge, TaskStatusBadge } from '@/components/StatusBadge';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader } from '@/components/ui/card';
+import { ConfirmDialog } from '@/components/ui/dialog';
 import { Select } from '@/components/ui/select';
 import { Empty, QueryState } from '@/components/ui/states';
 import { KpiSkeleton, TableSkeleton } from '@/components/ui/skeleton';
-import { invalidateTasks, useAccountants } from '@/hooks/tasks';
+import { invalidateTasks, taskTitle, useAccountants } from '@/hooks/tasks';
 import { useClientIssues, useDashboardClients } from '@/hooks/clientIssues';
 import { useOpenTask } from '@/hooks/outlet';
 import { api, qs } from '@/lib/api';
@@ -35,8 +36,37 @@ function Avatar({ name }: { name: string }) {
   return <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-brand-light text-xs font-semibold text-brand" aria-hidden>{initials}</span>;
 }
 
+/** Bo'sh holat rasmi: bo'sh planshet + yashil belgi. Ranglar palitradan: gray/green/white qorong'i rejimda o'zi aylanadi, `dark:` kerak emas */
+function EmptyIllustration() {
+  return (
+    <svg viewBox="0 0 120 96" className="h-20 w-24" fill="none" aria-hidden="true">
+      <ellipse cx="60" cy="88" rx="38" ry="5" className="fill-gray-100" />
+      <rect x="30" y="14" width="56" height="70" rx="8" className="fill-white stroke-gray-200" strokeWidth="2" />
+      <rect x="46" y="8" width="24" height="12" rx="4" className="fill-gray-100 stroke-gray-300" strokeWidth="2" />
+      <rect x="40" y="32" width="8" height="8" rx="2" className="stroke-gray-300" strokeWidth="2" />
+      <rect x="53" y="34" width="24" height="4" rx="2" className="fill-gray-200" />
+      <rect x="40" y="48" width="8" height="8" rx="2" className="stroke-gray-300" strokeWidth="2" />
+      <rect x="53" y="50" width="18" height="4" rx="2" className="fill-gray-200" />
+      <rect x="40" y="64" width="8" height="8" rx="2" className="stroke-gray-300" strokeWidth="2" />
+      <rect x="53" y="66" width="21" height="4" rx="2" className="fill-gray-200" />
+      <circle cx="86" cy="72" r="14" className="fill-green-500 stroke-white" strokeWidth="3" />
+      <path d="M80 72.5l4 4 8-8.5" className="stroke-on-brand" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+/** Muddati o'tgan / shoshilinch kartalari bo'sh bo'lsa: rasm + matn (ro'yxat balandligiga yaqin) */
+function CardEmpty({ text }: { text: string }) {
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center gap-2 px-4 pb-6 pt-2 text-center sm:px-5">
+      <EmptyIllustration />
+      <span className="text-sm font-medium text-gray-500">{text}</span>
+    </div>
+  );
+}
+
 export default function Dashboard() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const qc = useQueryClient();
   const openTask = useOpenTask();
   const accountants = useAccountants();
@@ -57,6 +87,17 @@ export default function Dashboard() {
     queryKey: ['tasks', 'urgent-open'],
     queryFn: () => api.get<Task[]>(`/tasks${qs({ kind: 'URGENT', status: 'OPEN' })}`),
     refetchInterval: 60_000,
+  });
+  // Shoshilinch vazifani kartaning o'zidan o'chirish (serverda CANCELLED / LEADER_DELETED, audit'da qoladi)
+  const [deleting, setDeleting] = useState<Task | null>(null);
+  const deleteTask = useMutation({
+    mutationFn: (id: number) => api.del(`/tasks/${id}`),
+    onSuccess: () => {
+      setDeleting(null);
+      toast.success(t('task.deleted'));
+      invalidateTasks(qc);
+    },
+    onError: (e) => toast.error(errorText(e, t)),
   });
   const assign = useMutation({
     mutationFn: (p: { clientId: number; accountantId: number | null }) => api.patch(`/clients/${p.clientId}`, { accountantId: p.accountantId }),
@@ -91,7 +132,7 @@ export default function Dashboard() {
         <Card className="flex min-w-0 flex-col border-l-4 border-l-overdue">
           <CardHeader title={<span className="flex items-center gap-2 text-overdue"><AlertTriangle className="h-4 w-4" /> {t('dashboard.alerts')} ({clients.data?.summary?.tasksOverdue ?? 0})</span>} />
           {!clients.data?.overdueTasks.length ? (
-            <p className="px-4 pb-4 text-sm text-gray-500 sm:px-5">{t('dashboard.noOverdue')}</p>
+            <CardEmpty text={t('dashboard.noOverdue')} />
           ) : (
             <ul className="max-h-72 divide-y overflow-y-auto text-sm">
               {clients.data.overdueTasks.map((o) => (
@@ -114,12 +155,12 @@ export default function Dashboard() {
           <CardHeader title={<span className="flex items-center gap-2 text-red-600"><Siren className="h-4 w-4" /> {t('dashboard.urgent')} ({urgent.data?.length ?? 0})</span>} />
           <QueryState q={urgent}>
             {!urgent.data?.length ? (
-              <p className="px-4 pb-4 text-sm text-gray-500 sm:px-5">{t('dashboard.noUrgent')}</p>
+              <CardEmpty text={t('dashboard.noUrgent')} />
             ) : (
               <ul className="max-h-72 divide-y overflow-y-auto text-sm">
                 {urgent.data.map((u) => (
-                  <li key={u.id}>
-                    <button className="w-full px-4 py-2 text-left transition-colors hover:bg-red-50 sm:px-5" onClick={() => openTask(u.id)}>
+                  <li key={u.id} className="flex items-stretch transition-colors hover:bg-red-50">
+                    <button className="min-w-0 flex-1 py-2 pl-4 text-left sm:pl-5" onClick={() => openTask(u.id)}>
                       <span className="flex items-center gap-2">
                         <span className="truncate font-medium">{u.title}</span>
                         <span className="ml-auto shrink-0"><TaskStatusBadge status={u.status} /></span>
@@ -130,11 +171,30 @@ export default function Dashboard() {
                         <span className="w-28 shrink-0 truncate text-right">{u.assigneeName ?? t('task.unassigned')}</span>
                       </span>
                     </button>
+                    <span className="flex shrink-0 items-center px-3 sm:pr-4">
+                      <button
+                        type="button"
+                        className="flex h-8 w-8 items-center justify-center rounded-md border border-red-200 bg-red-50 text-red-600 transition-colors hover:border-red-500 hover:bg-red-500 hover:text-on-brand"
+                        title={t('task.delete')}
+                        aria-label={t('task.delete')}
+                        onClick={() => setDeleting(u)}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </span>
                   </li>
                 ))}
               </ul>
             )}
           </QueryState>
+          <ConfirmDialog
+            open={deleting !== null}
+            onClose={() => setDeleting(null)}
+            onConfirm={() => deleting && deleteTask.mutate(deleting.id)}
+            loading={deleteTask.isPending}
+            title={t('task.deleteTitle')}
+            text={deleting ? t('task.deleteText', { title: taskTitle(deleting, i18n.language), client: deleting.clientName }) : undefined}
+          />
         </Card>
       </div>
 
