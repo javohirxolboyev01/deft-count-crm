@@ -165,13 +165,14 @@ function ReadyCard({ s }: { s: DashboardClients['summary'] }) {
 }
 
 /**
- * 3. Jarayonda: jarayondagi mijozlarning tanlangan oydagi vazifalari holat bo'yicha (6.4, oqim tartibida) — har holat
- * o'z ustuni: tepada rangli son, balandligi songa mos, pastda nomi.
+ * 3. Jarayonda: katta son — jarayondagi mijozlar; ustunlar — tanlangan oyning BARCHA vazifalari holat bo'yicha
+ * (6.4, oqim tartibida). Faqat "Jarayonda" holatidagi mijozlar olinmaydi: "Jarayonda"/"Mijozdan kutilmoqda"
+ * vazifasi ko'pincha kechikkan mijozda bo'ladi va u holda kartada doim 0 ko'rinardi.
  * Pill — mijozdan hujjat kutilayotgan mijozlar soni (6.5, to'q sariq).
  */
 function InProgressCard({ data }: { data: DashboardClients }) {
   const { t } = useTranslation();
-  const list = (data.clients ?? []).filter((c) => c.state === 'IN_PROGRESS');
+  const list = data.clients ?? [];
   const waitingClients = list.filter((c) => c.waiting > 0).length;
   const sum = (k: 'done' | 'inProgress' | 'waiting' | 'todo') => list.reduce((n, c) => n + (c[k] ?? 0), 0);
   const total = list.reduce((n, c) => n + c.total, 0);
