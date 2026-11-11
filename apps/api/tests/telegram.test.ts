@@ -1,4 +1,5 @@
 import { beforeAll, describe, expect, it } from 'vitest';
+import { renderNotification } from '../src/modules/messages';
 import { botUserByChat, runCommand } from '../src/modules/telegramCommands';
 import { api, createUser, pool, resetDb, seedTeam, token } from './helpers';
 
@@ -9,10 +10,32 @@ let operator: number;
 const link = (userId: number, chatId: number) =>
   pool.query('UPDATE app_user SET telegram_chat_id = $2 WHERE id = $1', [userId, chatId]);
 
+/**
+ * Telegram HTML talabi: faqat ruxsat etilgan teglar, hammasi yopilgan, `<`/`&` ekranlangan.
+ * Buzilsa Telegram 400 qaytaradi va xabar yetmaydi.
+ */
+function assertTelegramHtml(html: string) {
+  const stack: string[] = [];
+  for (const m of html.matchAll(/<(\/?)([a-z]+)[^>]*>|&(?!amp;|lt;|gt;|quot;)/g)) {
+    if (m[0] === '&') throw new Error(`ekranlanmagan &: ${html}`);
+    const [, close, tag] = m;
+    if (!['b', 'i', 'code', 'a', 'blockquote'].includes(tag!)) throw new Error(`ruxsatsiz teg <${tag}>`);
+    if (close) {
+      if (stack.pop() !== tag) throw new Error(`teg yopilishi noto'g'ri </${tag}>: ${html}`);
+    } else stack.push(tag!);
+  }
+  expect(stack).toEqual([]);
+}
+
+/** Tekshiruv uchun ko'rinadigan matn (teglarsiz) */
+const plain = (html: string) => html.replace(/<[^>]+>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+
 const ask = async (chatId: number, cmd: string) => {
   const u = await botUserByChat(chatId);
   if (!u) throw new Error('bog\'lanmagan');
-  return runCommand(u, cmd);
+  const html = await runCommand(u, cmd);
+  assertTelegramHtml(html);
+  return plain(html);
 };
 
 beforeAll(async () => {
@@ -68,6 +91,48 @@ describe('Telegram bot buyruqlari: rollar aralashmaydi', () => {
       const text = await ask(1004, cmd);
       expect(text).not.toContain('Alfa');
       expect(text).not.toContain('Beta');
+    }
+  });
+
+  it('bildirishnoma matni Telegram HTML: maxsus belgilar ekranlanadi, teglar to\'g\'ri', () => {
+    const p = {
+      title: 'Akt <sverka> & hisob',
+      taskTitle: 'Akt <sverka> & hisob',
+      clientName: 'A&B <MCHJ>',
+      dueAt: '2026-11-11T13:00:00.000Z',
+      createdByName: 'Rahbar',
+      fromName: 'Aziza',
+      actorName: 'Aziza',
+      reasonCode: 'OTHER',
+      reasonText: 'Menda <vaqt> yo\'q & band',
+      toName: 'Bobur',
+      leadName: 'X & Y',
+      stir: '123',
+      comment: '<b>',
+    };
+    for (const kind of ['URGENT_TASK', 'TASK_TRANSFER', 'TASK_DONE', 'TASK_OVERDUE', 'LEAD_WON']) {
+      for (const lang of ['uz', 'ru'] as const) {
+        const html = renderNotification(kind, p, lang);
+        assertTelegramHtml(html);
+        expect(html).not.toContain('<sverka>');
+      }
+    }
+    for (const accepted of [true, false]) {
+      assertTelegramHtml(renderNotification('TASK_TRANSFER_RESULT', { ...p, accepted, rejectReason: 'a < b' }, 'uz'));
+    }
+    const urgent = renderNotification('URGENT_TASK', p, 'uz');
+    expect(urgent).toContain('<b>Akt &lt;sverka&gt; &amp; hisob</b>');
+    expect(plain(urgent)).toContain('Mijoz: A&B <MCHJ>');
+    expect(plain(urgent)).toContain('Muddat: 11.11.2026 18:00');
+    const clients = renderNotification('CLIENTS_OVERDUE', {
+      date: '2026-11-11', scope: 'ALL', clientCount: 1, taskCount: 2, totalOverdueClients: 1,
+      clients: [{ clientName: 'A&B', days: 3, tasks: 2, waiting: 0, accountantName: 'Aziza' }],
+    }, 'uz');
+    assertTelegramHtml(clients);
+    for (const p2 of [{ daysLeft: 1, nextPaymentDate: '2026-12-15', amount: 5, hasCard: true, billingUrl: 'https://x.y/a?b=1&c=2' }]) {
+      assertTelegramHtml(renderNotification('SERVER_PAYMENT', p2, 'ru'));
+      assertTelegramHtml(renderNotification('SERVER_PAYMENT', { ...p2, trial: true }, 'uz'));
+      assertTelegramHtml(renderNotification('SERVER_PAYMENT', { ...p2, paymentFailed: true }, 'uz'));
     }
   });
 

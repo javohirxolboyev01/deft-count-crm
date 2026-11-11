@@ -3,6 +3,7 @@ import type { Role } from '../common/auth';
 import { TZ, nowTz } from '../common/time';
 import { one, pool, q } from '../db';
 import { WORKS_SCOPE } from './taskScope';
+import { b, esc, i } from './telegramFormat';
 
 /**
  * Telegram bot buyruqlari (faqat o'qish). Qaror: chat → xodim har so'rovda bazadan topiladi (faol, o'chirilmagan),
@@ -11,6 +12,7 @@ import { WORKS_SCOPE } from './taskScope';
  *  - Buxgalter: faqat o'ziga biriktirilgan vazifalar ("Mening kunim" doirasi bilan bir xil).
  *  - Sotuv operatori: buyruq yo'q (unga vazifa bildirishnomasi ham bormaydi).
  * Botdan holat o'zgartirilmaydi — "Bajarildi" faqat CRM'da (undo va audit oqimi o'sha yerda).
+ * Javoblar HTML (telegramFormat.ts): har bir dinamik qiymat esc/b/i orqali.
  */
 
 type Lang = 'uz' | 'ru';
@@ -36,8 +38,8 @@ export const COMMAND_DESCRIPTIONS: Record<BotCommand, Record<Lang, Record<'LEADE
     ru: { LEADER: '', ACCOUNTANT: 'Мои задачи: срочные, просроченные, на сегодня', OPERATOR: '' },
   },
   urgent: {
-    uz: { LEADER: 'Barcha shoshilinch vazifalar va holati', ACCOUNTANT: 'Menga berilgan shoshilinch vazifalar', OPERATOR: '' },
-    ru: { LEADER: 'Все срочные задачи и их статус', ACCOUNTANT: 'Мои срочные задачи', OPERATOR: '' },
+    uz: { LEADER: 'Shoshilinch vazifalar: kimda va qaysi holatda', ACCOUNTANT: 'Menga berilgan shoshilinch vazifalar', OPERATOR: '' },
+    ru: { LEADER: 'Срочные задачи: у кого и в каком статусе', ACCOUNTANT: 'Мои срочные задачи', OPERATOR: '' },
   },
   overdue: {
     uz: { LEADER: 'Muddati o\'tgan vazifalar (buxgalterlar bo\'yicha)', ACCOUNTANT: '', OPERATOR: '' },
@@ -57,7 +59,7 @@ export function commandsFor(role: Role, lang: Lang) {
   return COMMANDS_BY_ROLE[role].map((c) => ({ command: c, description: COMMAND_DESCRIPTIONS[c][lang][role] }));
 }
 
-/** Telegram bitta xabar chegarasi 4096; zaxira bilan kesamiz */
+/** Telegram bitta xabar chegarasi 4096 belgi; HTML teglari bilan zaxira qoldiramiz */
 const MAX_LEN = 3800;
 const OPEN = `('TODO','IN_PROGRESS','WAITING_CLIENT')`;
 
@@ -88,30 +90,50 @@ const ROW_SELECT = `t.id, t.assignee_id AS "assigneeId", t.title, t.status, t.du
   FROM task t JOIN client c ON c.id = t.client_id
   LEFT JOIN app_user a ON a.id = t.assignee_id LEFT JOIN app_user cb ON cb.id = t.created_by`;
 
-function line(r: Row, i: number, lang: Lang, opts: { assignee?: boolean } = {}) {
+const mark = (r: Row) =>
+  r.status === 'DONE' ? '✅' : r.overdue ? '🔴' : r.status === 'WAITING_CLIENT' ? '🟠' : r.status === 'IN_PROGRESS' ? '🔵' : '⚪';
+
+/**
+ * Bitta vazifa — kartochka:
+ *   1. 🔴 Vazifa nomi
+ *   🏢 Mijoz
+ *   👤 Mas'ul          (faqat rahbarga)
+ *   ⏰ 11.11 18:00 · Jarayonda
+ */
+function card(r: Row, n: number, lang: Lang, opts: { assignee?: boolean } = {}) {
   const uz = lang === 'uz';
-  const mark = r.status === 'DONE' ? '✅' : r.overdue ? '🔴' : r.status === 'WAITING_CLIENT' ? '🟠' : r.status === 'IN_PROGRESS' ? '🔵' : '⚪';
-  const who = opts.assignee ? `\n   ${uz ? "Mas'ul" : 'Ответств.'}: ${r.assigneeName ?? '—'}` : '';
-  const when = r.status === 'DONE' ? `${uz ? 'bajarildi' : 'выполнено'} ${fmt(r.doneAt)}` : `${uz ? 'muddat' : 'срок'} ${fmt(r.dueAt)}`;
-  return `${i + 1}. ${mark} ${r.title} — ${r.clientName}${who}\n   ${STATUS[r.status]?.[lang] ?? r.status} · ${when}`;
+  const when = r.status === 'DONE' ? `✔️ ${fmt(r.doneAt)}` : `⏰ ${r.overdue ? b(fmt(r.dueAt)) : esc(fmt(r.dueAt))}`;
+  return [
+    `${b(`${n}.`)} ${mark(r)} ${b(r.title)}`,
+    `🏢 ${esc(r.clientName)}`,
+    opts.assignee ? `👤 ${esc(r.assigneeName ?? (uz ? 'Biriktirilmagan' : 'Не назначено'))}` : null,
+    `${when} · ${i(STATUS[r.status]?.[lang] ?? r.status)}`,
+  ]
+    .filter(Boolean)
+    .join('\n');
 }
 
-/** Ro'yxatni xabar chegarasiga sig'diradi: sig'magani "… yana N ta" bo'ladi */
-function fit(header: string, lines: string[], lang: Lang, footer = '') {
+/** Bloklarni xabar chegarasiga sig'diradi (bloklar orasida bo'sh qator): sig'magani "… yana N ta" bo'ladi */
+function fit(header: string, blocks: string[], lang: Lang, footer = '') {
+  const foot = footer ? `\n\n${footer}` : '';
   let out = header;
-  for (let i = 0; i < lines.length; i++) {
-    const rest = lines.length - i;
-    const tail = `\n… ${lang === 'uz' ? `yana ${rest} ta` : `ещё ${rest}`}`;
-    if (out.length + lines[i].length + 1 + tail.length + footer.length > MAX_LEN) return out + tail + footer;
-    out += `\n${lines[i]}`;
+  for (let k = 0; k < blocks.length; k++) {
+    const rest = blocks.length - k;
+    const tail = `\n\n${i(lang === 'uz' ? `… yana ${rest} ta` : `… ещё ${rest}`)}`;
+    if (out.length + blocks[k].length + 2 + tail.length + foot.length > MAX_LEN) return out + tail + foot;
+    out += `\n\n${blocks[k]}`;
   }
-  return out + footer;
+  return out + foot;
 }
 
 const LEGEND: Record<Lang, string> = {
-  uz: "\n\n🔴 muddati o'tgan · 🔵 jarayonda · 🟠 mijozdan kutilmoqda · ⚪ boshlanmagan",
-  ru: '\n\n🔴 просрочено · 🔵 в работе · 🟠 ждём клиента · ⚪ не начато',
+  uz: i("🔴 muddati o'tgan · 🔵 jarayonda · 🟠 mijozdan kutilmoqda · ⚪ boshlanmagan"),
+  ru: i('🔴 просрочено · 🔵 в работе · 🟠 ждём клиента · ⚪ не начато'),
 };
+
+/** Sarlavha: belgi + qalin nom, ostida qisqa xulosa */
+const head = (icon: string, title: string, summary?: string) => `${icon} ${b(title)}${summary ? `\n${summary}` : ''}`;
+const now = () => nowTz().toFormat('dd.MM.yyyy HH:mm');
 
 /** Shoshilinch vazifalar: rahbar — hammasi, buxgalter — faqat o'zi. Bugun bajarilganlari ham ko'rinadi. */
 async function urgent(u: BotUser) {
@@ -126,12 +148,17 @@ async function urgent(u: BotUser) {
      ORDER BY (t.status = 'DONE'), t.due_at NULLS LAST, t.id`,
     leader ? [todayStart] : [todayStart, u.id],
   );
-  if (!rows.length) return uz ? '🚨 Ochiq shoshilinch vazifa yo\'q.' : '🚨 Открытых срочных задач нет.';
+  if (!rows.length) return head('🚨', uz ? 'Shoshilinch vazifalar' : 'Срочные задачи', i(uz ? "Ochiq shoshilinch vazifa yo'q." : 'Открытых срочных задач нет.'));
   const open = rows.filter((r) => r.status !== 'DONE').length;
-  const header = uz
-    ? `🚨 Shoshilinch vazifalar: ochiq ${open} ta, bugun bajarilgan ${rows.length - open} ta`
-    : `🚨 Срочные задачи: открыто ${open}, выполнено сегодня ${rows.length - open}`;
-  return fit(header, rows.map((r, i) => line(r, i, u.language, { assignee: leader })), u.language, LEGEND[u.language]);
+  const summary = uz
+    ? `Ochiq: ${b(open)} · Bugun bajarilgan: ${b(rows.length - open)}`
+    : `Открыто: ${b(open)} · Выполнено сегодня: ${b(rows.length - open)}`;
+  return fit(
+    head('🚨', uz ? 'Shoshilinch vazifalar' : 'Срочные задачи', summary),
+    rows.map((r, k) => card(r, k + 1, u.language, { assignee: leader })),
+    u.language,
+    LEGEND[u.language],
+  );
 }
 
 /**
@@ -151,21 +178,23 @@ async function overdue(u: BotUser) {
             (array_agg(row_to_json(od) ORDER BY od."dueAt"))[1:5] AS items
      FROM od GROUP BY od."assigneeId" ORDER BY count(*) DESC`,
   );
-  if (!groups.length) return uz ? "✅ Muddati o'tgan vazifa yo'q." : '✅ Просроченных задач нет.';
+  const title = uz ? "Muddati o'tgan vazifalar" : 'Просроченные задачи';
+  if (!groups.length) return head('✅', title, i(uz ? "Muddati o'tgan vazifa yo'q." : 'Просроченных задач нет.'));
   const total = groups.reduce((s, g) => s + g.total, 0);
-  const header = uz ? `🔴 Muddati o'tgan vazifalar: ${total} ta` : `🔴 Просроченные задачи: ${total}`;
   const blocks = groups.map((g) => {
     const name = g.assigneeName ?? (uz ? 'Biriktirilmagan' : 'Не назначено');
-    const head = uz
-      ? `\n👤 ${name} — ${g.total} ta (boshlanmagan ${g.todo})`
-      : `\n👤 ${name} — ${g.total} (не начато ${g.todo})`;
-    const items = g.items.map((r, i) =>
-      line({ ...r, dueAt: r.dueAt ? new Date(r.dueAt) : null, doneAt: null, overdue: true }, i, u.language),
-    );
-    const more = g.total > g.items.length ? `\n   … ${uz ? `yana ${g.total - g.items.length} ta` : `ещё ${g.total - g.items.length}`}` : '';
-    return `${head}\n${items.join('\n')}${more}`;
+    const top = uz
+      ? `👤 ${b(name)} — ${b(g.total)} ta ${i(`(boshlanmagan ${g.todo})`)}`
+      : `👤 ${b(name)} — ${b(g.total)} ${i(`(не начато ${g.todo})`)}`;
+    // Ixcham qator: holat · nom — mijoz · muddat
+    const items = g.items.map((r) => {
+      const row = { ...r, dueAt: r.dueAt ? new Date(r.dueAt) : null, overdue: true } as Row;
+      return `${mark(row)} ${esc(row.title)} — ${esc(row.clientName)} · ${esc(fmt(row.dueAt))}`;
+    });
+    const more = g.total > g.items.length ? `\n${i(uz ? `… yana ${g.total - g.items.length} ta` : `… ещё ${g.total - g.items.length}`)}` : '';
+    return `${top}\n<blockquote>${items.join('\n')}${more}</blockquote>`;
   });
-  return fit(header, blocks, u.language, LEGEND[u.language]);
+  return fit(head('🔴', title, uz ? `Jami: ${b(total)} ta` : `Всего: ${b(total)}`), blocks, u.language, LEGEND[u.language]);
 }
 
 /** Rahbar: buxgalterlar kesimi (dashboarddagi Buxgalterlar jadvali formulalari, "Kechikkan" = muddati o'tgan TODO) */
@@ -187,14 +216,20 @@ async function team(u: BotUser) {
      GROUP BY u.id ORDER BY u.full_name`,
     [todayStart],
   );
-  if (!rows.length) return uz ? "Faol buxgalter yo'q." : 'Активных бухгалтеров нет.';
-  const header = uz ? `👥 Buxgalterlar (${nowTz().toFormat('dd.MM.yyyy HH:mm')})` : `👥 Бухгалтеры (${nowTz().toFormat('dd.MM.yyyy HH:mm')})`;
-  const lines = rows.map((r) =>
-    uz
-      ? `\n👤 ${r.fullName}\n   Ochiq: ${r.open} · Kechikkan: ${r.overdue}${r.overdue ? ' 🔴' : ''} · Mijozdan kutilmoqda: ${r.waiting}\n   Shoshilinch: ${r.urgent}${r.urgent ? ' 🚨' : ''} · Bugun bajardi: ${r.doneToday}`
-      : `\n👤 ${r.fullName}\n   Открыто: ${r.open} · Просрочено: ${r.overdue}${r.overdue ? ' 🔴' : ''} · Ждут клиента: ${r.waiting}\n   Срочные: ${r.urgent}${r.urgent ? ' 🚨' : ''} · Выполнено сегодня: ${r.doneToday}`,
+  const title = uz ? 'Buxgalterlar' : 'Бухгалтеры';
+  if (!rows.length) return head('👥', title, i(uz ? "Faol buxgalter yo'q." : 'Активных бухгалтеров нет.'));
+  const L = (a: string, r: string) => (uz ? a : r);
+  const blocks = rows.map((r) =>
+    [
+      `👤 ${b(r.fullName)}`,
+      `├ ${L('Ochiq', 'Открыто')}: ${b(r.open)}`,
+      `├ ${L('Kechikkan', 'Просрочено')}: ${b(r.overdue)}${r.overdue ? ' 🔴' : ''}`,
+      `├ ${L('Mijozdan kutilmoqda', 'Ждут клиента')}: ${b(r.waiting)}`,
+      `├ ${L('Shoshilinch', 'Срочные')}: ${b(r.urgent)}${r.urgent ? ' 🚨' : ''}`,
+      `└ ${L('Bugun bajardi', 'Выполнено сегодня')}: ${b(r.doneToday)}${r.doneToday ? ' ✅' : ''}`,
+    ].join('\n'),
   );
-  return fit(header, lines, u.language);
+  return fit(head('👥', title, i(now())), blocks, u.language);
 }
 
 /** Buxgalter: o'z vazifalari ("Mening kunim" guruhlari bilan bir xil) */
@@ -212,33 +247,62 @@ async function myTasks(u: BotUser) {
   const urgentRows = rows.filter((r) => r.kind === 'URGENT');
   const overdueRows = rows.filter((r) => r.overdue && r.status === 'TODO' && r.kind !== 'URGENT');
   const todayRows = rows.filter((r) => isToday(r.dueAt) && !r.overdue && r.kind !== 'URGENT');
+  const title = uz ? 'Mening vazifalarim' : 'Мои задачи';
+  const summary = uz ? `Jami ochiq: ${b(rows.length)} ta` : `Всего открыто: ${b(rows.length)}`;
   if (!urgentRows.length && !overdueRows.length && !todayRows.length) {
-    return uz
-      ? `✅ Shoshilinch, kechikkan va bugungi vazifa yo'q. Jami ochiq: ${rows.length} ta.`
-      : `✅ Срочных, просроченных и на сегодня задач нет. Всего открыто: ${rows.length}.`;
+    return head('📋', title, `${summary}\n\n${i(uz ? "✅ Shoshilinch, kechikkan va bugungi vazifa yo'q." : '✅ Срочных, просроченных и на сегодня задач нет.')}`);
   }
-  const section = (title: string, list: Row[]) => (list.length ? [`\n${title} (${list.length})`, ...list.map((r, i) => line(r, i, u.language))] : []);
-  const lines = [
-    ...section(uz ? '🚨 Shoshilinch' : '🚨 Срочные', urgentRows),
-    ...section(uz ? "🔴 Muddati o'tgan" : '🔴 Просроченные', overdueRows),
-    ...section(uz ? '📅 Bugun' : '📅 Сегодня', todayRows),
+  // Bo'lim sarlavhasi + kartochkalar; raqamlash har bo'limda 1 dan
+  const section = (icon: string, name: string, list: Row[]) =>
+    list.length ? [`${icon} ${b(`${name.toUpperCase()} · ${list.length}`)}`, ...list.map((r, k) => card(r, k + 1, u.language))] : [];
+  const blocks = [
+    ...section('🚨', uz ? 'Shoshilinch' : 'Срочные', urgentRows),
+    ...section('🔴', uz ? "Muddati o'tgan" : 'Просроченные', overdueRows),
+    ...section('📅', uz ? 'Bugun' : 'Сегодня', todayRows),
   ];
-  const header = uz ? `📋 ${u.fullName}: jami ochiq ${rows.length} ta` : `📋 ${u.fullName}: всего открыто ${rows.length}`;
-  return fit(header, lines, u.language, uz ? '\n\nHolatni CRM\'da o\'zgartiring.' : '\n\nСтатус меняйте в CRM.');
+  return fit(head('📋', title, summary), blocks, u.language, i(uz ? "Holatni CRM'da o'zgartiring." : 'Статус меняйте в CRM.'));
 }
 
 export function helpText(u: BotUser) {
   const uz = u.language === 'uz';
+  const hello = `👋 ${b(`${uz ? 'Salom' : 'Здравствуйте'}, ${u.fullName}!`)}`;
   if (u.role === 'OPERATOR') {
-    return uz
-      ? `Salom, ${u.fullName}. Sotuv operatori uchun bot buyruqlari yo'q.`
-      : `Здравствуйте, ${u.fullName}. Для оператора продаж команд бота нет.`;
+    return `${hello}\n\n${i(uz ? "Sotuv operatori uchun bot buyruqlari yo'q." : 'Для оператора продаж команд бота нет.')}`;
   }
-  const list = commandsFor(u.role, u.language).map((c) => `/${c.command} — ${c.description}`).join('\n');
-  const intro = u.role === 'LEADER'
-    ? uz ? 'Sizga shoshilinch vazifa bajarilganda, muddat o\'tganda va boshqa xabarlar shu yerga keladi.' : 'Сюда приходят уведомления о выполнении, просрочках и др.'
-    : uz ? 'Sizga berilgan shoshilinch vazifa va eslatmalar shu yerga keladi (brauzer yopiq bo\'lsa ham).' : 'Сюда приходят срочные задачи и напоминания (даже если браузер закрыт).';
-  return `${uz ? 'Salom' : 'Здравствуйте'}, ${u.fullName}. ${intro}\n\n${list}`;
+  const L = (a: string, r: string) => (uz ? a : r);
+  // help menyuda bor, matnda takrorlanmaydi
+  const list = commandsFor(u.role, u.language)
+    .filter((c) => c.command !== 'help')
+    .map((c) => `/${c.command} — ${esc(c.description)}`)
+    .join('\n');
+  const settings = i(L("Qaysi xabar Telegram'ga kelishini CRM → Profil sahifasida sozlaysiz.", 'Какие уведомления приходят в Telegram — настраивается в CRM → Профиль.'));
+  if (u.role === 'LEADER') {
+    // Rahbar — nazorat qiluvchi: buyruqlar bilan istalgan paytda holatni ko'radi, muhim hodisalar o'zi keladi
+    return [
+      hello,
+      `👔 ${esc(L('Rahbar paneli — buxgalterlar ishini shu yerdan nazorat qilasiz.', 'Панель руководителя — здесь вы контролируете работу бухгалтеров.'))}`,
+      `${b(L('Nazorat', 'Контроль'))}\n${list}`,
+      `${b(L('Avtomatik xabarlar', 'Автоматические уведомления'))}\n${esc(
+        L(
+          "✅ Vazifa bajarildi\n🔴 Muddat o'tdi\n⏰ Kechikkan mijozlar (kunlik)\n🔁 O'tkazilgan vazifa qabul qilindi",
+          '✅ Задача выполнена\n🔴 Срок истёк\n⏰ Просроченные клиенты (ежедневно)\n🔁 Переданная задача принята',
+        ),
+      )}`,
+      settings,
+    ].join('\n\n');
+  }
+  return [
+    hello,
+    `🧾 ${esc(L("Sizga berilgan vazifalar shu yerga keladi — brauzer yopiq bo'lsa ham.", 'Сюда приходят ваши задачи — даже если браузер закрыт.'))}`,
+    `${b(L('Buyruqlar', 'Команды'))}\n${list}`,
+    `${b(L('Avtomatik xabarlar', 'Автоматические уведомления'))}\n${esc(
+      L(
+        "🚨 Shoshilinch vazifa\n🔁 Sizga vazifa o'tkazilmoqda\n🔴 Muddat o'tdi",
+        '🚨 Срочная задача\n🔁 Вам передают задачу\n🔴 Срок истёк',
+      ),
+    )}`,
+    i(L("Holat (Jarayonda, Bajarildi) CRM'da o'zgartiriladi.", 'Статус («В работе», «Выполнено») меняется в CRM.')),
+  ].join('\n\n');
 }
 
 /** Bog'langan chat egasi: faqat faol, o'chirilmagan xodim */
@@ -256,7 +320,7 @@ export async function runCommand(u: BotUser, cmd: string): Promise<string> {
   const allowed = COMMANDS_BY_ROLE[u.role] as string[];
   if (cmd === 'start' || cmd === 'help' || !allowed.includes(cmd)) {
     if (cmd !== 'start' && cmd !== 'help' && (COMMAND_DESCRIPTIONS as any)[cmd]) {
-      const deny = u.language === 'uz' ? "⛔ Bu buyruq sizning rolingiz uchun emas." : '⛔ Эта команда не для вашей роли.';
+      const deny = `⛔ ${b(u.language === 'uz' ? 'Bu buyruq sizning rolingiz uchun emas.' : 'Эта команда не для вашей роли.')}`;
       return `${deny}\n\n${helpText(u)}`;
     }
     return helpText(u);

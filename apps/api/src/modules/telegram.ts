@@ -12,7 +12,8 @@ export async function sendTelegram(chatId: number | string, text: string) {
   const r = await fetch(api('sendMessage'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ chat_id: chatId, text, disable_web_page_preview: true }),
+    // Matn HTML (telegramFormat.ts): dinamik qiymatlar esc() bilan ekranlangan
+    body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML', link_preview_options: { is_disabled: true } }),
     signal: AbortSignal.timeout(10000),
   });
   if (!r.ok) throw new Error(`Telegram ${r.status}: ${await r.text()}`);

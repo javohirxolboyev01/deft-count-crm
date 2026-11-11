@@ -92,7 +92,7 @@ describe('kechikkan mijozlar: buxgalter va rahbarga kunlik xabar', () => {
     expect(acc.clients.map((x: any) => x.clientId)).toEqual([a, c]);
 
     const text = renderNotification('CLIENTS_OVERDUE', leader, 'uz');
-    expect(text).toContain('ALFA — 5 kun, 2 ta vazifa (Aziza)');
+    expect(text).toContain('<b>ALFA</b> — 5 kun, 2 ta vazifa (Aziza)');
     expect(text).toContain('mijozdan kutilmoqda');
   });
 

@@ -1,84 +1,151 @@
 import { DateTime } from 'luxon';
 import { TZ } from '../common/time';
+import { b, esc, link, post } from './telegramFormat';
 
 type Lang = 'uz' | 'ru';
 
 const fmt = (iso?: string | null) =>
   iso ? DateTime.fromISO(iso).setZone(TZ).toFormat('dd.MM.yyyy HH:mm') : '—';
 
-/** Telegram uchun matn (foydalanuvchi tilida). Ilova ichida frontend o'zi i18n qiladi. */
+/**
+ * Telegram uchun matn (foydalanuvchi tilida, HTML — telegramFormat.ts). Ilova ichida frontend o'zi i18n qiladi.
+ * Ko'rinish bir xil "post": belgi + sarlavha, vazifa nomi qalin, maydonlar alohida qatorda, sabab/izoh iqtibosda.
+ */
 export function renderNotification(kind: string, p: any, lang: Lang): string {
   const uz = lang === 'uz';
+  const L = (a: string, r: string) => (uz ? a : r);
+  const client = { icon: '🏢', label: L('Mijoz', 'Клиент'), value: p.clientName };
   switch (kind) {
     case 'TASK_DONE':
-      return uz
-        ? `✅ Bajarildi: ${p.taskTitle}\nMijoz: ${p.clientName}\nBuxgalter: ${p.actorName ?? 'tizim'}`
-        : `✅ Выполнено: ${p.taskTitle}\nКлиент: ${p.clientName}\nБухгалтер: ${p.actorName ?? 'система'}`;
+      return post({
+        icon: '✅',
+        title: L('Vazifa bajarildi', 'Задача выполнена'),
+        subject: p.taskTitle,
+        rows: [client, { icon: '👤', label: L('Buxgalter', 'Бухгалтер'), value: p.actorName ?? L('tizim', 'система') }],
+      });
     case 'TASK_OVERDUE':
-      return uz
-        ? `🔴 Muddat o'tdi: ${p.taskTitle}\nMijoz: ${p.clientName}\nMuddat: ${fmt(p.dueAt)}\nMas'ul: ${p.assigneeName ?? '—'}`
-        : `🔴 Срок истёк: ${p.taskTitle}\nКлиент: ${p.clientName}\nСрок: ${fmt(p.dueAt)}\nОтветственный: ${p.assigneeName ?? '—'}`;
+      return post({
+        icon: '🔴',
+        title: L("Muddat o'tdi", 'Срок истёк'),
+        subject: p.taskTitle,
+        rows: [
+          client,
+          { icon: '⏰', label: L('Muddat', 'Срок'), value: fmt(p.dueAt), strong: true },
+          { icon: '👤', label: L("Mas'ul", 'Ответственный'), value: p.assigneeName ?? '—' },
+        ],
+      });
     case 'CLIENTS_OVERDUE': {
       const MAX = 20;
       const list: any[] = p.clients ?? [];
       const lines = list.slice(0, MAX).map((c, i) => {
         const who = p.scope === 'ALL' && c.accountantName ? ` (${c.accountantName})` : '';
         const wait = c.waiting ? (uz ? `, ${c.waiting} tasi mijozdan kutilmoqda` : `, ${c.waiting} ждут клиента`) : '';
-        return uz
-          ? `${i + 1}. ${c.clientName} — ${c.days} kun, ${c.tasks} ta vazifa${wait}${who}`
-          : `${i + 1}. ${c.clientName} — ${c.days} дн., задач: ${c.tasks}${wait}${who}`;
+        const rest = uz ? ` — ${c.days} kun, ${c.tasks} ta vazifa${wait}${who}` : ` — ${c.days} дн., задач: ${c.tasks}${wait}${who}`;
+        return `${i + 1}. ${b(c.clientName)}${esc(rest)}`;
       });
-      if (list.length > MAX) lines.push(uz ? `… va yana ${list.length - MAX} ta mijoz` : `… и ещё клиентов: ${list.length - MAX}`);
+      if (list.length > MAX) lines.push(esc(uz ? `… va yana ${list.length - MAX} ta mijoz` : `… и ещё клиентов: ${list.length - MAX}`));
       const date = p.date ? DateTime.fromISO(p.date).toFormat('dd.MM.yyyy') : '';
-      return uz
-        ? `⏰ Kechikkan mijozlar (${date})\nEslatma: ${p.clientCount} ta mijoz, ${p.taskCount} ta vazifa (jami kechikkan mijozlar: ${p.totalOverdueClients})\n\n${lines.join('\n')}`
-        : `⏰ Просроченные клиенты (${date})\nНапоминание: клиентов ${p.clientCount}, задач ${p.taskCount} (всего просроченных клиентов: ${p.totalOverdueClients})\n\n${lines.join('\n')}`;
+      return post({
+        icon: '⏰',
+        title: L(`Kechikkan mijozlar · ${date}`, `Просроченные клиенты · ${date}`),
+        rows: [
+          { icon: '🏢', label: L('Mijozlar', 'Клиентов'), value: p.clientCount, strong: true },
+          { icon: '📋', label: L('Vazifalar', 'Задач'), value: p.taskCount, strong: true },
+          { icon: '📊', label: L('Jami kechikkan mijozlar', 'Всего просроченных клиентов'), value: p.totalOverdueClients },
+        ],
+        // Uzun ro'yxat yig'ilgan holda turadi, bosilsa ochiladi
+        extra: lines.length ? `<blockquote expandable>${lines.join('\n')}</blockquote>` : null,
+      });
     }
     case 'URGENT_TASK':
-      return uz
-        ? `🚨 Shoshilinch vazifa: ${p.title}\nMijoz: ${p.clientName}\nMuddat: ${fmt(p.dueAt)}\nKim berdi: ${p.createdByName}`
-        : `🚨 Срочная задача: ${p.title}\nКлиент: ${p.clientName}\nСрок: ${fmt(p.dueAt)}\nПоставил: ${p.createdByName}`;
+      return post({
+        icon: '🚨',
+        title: L('SHOSHILINCH VAZIFA', 'СРОЧНАЯ ЗАДАЧА'),
+        subject: p.title,
+        rows: [
+          client,
+          { icon: '⏰', label: L('Muddat', 'Срок'), value: fmt(p.dueAt), strong: true },
+          { icon: '👤', label: L('Kim berdi', 'Поставил'), value: p.createdByName },
+        ],
+        footer: L("CRM'da vazifani oching va «Jarayonda» ni bosing.", 'Откройте задачу в CRM и нажмите «В работе».'),
+      });
     case 'TASK_TRANSFER': {
-      const reason = transferReason(p, uz);
-      return uz
-        ? `🔁 Sizga vazifa o'tkazilmoqda: ${p.taskTitle}\nMijoz: ${p.clientName}\nKimdan: ${p.fromName ?? '—'}${p.actorName !== p.fromName ? ` (so'rov: ${p.actorName})` : ''}\nSabab: ${reason}\nMuddat: ${fmt(p.dueAt)}\nCRM'da "Qabul qilaman" yoki "Rad etaman" ni bosing.`
-        : `🔁 Вам передают задачу: ${p.taskTitle}\nКлиент: ${p.clientName}\nОт кого: ${p.fromName ?? '—'}${p.actorName !== p.fromName ? ` (запрос: ${p.actorName})` : ''}\nПричина: ${reason}\nСрок: ${fmt(p.dueAt)}\nВ CRM нажмите «Принять» или «Отклонить».`;
+      const by = p.actorName && p.actorName !== p.fromName ? L(` (so'rov: ${p.actorName})`, ` (запрос: ${p.actorName})`) : '';
+      return post({
+        icon: '🔁',
+        title: L("Sizga vazifa o'tkazilmoqda", 'Вам передают задачу'),
+        subject: p.taskTitle,
+        rows: [
+          client,
+          { icon: '👤', label: L('Kimdan', 'От кого'), value: `${p.fromName ?? '—'}${by}` },
+          { icon: '⏰', label: L('Muddat', 'Срок'), value: fmt(p.dueAt), strong: true },
+        ],
+        quote: `${L('Sabab', 'Причина')}: ${transferReason(p, uz)}`,
+        footer: L("CRM'da «Qabul qilaman» yoki «Rad etaman» ni bosing.", 'В CRM нажмите «Принять» или «Отклонить».'),
+      });
     }
     case 'TASK_TRANSFER_RESULT':
       return p.accepted
-        ? uz
-          ? `✅ ${p.toName} vazifani qabul qildi: ${p.taskTitle}\nMijoz: ${p.clientName}`
-          : `✅ ${p.toName} принял(а) задачу: ${p.taskTitle}\nКлиент: ${p.clientName}`
-        : uz
-          ? `↩️ ${p.toName} vazifani rad etdi: ${p.taskTitle}\nMijoz: ${p.clientName}${p.rejectReason ? `\nSabab: ${p.rejectReason}` : ''}\nVazifa sizda qoldi.`
-          : `↩️ ${p.toName} отклонил(а) задачу: ${p.taskTitle}\nКлиент: ${p.clientName}${p.rejectReason ? `\nПричина: ${p.rejectReason}` : ''}\nЗадача осталась за вами.`;
+        ? post({
+            icon: '✅',
+            title: L('Vazifa qabul qilindi', 'Задача принята'),
+            subject: p.taskTitle,
+            rows: [client, { icon: '👤', label: L('Qabul qildi', 'Принял(а)'), value: p.toName }],
+          })
+        : post({
+            icon: '↩️',
+            title: L('Vazifa rad etildi', 'Задача отклонена'),
+            subject: p.taskTitle,
+            rows: [client, { icon: '👤', label: L('Rad etdi', 'Отклонил(а)'), value: p.toName }],
+            quote: p.rejectReason ? `${L('Sabab', 'Причина')}: ${p.rejectReason}` : null,
+            footer: L('Vazifa sizda qoldi.', 'Задача осталась за вами.'),
+          });
     case 'LEAD_WON':
-      return uz
-        ? `🤝 Yangi mijoz topildi: ${p.leadName}\nSTIR: ${p.stir}\nOperator: ${p.actorName}${p.comment ? `\nIzoh: ${p.comment}` : ''}\nBuxgalter biriktiring.`
-        : `🤝 Найден новый клиент: ${p.leadName}\nИНН: ${p.stir}\nОператор: ${p.actorName}${p.comment ? `\nКомментарий: ${p.comment}` : ''}\nНазначьте бухгалтера.`;
+      return post({
+        icon: '🤝',
+        title: L('Yangi mijoz topildi', 'Найден новый клиент'),
+        subject: p.leadName,
+        rows: [
+          { icon: '🆔', label: L('STIR', 'ИНН'), value: p.stir, strong: true },
+          { icon: '🎧', label: L('Operator', 'Оператор'), value: p.actorName },
+        ],
+        quote: p.comment ? `${L('Izoh', 'Комментарий')}: ${p.comment}` : null,
+        footer: L('Buxgalter biriktiring.', 'Назначьте бухгалтера.'),
+      });
     case 'SERVER_PAYMENT': {
+      const pay = p.billingUrl ? link(p.billingUrl, L("Railway'da to'lash →", 'Оплатить в Railway →')) : null;
       if (p.paymentFailed) {
-        return uz
-          ? `⚠️ Server to'lovi o'tmadi. Kartani tekshiring yoki to'lang, aks holda CRM to'xtab qolishi mumkin.\nTo'lash: ${p.billingUrl}`
-          : `⚠️ Оплата сервера не прошла. Проверьте карту или оплатите, иначе CRM может остановиться.\nОплатить: ${p.billingUrl}`;
+        return post({
+          icon: '⚠️',
+          title: L("Server to'lovi o'tmadi", 'Оплата сервера не прошла'),
+          quote: L("Kartani tekshiring yoki to'lang, aks holda CRM to'xtab qolishi mumkin.", 'Проверьте карту или оплатите, иначе CRM может остановиться.'),
+          extra: pay,
+        });
       }
       const date = p.nextPaymentDate ? DateTime.fromISO(p.nextPaymentDate).toFormat('dd.MM.yyyy') : '—';
       const amount = p.amount != null ? ` (~$${Number(p.amount).toFixed(2)})` : '';
-      const when = p.daysLeft === 0 ? (uz ? 'bugun' : 'сегодня') : uz ? `${p.daysLeft} kundan keyin` : `через ${p.daysLeft} дн.`;
+      const when = p.daysLeft === 0 ? L('bugun', 'сегодня') : uz ? `${p.daysLeft} kundan keyin` : `через ${p.daysLeft} дн.`;
       if (p.trial) {
-        return uz
-          ? `⏳ Server sinov muddati ${when} tugaydi (${date}).\nCRM to'xtamasligi uchun Railway'da Hobby tarifini tanlang va karta ulang.\nTo'lash: ${p.billingUrl}`
-          : `⏳ Пробный период сервера закончится ${when} (${date}).\nЧтобы CRM не остановилась, выберите тариф Hobby в Railway и привяжите карту.\nОплатить: ${p.billingUrl}`;
+        return post({
+          icon: '⏳',
+          title: L(`Server sinov muddati ${when} tugaydi`, `Пробный период сервера закончится ${when}`),
+          rows: [{ icon: '📅', label: L('Sana', 'Дата'), value: date, strong: true }],
+          quote: L("CRM to'xtamasligi uchun Railway'da Hobby tarifini tanlang va karta ulang.", 'Чтобы CRM не остановилась, выберите тариф Hobby в Railway и привяжите карту.'),
+          extra: pay,
+        });
       }
       const card = p.hasCard
-        ? uz ? "Kartadan o'zi yechiladi — kartada pul borligini tekshiring." : 'Спишется с карты автоматически — проверьте баланс карты.'
-        : uz ? "Karta ulanmagan — Railway'da karta ulang." : 'Карта не привязана — привяжите карту в Railway.';
-      return uz
-        ? `💳 Server to'lovi ${when}: ${date}${amount}\n${card}\nTo'lash: ${p.billingUrl}`
-        : `💳 Оплата сервера ${when}: ${date}${amount}\n${card}\nОплатить: ${p.billingUrl}`;
+        ? L("Kartadan o'zi yechiladi — kartada pul borligini tekshiring.", 'Спишется с карты автоматически — проверьте баланс карты.')
+        : L("Karta ulanmagan — Railway'da karta ulang.", 'Карта не привязана — привяжите карту в Railway.');
+      return post({
+        icon: '💳',
+        title: L(`Server to'lovi ${when}: ${date}${amount}`, `Оплата сервера ${when}: ${date}${amount}`),
+        quote: card,
+        extra: pay,
+      });
     }
     default:
-      return uz ? `Bildirishnoma: ${kind}` : `Уведомление: ${kind}`;
+      return esc(uz ? `Bildirishnoma: ${kind}` : `Уведомление: ${kind}`);
   }
 }
 
@@ -92,14 +159,15 @@ function transferReason(p: any, uz: boolean) {
   return p.reasonText ? (p.reasonCode === 'OTHER' ? p.reasonText : `${label} — ${p.reasonText}`) : label;
 }
 
+/** Bot xizmat matnlari (HTML) */
 export const telegramTexts = {
-  linked: { uz: 'Telegram hisobingiz CRM bilan bog\'landi ✅', ru: 'Telegram привязан к CRM ✅' },
+  linked: { uz: "✅ <b>Telegram CRM bilan bog'landi</b>", ru: '✅ <b>Telegram привязан к CRM</b>' },
   badCode: {
-    uz: 'Kod noto\'g\'ri yoki muddati o\'tgan. Profil sahifasidan yangi kod oling.',
-    ru: 'Код неверный или устарел. Получите новый код на странице профиля.',
+    uz: "❌ <b>Kod noto'g'ri yoki muddati o'tgan</b>\n<i>Profil sahifasidan yangi kod oling.</i>",
+    ru: '❌ <b>Код неверный или устарел</b>\n<i>Получите новый код на странице профиля.</i>',
   },
   help: {
-    uz: 'Bog\'lash uchun: profil sahifasidagi kodni /start <kod> ko\'rinishida yuboring.',
-    ru: 'Для привязки отправьте /start <код> с кодом из профиля.',
+    uz: "🔗 <b>Bog'lash</b>\nCRM → Profil → «Kod olish», so'ng havolani bosing yoki botga <code>/start KOD</code> yuboring.",
+    ru: '🔗 <b>Привязка</b>\nCRM → Профиль → «Получить код», затем откройте ссылку или отправьте боту <code>/start КОД</code>.',
   },
 };
