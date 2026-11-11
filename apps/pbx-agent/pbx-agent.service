@@ -16,6 +16,15 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=/var/lib/pbx-agent
+# ffmpeg siqish uchun vaqtinchalik fayl (ProtectSystem=strict ostida /tmp yozilmaydi)
+PrivateTmp=true
+
+# Telefoniyaga xalaqit bermaslik: protsessor va disk Asterisk'dan keyin (eng past ustuvorlik),
+# ffmpeg siqishi bilan birga bitta yadroning yarmidan ko'p olmaydi
+Nice=19
+IOSchedulingClass=idle
+CPUQuota=50%
+MemoryMax=300M
 
 [Install]
 WantedBy=multi-user.target
