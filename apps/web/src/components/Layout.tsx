@@ -117,10 +117,19 @@ export function Layout() {
     if (n.kind === 'URGENT_TASK') {
       // Shoshilinch: ekranda qizil xabar, foydalanuvchi o'zi yopmaguncha turadi
       toast.error(text, {
+        // id: vazifa bekor qilinsa shu qizil xabar yopiladi (TASK_CANCELLED)
+        id: n.taskId ? `urgent-${n.taskId}` : undefined,
         duration: Infinity,
         className: 'toast-urgent',
         action: n.taskId ? { label: t('common.open'), onClick: () => setOpenTask(n.taskId) } : undefined,
       });
+    } else if (n.kind === 'TASK_CANCELLED') {
+      if (n.taskId) {
+        toast.dismiss(`urgent-${n.taskId}`);
+        // Ochiq turgan vazifa paneli yopiladi (vazifa endi yo'q)
+        setOpenTask((cur) => (cur === n.taskId ? null : cur));
+      }
+      toast.info(text, { duration: 10000 });
     } else if (n.kind === 'TASK_OVERDUE' || n.kind === 'CLIENTS_OVERDUE') {
       toast.warning(text);
     } else if (n.kind === 'TASK_TRANSFER') {

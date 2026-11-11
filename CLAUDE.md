@@ -161,6 +161,7 @@ Rahbar mijozga boshqa buxgalter tayinlaydi; tugallanmagan vazifalar yangisiga o'
 
 ### 6.9 Shoshilinch vazifa (10 soniya)
 "+ Shoshilinch": mijoz tanlanadi, matn yoziladi yoki tayyor shablon; tizim **eng kam ochiq vazifali** buxgalterni birinchi taklif qiladi; buxgalter ekranida qizil xabar + Telegram; muddat odatda shu kuni 18:00.
+O'chirish (rahbar qarori): istalgan rahbar ochiq URGENT/MANUAL vazifani vazifa panelidan o'chiradi (tasdiq bilan, `DELETE /api/tasks/:id`, `requireLeader`). Jismonan o'chmaydi — `CANCELLED`, `cancel_reason = 'LEADER_DELETED'`, audit'da qoladi; taymer to'xtaydi, kutilayotgan o'tkazish so'rovi va yetkazilmagan xabarlar bekor; mas'ul (va so'rov qabul qiluvchisi)ga `TASK_CANCELLED` (ilova + Telegram), ekrandagi qizil xabar yopiladi. Bajarilgan vazifa va oylik ish/hisobot o'chirilmaydi.
 
 ### 6.9.1 Vazifani boshqa xodimga o'tkazish (V40)
 Faqat Shoshilinch va qo'lda yaratilgan (URGENT/MANUAL) ochiq vazifa. So'rovni vazifa egasi (mas'ul) yoki rahbar yuboradi; sabab majburiy (Menga tegishli emas / Bandman / Boshqa sabab + matn). Qabul qiluvchi rozilik beradi ("Qabul qilaman / Rad etaman" — "Mening kunim" yuqorisida va vazifa panelida); qabul qilinguncha vazifa eski egasida. Bitta vazifada bitta kutilayotgan so'rov (`task_transfer`), zanjir cheklanmaydi. Qabul qilinsa "Jarayonda" → "Bajarilishi kerak" (taymer to'xtaydi). Bildirishnomalar: `TASK_TRANSFER` (qabul qiluvchiga), `TASK_TRANSFER_RESULT` (so'rovchi, eski egasi; qabulda vazifa muallifi ham). Hammasi `audit_log`'da. Faqat buxgalterga o'tkaziladi (`TODO(tasdiqlash)`).

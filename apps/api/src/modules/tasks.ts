@@ -326,6 +326,69 @@ tasksRouter.patch('/:id', async (req, res) => {
   res.json(task);
 });
 
+/**
+ * Rahbar shoshilinch / qo'lda yaratilgan ochiq vazifani o'chiradi.
+ * Qaror: jismonan o'chirilmaydi — CANCELLED (cancel_reason = 'LEADER_DELETED'): audit_log va bildirishnomalar vazifaga
+ * bog'langan, audit o'zgarmas (CLAUDE.md 9). Ro'yxatlar, "Mening kunim", dashboard va bot CANCELLED'ni ko'rsatmaydi.
+ * Bajarilgan vazifa o'chirilmaydi (buxgalter statistikasiga kirgan). Uchala rahbar ham o'chira oladi.
+ */
+tasksRouter.delete('/:id', requireLeader, async (req, res) => {
+  const u = me(req);
+  const taskId = parse(id, req.params.id);
+  await tx(async (db) => {
+    const t = await one<{ id: number; kind: string; status: string; title: string; client_id: number; client_name: string; assignee_id: number | null }>(
+      db,
+      `SELECT t.id, t.kind, t.status, t.title, t.client_id, c.name AS client_name, t.assignee_id
+       FROM task t JOIN client c ON c.id = t.client_id WHERE t.id = $1 FOR UPDATE OF t`,
+      [taskId],
+    );
+    if (!t) throw notFound('Vazifa');
+    if (t.kind !== 'URGENT' && t.kind !== 'MANUAL') {
+      throw new AppError(409, 'TASK_NOT_DELETABLE', "Faqat shoshilinch va qo'lda yaratilgan vazifani o'chirish mumkin");
+    }
+    if (!['TODO', 'IN_PROGRESS', 'WAITING_CLIENT'].includes(t.status)) {
+      throw new AppError(409, 'TASK_NOT_DELETABLE', "Bajarilgan yoki bekor qilingan vazifani o'chirib bo'lmaydi");
+    }
+    await db.query(
+      `UPDATE task SET prev_status = status, status = 'CANCELLED', cancel_reason = 'LEADER_DELETED' WHERE id = $1`,
+      [taskId],
+    );
+    await db.query('UPDATE time_entry SET ended_at = now() WHERE task_id = $1 AND ended_at IS NULL', [taskId]);
+    // Javob kutayotgan o'tkazish so'rovi bekor; qabul qiluvchiga ham xabar boradi
+    const pending = await q<{ id: number; to_user_id: number }>(
+      db,
+      `UPDATE task_transfer SET status = 'CANCELLED', resolved_at = now() WHERE task_id = $1 AND status = 'PENDING'
+       RETURNING id, to_user_id`,
+      [taskId],
+    );
+    // Hali yetkazilmagan xabarlar (muddat o'tdi, bajarildi va h.k.) endi kerak emas
+    await db.query(
+      'UPDATE notification SET cancelled_at = now() WHERE task_id = $1 AND delivered_at IS NULL AND cancelled_at IS NULL',
+      [taskId],
+    );
+    await audit(db, {
+      actorId: u.id,
+      entity: 'task',
+      entityId: taskId,
+      clientId: t.client_id,
+      action: 'DELETE',
+      before: { status: t.status, assigneeId: t.assignee_id },
+      after: { status: 'CANCELLED', cancelReason: 'LEADER_DELETED', transferCancelled: pending.map((p) => p.id) },
+    });
+    const recipients = new Set<number>([t.assignee_id, ...pending.map((p) => p.to_user_id)].filter((x): x is number => !!x));
+    recipients.delete(u.id);
+    for (const userId of recipients) {
+      await enqueue(db, {
+        userId,
+        kind: 'TASK_CANCELLED',
+        taskId,
+        payload: { taskId, taskTitle: t.title, clientId: t.client_id, clientName: t.client_name, actorName: u.fullName },
+      });
+    }
+  });
+  res.json({ ok: true });
+});
+
 tasksRouter.patch('/:id/status', async (req, res) => {
   const taskId = parse(id, req.params.id);
   const { status } = parse(z.object({ status: z.enum(['TODO', 'IN_PROGRESS', 'WAITING_CLIENT', 'DONE']) }), req.body);

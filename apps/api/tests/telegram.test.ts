@@ -110,7 +110,7 @@ describe('Telegram bot buyruqlari: rollar aralashmaydi', () => {
       stir: '123',
       comment: '<b>',
     };
-    for (const kind of ['URGENT_TASK', 'TASK_TRANSFER', 'TASK_DONE', 'TASK_OVERDUE', 'LEAD_WON']) {
+    for (const kind of ['URGENT_TASK', 'TASK_TRANSFER', 'TASK_DONE', 'TASK_OVERDUE', 'TASK_CANCELLED', 'LEAD_WON']) {
       for (const lang of ['uz', 'ru'] as const) {
         const html = renderNotification(kind, p, lang);
         assertTelegramHtml(html);

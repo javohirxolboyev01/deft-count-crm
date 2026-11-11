@@ -9,7 +9,7 @@ export type ClientStatus = 'ACTIVE' | 'ZERO_REPORT' | 'LIQUIDATING' | 'ARCHIVED'
 export const CLIENT_STATUSES: ClientStatus[] = ['ACTIVE', 'ZERO_REPORT', 'LIQUIDATING', 'ARCHIVED'];
 export type TaskStatus = 'TODO' | 'IN_PROGRESS' | 'WAITING_CLIENT' | 'DONE' | 'CANCELLED';
 export type TaskKind = 'ROUTINE' | 'REPORT' | 'URGENT' | 'MANUAL';
-export type NotificationKind = 'TASK_DONE' | 'TASK_OVERDUE' | 'CLIENTS_OVERDUE' | 'URGENT_TASK' | 'TASK_TRANSFER' | 'TASK_TRANSFER_RESULT' | 'LEAD_WON' | 'SERVER_PAYMENT';
+export type NotificationKind = 'TASK_DONE' | 'TASK_OVERDUE' | 'CLIENTS_OVERDUE' | 'URGENT_TASK' | 'TASK_TRANSFER' | 'TASK_TRANSFER_RESULT' | 'TASK_CANCELLED' | 'LEAD_WON' | 'SERVER_PAYMENT';
 export type TransferReason = 'NOT_MINE' | 'BUSY' | 'OTHER';
 export const TRANSFER_REASONS: TransferReason[] = ['NOT_MINE', 'BUSY', 'OTHER'];
 

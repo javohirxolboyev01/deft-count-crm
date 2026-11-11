@@ -32,7 +32,7 @@ export function useServerEvents(
         const n = JSON.parse((e as MessageEvent).data) as AppNotification;
         void qc.invalidateQueries({ queryKey: ['notifications'] });
         void qc.invalidateQueries({ queryKey: ['my-day'] });
-        if (n.kind === 'TASK_TRANSFER' || n.kind === 'TASK_TRANSFER_RESULT') {
+        if (n.kind === 'TASK_TRANSFER' || n.kind === 'TASK_TRANSFER_RESULT' || n.kind === 'TASK_CANCELLED') {
           void qc.invalidateQueries({ queryKey: ['transfers'] });
           void qc.invalidateQueries({ queryKey: ['task'] });
         }

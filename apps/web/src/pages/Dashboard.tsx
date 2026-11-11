@@ -1,11 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle } from 'lucide-react';
+import { AlertTriangle, Siren } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import { DashboardKpis } from '@/components/DashboardKpis';
-import { ClientStatusBadge } from '@/components/StatusBadge';
+import { ClientStatusBadge, TaskStatusBadge } from '@/components/StatusBadge';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader } from '@/components/ui/card';
 import { Select } from '@/components/ui/select';
@@ -18,7 +18,7 @@ import { api, qs } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { errorText } from '@/lib/errors';
 import { fmtDateTime, fmtDuration, startOfMonthIso, startOfWeekIso, todayIso } from '@/lib/time';
-import type { DashboardAccountants } from '@/lib/types';
+import type { DashboardAccountants, Task } from '@/lib/types';
 
 type Range = 'day' | 'week' | 'month';
 
@@ -52,6 +52,12 @@ export default function Dashboard() {
     placeholderData: (prev) => prev,
     refetchInterval: 60_000,
   });
+  // Barcha ochiq shoshilinch vazifalar (rahbar hammasini ko'radi). 'tasks' kaliti: o'chirish/holat o'zgarsa yangilanadi
+  const urgent = useQuery({
+    queryKey: ['tasks', 'urgent-open'],
+    queryFn: () => api.get<Task[]>(`/tasks${qs({ kind: 'URGENT', status: 'OPEN' })}`),
+    refetchInterval: 60_000,
+  });
   const assign = useMutation({
     mutationFn: (p: { clientId: number; accountantId: number | null }) => api.patch(`/clients/${p.clientId}`, { accountantId: p.accountantId }),
     onSuccess: () => {
@@ -80,23 +86,57 @@ export default function Dashboard() {
         </Card>
       )}
 
-      {!!clients.data?.overdueTasks.length && (
-        <Card className="border-l-4 border-l-overdue">
-          <CardHeader title={<span className="flex items-center gap-2 text-overdue"><AlertTriangle className="h-4 w-4" /> {t('dashboard.alerts')} ({clients.data.summary.tasksOverdue})</span>} />
-          <ul className="max-h-72 divide-y overflow-y-auto text-sm">
-            {clients.data.overdueTasks.map((o) => (
-              <li key={o.id}>
-                <button className="flex w-full flex-wrap items-center gap-x-3 px-4 py-2.5 text-left transition-colors hover:bg-red-50 sm:px-5" onClick={() => openTask(o.id)}>
-                  <span className="font-medium">{o.title}</span>
-                  <span className="text-gray-600">{o.clientName}</span>
-                  <span className="ml-auto text-xs text-overdue">{fmtDateTime(o.dueAt)}</span>
-                  <span className="w-32 truncate text-right text-xs text-gray-500">{o.assigneeName ?? t('task.unassigned')}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
+      {/* Yonma-yon, teng yarmidan (telefonda ustma-ust): muddati o'tganlar va shoshilinch vazifalar */}
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card className="flex min-w-0 flex-col border-l-4 border-l-overdue">
+          <CardHeader title={<span className="flex items-center gap-2 text-overdue"><AlertTriangle className="h-4 w-4" /> {t('dashboard.alerts')} ({clients.data?.summary?.tasksOverdue ?? 0})</span>} />
+          {!clients.data?.overdueTasks.length ? (
+            <p className="px-4 pb-4 text-sm text-gray-500 sm:px-5">{t('dashboard.noOverdue')}</p>
+          ) : (
+            <ul className="max-h-72 divide-y overflow-y-auto text-sm">
+              {clients.data.overdueTasks.map((o) => (
+                <li key={o.id}>
+                  <button className="w-full px-4 py-2 text-left transition-colors hover:bg-red-50 sm:px-5" onClick={() => openTask(o.id)}>
+                    <span className="block truncate font-medium">{o.title}</span>
+                    <span className="flex gap-2 text-xs text-gray-500">
+                      <span className="truncate">{o.clientName}</span>
+                      <span className="ml-auto shrink-0 text-overdue">{fmtDateTime(o.dueAt)}</span>
+                      <span className="w-28 shrink-0 truncate text-right">{o.assigneeName ?? t('task.unassigned')}</span>
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
         </Card>
-      )}
+
+        <Card className="flex min-w-0 flex-col border-l-4 border-l-red-500">
+          <CardHeader title={<span className="flex items-center gap-2 text-red-600"><Siren className="h-4 w-4" /> {t('dashboard.urgent')} ({urgent.data?.length ?? 0})</span>} />
+          <QueryState q={urgent}>
+            {!urgent.data?.length ? (
+              <p className="px-4 pb-4 text-sm text-gray-500 sm:px-5">{t('dashboard.noUrgent')}</p>
+            ) : (
+              <ul className="max-h-72 divide-y overflow-y-auto text-sm">
+                {urgent.data.map((u) => (
+                  <li key={u.id}>
+                    <button className="w-full px-4 py-2 text-left transition-colors hover:bg-red-50 sm:px-5" onClick={() => openTask(u.id)}>
+                      <span className="flex items-center gap-2">
+                        <span className="truncate font-medium">{u.title}</span>
+                        <span className="ml-auto shrink-0"><TaskStatusBadge status={u.status} /></span>
+                      </span>
+                      <span className="flex gap-2 text-xs text-gray-500">
+                        <span className="truncate">{u.clientName}</span>
+                        <span className={cn('ml-auto shrink-0', u.overdue ? 'font-medium text-overdue' : u.dueSoon ? 'text-soon' : '')}>{u.dueAt ? fmtDateTime(u.dueAt) : '—'}</span>
+                        <span className="w-28 shrink-0 truncate text-right">{u.assigneeName ?? t('task.unassigned')}</span>
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </QueryState>
+        </Card>
+      </div>
 
       <Card>
         <CardHeader

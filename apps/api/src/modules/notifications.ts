@@ -14,6 +14,7 @@ export const NOTIFICATION_KINDS = [
   'URGENT_TASK',
   'TASK_TRANSFER',
   'TASK_TRANSFER_RESULT',
+  'TASK_CANCELLED',
   'LEAD_WON',
   'SERVER_PAYMENT',
 ] as const;
@@ -22,7 +23,7 @@ export type NotificationKind = (typeof NOTIFICATION_KINDS)[number];
 /** Profil sozlamasida ko'rinadigan turlar: kimga qaysi xabar umuman kelishi mumkin */
 export function notificationKindsFor(role: Role): readonly NotificationKind[] {
   if (role === 'LEADER') return NOTIFICATION_KINDS;
-  if (role === 'ACCOUNTANT') return ['TASK_DONE', 'TASK_OVERDUE', 'CLIENTS_OVERDUE', 'URGENT_TASK', 'TASK_TRANSFER', 'TASK_TRANSFER_RESULT'];
+  if (role === 'ACCOUNTANT') return ['TASK_DONE', 'TASK_OVERDUE', 'CLIENTS_OVERDUE', 'URGENT_TASK', 'TASK_TRANSFER', 'TASK_TRANSFER_RESULT', 'TASK_CANCELLED'];
   return [];
 }
 

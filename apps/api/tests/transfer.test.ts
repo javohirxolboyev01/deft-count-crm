@@ -125,3 +125,36 @@ describe("vazifani boshqa xodimga o'tkazish", () => {
     expect((await A1.post('/api/task-transfers', { taskId, toUserId: team.acc2, reasonCode: 'BUSY' })).body.code).toBe('TRANSFER_CLOSED');
   });
 });
+
+describe("rahbar shoshilinch vazifani o'chiradi", () => {
+  it("buxgalter o'chira olmaydi; rahbar o'chirsa vazifa bekor, taymer to'xtaydi, so'rov bekor, ikkalasiga xabar", async () => {
+    const taskId = await urgent(team.acc1, "O'chiriladigan vazifa");
+    await A1.patch(`/api/tasks/${taskId}/status`, { status: 'IN_PROGRESS' });
+    const tr = await A1.post('/api/task-transfers', { taskId, toUserId: team.acc2, reasonCode: 'BUSY' });
+
+    expect((await A1.del(`/api/tasks/${taskId}`)).status).toBe(403);
+    expect((await L.del(`/api/tasks/${taskId}`)).status).toBe(200);
+
+    expect(await one(pool, 'SELECT status, cancel_reason FROM task WHERE id = $1', [taskId])).toMatchObject({ status: 'CANCELLED', cancel_reason: 'LEADER_DELETED' });
+    expect((await one(pool, 'SELECT count(*)::int AS n FROM time_entry WHERE task_id = $1 AND ended_at IS NULL', [taskId])).n).toBe(0);
+    expect((await one(pool, 'SELECT status FROM task_transfer WHERE id = $1', [tr.body.pendingTransfer.id])).status).toBe('CANCELLED');
+    // Mas'ul va o'tkazish so'rovi qabul qiluvchisi biladi
+    expect((await notifs(team.acc1, 'TASK_CANCELLED')).at(-1)?.payload).toMatchObject({ taskId, actorName: 'Rahbar' });
+    expect((await notifs(team.acc2, 'TASK_CANCELLED')).at(-1)?.payload).toMatchObject({ taskId });
+    // Buxgalter ro'yxatidan yo'qoladi
+    const myDay = await A1.get('/api/tasks/my-day');
+    expect(myDay.body.groups.urgent.map((x: any) => x.id)).not.toContain(taskId);
+    // Ikkinchi marta o'chirilmaydi; audit'da qoladi
+    expect((await L.del(`/api/tasks/${taskId}`)).body.code).toBe('TASK_NOT_DELETABLE');
+    const actions = await q<{ action: string }>(pool, `SELECT action FROM audit_log WHERE entity = 'task' AND entity_id = $1 ORDER BY id`, [String(taskId)]);
+    expect(actions.map((a) => a.action).at(-1)).toBe('DELETE');
+  });
+
+  it("bajarilgan va oylik (generator) vazifa o'chirilmaydi", async () => {
+    const taskId = await urgent(team.acc1, 'Bajariladigan');
+    await A1.post(`/api/tasks/${taskId}/done`);
+    expect((await L.del(`/api/tasks/${taskId}`)).body.code).toBe('TASK_NOT_DELETABLE');
+    const routine = await one(pool, `SELECT id FROM task WHERE kind IN ('ROUTINE','REPORT') AND status <> 'CANCELLED' LIMIT 1`);
+    if (routine) expect((await L.del(`/api/tasks/${routine.id}`)).body.code).toBe('TASK_NOT_DELETABLE');
+  });
+});

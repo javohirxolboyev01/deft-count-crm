@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { TFunction } from 'i18next';
-import { ArrowLeftRight, CalendarClock, CheckCheck, CircleCheck, Clock, CreditCard, Handshake, Siren, Undo2, UserCheck, X, type LucideIcon } from 'lucide-react';
+import { ArrowLeftRight, CalendarClock, CheckCheck, CircleCheck, Clock, CreditCard, Handshake, Siren, Trash2, Undo2, UserCheck, X, type LucideIcon } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
@@ -72,6 +72,7 @@ const KIND_STYLE: Record<TextKey, { icon: LucideIcon; border: string; tile: stri
   TASK_TRANSFER: { icon: ArrowLeftRight, border: 'border-l-blue-500', tile: 'bg-blue-50 text-blue-600' },
   TASK_TRANSFER_ACCEPTED: { icon: UserCheck, border: 'border-l-green-500', tile: 'bg-green-50 text-green-600' },
   TASK_TRANSFER_REJECTED: { icon: Undo2, border: 'border-l-amber-400', tile: 'bg-amber-50 text-amber-500' },
+  TASK_CANCELLED: { icon: Trash2, border: 'border-l-gray-400', tile: 'bg-gray-100 text-gray-500' },
   SERVER_PAYMENT: { icon: CreditCard, border: 'border-l-amber-400', tile: 'bg-amber-50 text-amber-500' },
   SERVER_PAYMENT_FAILED: { icon: CreditCard, border: 'border-l-red-500', tile: 'bg-red-50 text-red-500' },
   SERVER_TRIAL: { icon: CreditCard, border: 'border-l-amber-400', tile: 'bg-amber-50 text-amber-500' },

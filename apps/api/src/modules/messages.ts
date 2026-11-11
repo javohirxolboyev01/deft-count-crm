@@ -100,6 +100,14 @@ export function renderNotification(kind: string, p: any, lang: Lang): string {
             quote: p.rejectReason ? `${L('Sabab', 'Причина')}: ${p.rejectReason}` : null,
             footer: L('Vazifa sizda qoldi.', 'Задача осталась за вами.'),
           });
+    case 'TASK_CANCELLED':
+      return post({
+        icon: '🗑',
+        title: L('Vazifa bekor qilindi', 'Задача отменена'),
+        subject: p.taskTitle,
+        rows: [client, { icon: '👤', label: L('Bekor qildi', 'Отменил(а)'), value: p.actorName }],
+        footer: L('Bu vazifa ustida ishlash shart emas.', 'Работать над этой задачей больше не нужно.'),
+      });
     case 'LEAD_WON':
       return post({
         icon: '🤝',

@@ -65,10 +65,24 @@ export function TaskPanel({ taskId, onClose }: { taskId: number | null; onClose:
   const toggle = useMutation({ mutationFn: (p: { id: number; done: boolean }) => api.patch(`/tasks/${taskId}/checklist/${p.id}`, { done: p.done }), onSuccess: refresh, onError: onErr });
   const [removing, setRemoving] = useState<{ id: number; text: string } | null>(null);
   const remove = useMutation({ mutationFn: (id: number) => api.del(`/tasks/${taskId}/checklist/${id}`), onSuccess: () => { setRemoving(null); refresh(); }, onError: onErr });
+  // Rahbar: ochiq shoshilinch / qo'lda yaratilgan vazifani o'chiradi (serverda CANCELLED, audit'da qoladi)
+  const [deleting, setDeleting] = useState(false);
+  const deleteTask = useMutation({
+    mutationFn: () => api.del(`/tasks/${taskId}`),
+    onSuccess: () => {
+      setDeleting(false);
+      refresh();
+      toast.success(t('task.deleted'));
+      onClose();
+    },
+    onError: onErr,
+  });
 
   const tone = task ? taskTone(task) : null;
   // Qabul qiluvchi o'ziga o'tkazilayotgan vazifani faqat ko'radi va qaror qiladi (holatni o'zgartirmaydi)
   const viewOnly = !!task && !isLeader && task.assigneeId !== user?.id && task.pendingTransfer?.toUserId === user?.id;
+  const canDelete = !!task && isLeader && (task.kind === 'URGENT' || task.kind === 'MANUAL')
+    && (task.status === 'TODO' || task.status === 'IN_PROGRESS' || task.status === 'WAITING_CLIENT');
   return (
     <Drawer open={taskId !== null} onClose={onClose} title={task ? taskTitle(task, i18n.language) : t('task.title')}>
       <QueryState q={q}>
@@ -120,6 +134,11 @@ export function TaskPanel({ taskId, onClose }: { taskId: number | null; onClose:
               {task.status === 'DONE' && isLeader && (
                 <Button variant="outline" size="sm" onClick={() => changeStatus(task.id, 'TODO')}>
                   {t('task.reopen')}
+                </Button>
+              )}
+              {canDelete && (
+                <Button variant="outline" size="sm" className="ml-auto text-red-600 hover:bg-red-50 hover:text-red-700" onClick={() => setDeleting(true)}>
+                  <Trash2 className="h-3.5 w-3.5" /> {t('task.delete')}
                 </Button>
               )}
             </div>}
@@ -179,6 +198,14 @@ export function TaskPanel({ taskId, onClose }: { taskId: number | null; onClose:
         onConfirm={() => removing && remove.mutate(removing.id)}
         loading={remove.isPending}
         text={removing?.text}
+      />
+      <ConfirmDialog
+        open={deleting}
+        onClose={() => setDeleting(false)}
+        onConfirm={() => deleteTask.mutate()}
+        loading={deleteTask.isPending}
+        title={t('task.deleteTitle')}
+        text={task ? t('task.deleteText', { title: taskTitle(task, i18n.language), client: task.clientName }) : undefined}
       />
     </Drawer>
   );
