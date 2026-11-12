@@ -292,6 +292,162 @@ export function MonthPicker({
   );
 }
 
+export interface DateRange {
+  /** 'yyyy-MM-dd' */
+  from: string;
+  to: string;
+}
+
+/** Tayyor davrlar (Asia/Tashkent bo'yicha bugun — todayIso) */
+function rangePresets(): { key: string; range: DateRange }[] {
+  const today = DateTime.fromISO(todayIso());
+  const r = (a: DateTime, b: DateTime) => ({ from: a.toISODate()!, to: b.toISODate()! });
+  const lastMonth = today.minus({ months: 1 });
+  return [
+    { key: 'today', range: r(today, today) },
+    { key: 'yesterday', range: r(today.minus({ days: 1 }), today.minus({ days: 1 })) },
+    { key: 'week', range: r(today.startOf('week'), today) },
+    { key: 'last7', range: r(today.minus({ days: 6 }), today) },
+    { key: 'month', range: r(today.startOf('month'), today) },
+    { key: 'lastMonth', range: r(lastMonth.startOf('month'), lastMonth.endOf('month')) },
+    { key: 'last30', range: r(today.minus({ days: 29 }), today) },
+  ];
+}
+
+/**
+ * Davr tanlash (ikkita "Dan / Gacha" o'rniga bitta maydon): chapda tayyor davrlar, o'ngda kalendar —
+ * birinchi bosish boshlanishi, ikkinchisi tugashi (teskari bosilsa almashtiriladi), oraliq sichqoncha bilan oldindan ko'rinadi.
+ */
+export function DateRangePicker({
+  value,
+  onChange,
+  className,
+  'aria-label': ariaLabel,
+}: {
+  value: DateRange;
+  onChange: (range: DateRange) => void;
+  className?: string;
+  'aria-label'?: string;
+}) {
+  const { t } = useTranslation();
+  const months = t('months', { returnObjects: true }) as string[];
+  const weekdays = t('weekdaysShort', { returnObjects: true }) as string[];
+  const ref = useRef<HTMLButtonElement>(null);
+  const [open, setOpen] = useState(false);
+  const [start, setStart] = useState<string | null>(null); // birinchi bosilgan kun (tugashi kutilmoqda)
+  const [hover, setHover] = useState<string | null>(null);
+  const [cursor, setCursor] = useState(() => DateTime.fromISO(value.to || todayIso()).startOf('month'));
+  const today = todayIso();
+  const presets = rangePresets();
+  const fmt = (iso: string) => DateTime.fromISO(iso).toFormat('dd.MM.yyyy');
+
+  const toggle = () => {
+    if (!open) {
+      setStart(null);
+      setHover(null);
+      setCursor(DateTime.fromISO(value.to || todayIso()).startOf('month'));
+    }
+    setOpen(!open);
+  };
+  const pick = (iso: string) => {
+    if (!start) {
+      setStart(iso);
+      return;
+    }
+    onChange(iso < start ? { from: iso, to: start } : { from: start, to: iso });
+    setStart(null);
+    setOpen(false);
+  };
+
+  // Ko'rsatiladigan oraliq: tanlash jarayonida — boshlanish..sichqoncha, aks holda joriy qiymat
+  const [a, b] = start ? [start, hover ?? start].sort() : [value.from, value.to];
+  const days: DateTime[] = [];
+  for (let d = cursor.startOf('week'); d <= cursor.endOf('month').endOf('week'); d = d.plus({ days: 1 })) days.push(d);
+
+  return (
+    <>
+      <Trigger
+        btnRef={ref}
+        open={open}
+        text={
+          !value.from || !value.to
+            ? ''
+            : value.from === value.to
+              ? fmt(value.from)
+              : // Bir yil ichida boshlanish yilsiz: '01.11 – 12.11.2026' (tor filtr ustunida kesilmasin)
+                `${value.from.slice(0, 4) === value.to.slice(0, 4) ? DateTime.fromISO(value.from).toFormat('dd.MM') : fmt(value.from)} – ${fmt(value.to)}`
+        }
+        placeholder={t('common.range.pick')}
+        onToggle={toggle}
+        onClear={() => undefined}
+        className={className}
+        ariaLabel={ariaLabel}
+      />
+      <Popover anchorRef={ref} open={open} onClose={() => setOpen(false)}>
+        <div className="flex flex-col sm:flex-row">
+          <ul className="flex flex-wrap gap-1 border-b border-gray-200 p-2 sm:w-40 sm:flex-col sm:flex-nowrap sm:border-b-0 sm:border-r">
+            {presets.map((p) => {
+              const on = p.range.from === value.from && p.range.to === value.to;
+              return (
+                <li key={p.key}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onChange(p.range);
+                      setOpen(false);
+                    }}
+                    className={cn(
+                      'w-full rounded-md px-2.5 py-1.5 text-left text-sm transition-colors',
+                      on ? 'bg-brand-50 font-medium text-brand-700 dark:bg-brand-900/50 dark:text-brand-300' : 'text-gray-700 hover:bg-gray-100',
+                    )}
+                  >
+                    {t(`common.range.${p.key}`)}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+          <div className="w-[264px] p-3">
+            <Header
+              label={`${months[cursor.month - 1]} ${cursor.year}`}
+              onPrev={() => setCursor(cursor.minus({ months: 1 }))}
+              onNext={() => setCursor(cursor.plus({ months: 1 }))}
+            />
+            <div className="mt-4 grid grid-cols-7 gap-y-0.5" onPointerLeave={() => setHover(null)}>
+              {weekdays.map((w) => <span key={w} className="flex h-8 items-center justify-center text-sm text-gray-500">{w}</span>)}
+              {days.map((d) => {
+                const iso = d.toISODate()!;
+                const outside = d.month !== cursor.month;
+                const edge = iso === a || iso === b;
+                const inside = a && b && iso > a && iso < b;
+                return (
+                  <button
+                    key={iso}
+                    type="button"
+                    onClick={() => pick(iso)}
+                    onPointerEnter={() => start && setHover(iso)}
+                    className={cn(
+                      cellCls,
+                      'h-8 w-full',
+                      edge ? selectedCls : inside ? 'rounded-none bg-brand-50 text-brand-700 dark:bg-brand-900/50 dark:text-brand-300' : iso === today && currentCls,
+                      outside && !edge && !inside && 'text-gray-500 opacity-50',
+                    )}
+                  >
+                    {d.day}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="mt-2 h-4 text-center text-xs text-gray-500">
+              {start ? t('common.range.pickEnd', { from: fmt(start) }) : t('common.range.hint')}
+            </p>
+          </div>
+        </div>
+      </Popover>
+    </>
+  );
+}
+
 const pad = (n: number) => String(n).padStart(2, '0');
 const HOURS = Array.from({ length: 24 }, (_, i) => pad(i));
 const MINUTES = Array.from({ length: 12 }, (_, i) => pad(i * 5));

@@ -158,13 +158,34 @@ describe('o\'qish va ruxsatlar', () => {
     expect((await L.get('/api/calls?from=2026-11-01&to=2026-11-30&missed=true')).body.total).toBe(1);
   });
 
+  it('firma nomi bo\'yicha filtr: doirasi "Kim (mijoz)" ruxsati bilan bir xil', async () => {
+    const n = async (who: ReturnType<typeof api>, company: string) =>
+      (await who.get(`/api/calls?from=2026-11-01&to=2026-11-30&company=${encodeURIComponent(company)}`)).body.total;
+    expect(await n(L, 'alfa')).toBe(2); // ALFA telefonlaridagi ikkala qo'ng'iroq
+    expect(await n(L, 'АЛЬФА')).toBe(2); // kirill -> lotin (name_normalized)
+    expect(await n(L, 'beta')).toBe(2); // lead raqami: javobsiz kiruvchi + operator chiquvchisi
+    expect(await n(A1, 'alfa')).toBe(1); // o'z mijozi, faqat o'z qo'ng'iroqlari
+    expect(await n(A2, 'alfa')).toBe(0); // boshqa buxgalterning mijozi bo'yicha qidira olmaydi
+    expect(await n(O, 'beta')).toBe(1);
+    expect(await n(O, 'alfa')).toBe(0); // operator mavjud mijozlarni ko'rmaydi
+    expect(await n(L, '50%_')).toBe(0); // LIKE belgilari oddiy matn
+  });
+
   it('statistika faqat rahbarga', async () => {
     expect((await A1.get('/api/calls/stats')).status).toBe(403);
     const r = await L.get('/api/calls/stats?from=2026-11-01&to=2026-11-30');
     const acc1 = r.body.rows.find((x: any) => x.userId === team.acc1);
     expect(acc1).toMatchObject({ total: 1, outgoing: 1, outgoingAnswered: 1, talkSec: 120 });
     const none = r.body.rows.find((x: any) => x.userId === null);
-    expect(none).toMatchObject({ incoming: 1, missed: 1 });
+    expect(none).toMatchObject({ incoming: 1, missed: 1, answered: 0 });
+    expect(acc1.answered).toBe(1);
+    // Grafiklar: kun (Toshkent vaqti) va hafta kuni × soat; ichki qo'ng'iroq xaritaga kirmaydi
+    expect(r.body.daily).toEqual([
+      { day: '2026-11-10', outgoing: 2, incomingAnswered: 1, missed: 1, internal: 0, talkSec: 360 },
+    ]);
+    const cell = (h: number) => r.body.hourly.find((x: any) => x.dow === 2 && x.hour === h);
+    expect(cell(10)).toEqual({ dow: 2, hour: 10, total: 1, missed: 0 });
+    expect(cell(12)).toEqual({ dow: 2, hour: 12, total: 2, missed: 1 });
   });
 });
 

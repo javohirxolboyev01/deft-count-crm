@@ -18,6 +18,9 @@ const Audit = lazy(() => import('./pages/Audit'));
 const Leads = lazy(() => import('./pages/Leads'));
 const ClientIssues = lazy(() => import('./pages/ClientIssues'));
 const Calls = lazy(() => import('./pages/Calls'));
+const CallsIndex = lazy(() => import('./pages/Calls').then((m) => ({ default: m.CallsIndex })));
+const CallsStaff = lazy(() => import('./pages/Calls').then((m) => ({ default: m.CallsStaff })));
+const CallsJournal = lazy(() => import('./pages/Calls').then((m) => ({ default: m.CallsJournal })));
 const Server = lazy(() => import('./pages/Server'));
 
 /** UI darajasidagi himoya (qulaylik uchun). Haqiqiy ruxsat tekshiruvi serverda. */
@@ -59,7 +62,12 @@ export default function App() {
           {/* Hisobot topshirish detail: faqat rahbar (buxgalter jadvalni faqat ko'radi) */}
           <Route path="leads" element={<Protected roles={['LEADER', 'OPERATOR']}><Leads /></Protected>} />
           {/* Qo'ng'iroqlar (V46): rahbar hammasini, boshqa xodim faqat o'zinikini (server cheklaydi) */}
-          <Route path="calls" element={<Calls />} />
+          <Route path="calls" element={<Calls />}>
+            <Route index element={<CallsIndex />} />
+            {/* Xodimlar bo'yicha analitika — faqat rahbar (server: requireLeader) */}
+            <Route path="staff" element={<Protected roles={L}><CallsStaff /></Protected>} />
+            <Route path="journal" element={<CallsJournal />} />
+          </Route>
           {/* Server holati va to'lovi (Railway): faqat rahbar */}
           <Route path="server" element={<Protected roles={L}><Server /></Protected>} />
           <Route path="settings" element={<Protected roles={L}><Settings /></Protected>} />

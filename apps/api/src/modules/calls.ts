@@ -4,6 +4,7 @@ import { DateTime } from 'luxon';
 import { z } from 'zod';
 import { type AuthUser, isLeader, me, requireAuth, requireLeader, requireRole, requireStaff } from '../common/auth';
 import { AppError, notFound, parse } from '../common/errors';
+import { normalizeName } from '../common/normalize';
 import { nowTz } from '../common/time';
 import { config } from '../config';
 import { type Db, one, pool, q, tx } from '../db';
@@ -291,6 +292,7 @@ callsRouter.get('/', async (req, res) => {
       direction: z.enum(['IN', 'OUT', 'INTERNAL', 'UNKNOWN']).optional(),
       missed: z.enum(['true', 'false']).optional(),
       search: z.string().trim().optional(),
+      company: z.string().trim().max(100).optional(),
       page: z.coerce.number().int().min(1).default(1),
       pageSize: z.coerce.number().int().min(1).max(200).default(50),
     }),
@@ -309,6 +311,22 @@ callsRouter.get('/', async (req, res) => {
   if (f.direction) where.push(`cl.direction = ${p(f.direction)}`);
   if (f.missed === 'true') where.push(`cl.disposition <> 'ANSWERED'`);
   if (f.search && digits(f.search)) where.push(`cl.external_number LIKE ${p(`%${digits(f.search).slice(-9)}%`)}`);
+  // Firma nomi bo'yicha: telefoni shu qo'ng'iroq raqamiga mos mijoz/lead (o'qishda, fn_phone_keys). Qidiruv doirasi
+  // jurnaldagi "Kim (mijoz)" ko'rinishi bilan bir xil (present): rahbar — hammasi, buxgalter — o'z mijozlari, operator — lidlar
+  if (f.company) {
+    const like = p(`%${f.company.replace(/[\\%_]/g, (m) => `\\${m}`)}%`);
+    const norm = p(`%${normalizeName(f.company)}%`);
+    const conds: string[] = [];
+    if (u.role !== 'OPERATOR') {
+      conds.push(`EXISTS (SELECT 1 FROM client c WHERE (c.name ILIKE ${like} OR c.name_normalized LIKE ${norm})
+        AND fn_phone_keys(c.phone) @> ARRAY[cl.external_number] ${isLeader(u) ? '' : `AND c.accountant_id = ${p(u.id)}`})`);
+    }
+    if (isLeader(u) || u.role === 'OPERATOR') {
+      conds.push(`EXISTS (SELECT 1 FROM lead l WHERE (l.name ILIKE ${like} OR l.name_normalized LIKE ${norm})
+        AND fn_phone_keys(l.phone) @> ARRAY[cl.external_number] ${isLeader(u) ? '' : `AND l.status NOT IN ('WON', 'CONVERTED')`})`);
+    }
+    where.push(`cl.external_number IS NOT NULL AND (${conds.join(' OR ')})`);
+  }
   const w = where.join(' AND ');
   const total = (await one<{ n: number }>(pool, `SELECT count(*)::int AS n FROM call_log cl WHERE ${w}`, params))!.n;
   const rows = await q(
@@ -332,6 +350,7 @@ callsRouter.get('/stats', requireLeader, async (req, res) => {
             count(*) FILTER (WHERE cl.direction = 'IN')::int AS incoming,
             count(*) FILTER (WHERE cl.direction = 'IN' AND cl.disposition <> 'ANSWERED')::int AS missed,
             count(*) FILTER (WHERE cl.direction = 'INTERNAL')::int AS internal,
+            count(*) FILTER (WHERE cl.disposition = 'ANSWERED')::int AS answered,
             coalesce(sum(cl.billsec), 0)::int AS "talkSec"
      FROM call_log cl LEFT JOIN app_user u ON u.id = cl.user_id
      WHERE cl.started_at >= $1::date AND cl.started_at < $2::date + 1
@@ -339,7 +358,32 @@ callsRouter.get('/stats', requireLeader, async (req, res) => {
      ORDER BY (cl.user_id IS NULL), u.full_name`,
     [from, to],
   );
-  res.json({ from, to, rows });
+  // Grafiklar uchun (rahbar analitikasi): kunlar va hafta kuni × soat kesimida. Vaqt — sessiya zonasi (Asia/Tashkent)
+  const daily = await q(
+    pool,
+    `SELECT to_char(cl.started_at::date, 'YYYY-MM-DD') AS day,
+            count(*) FILTER (WHERE cl.direction = 'OUT')::int AS outgoing,
+            count(*) FILTER (WHERE cl.direction = 'IN' AND cl.disposition = 'ANSWERED')::int AS "incomingAnswered",
+            count(*) FILTER (WHERE cl.direction = 'IN' AND cl.disposition <> 'ANSWERED')::int AS missed,
+            count(*) FILTER (WHERE cl.direction = 'INTERNAL')::int AS internal,
+            coalesce(sum(cl.billsec), 0)::int AS "talkSec"
+     FROM call_log cl
+     WHERE cl.started_at >= $1::date AND cl.started_at < $2::date + 1
+     GROUP BY 1 ORDER BY 1`,
+    [from, to],
+  );
+  // Faqat tashqi qo'ng'iroqlar (mijoz/lead bilan): ichki suhbatlar yuklama xaritasini buzmasin
+  const hourly = await q(
+    pool,
+    `SELECT extract(isodow FROM cl.started_at)::int AS dow, extract(hour FROM cl.started_at)::int AS hour,
+            count(*)::int AS total,
+            count(*) FILTER (WHERE cl.direction = 'IN' AND cl.disposition <> 'ANSWERED')::int AS missed
+     FROM call_log cl
+     WHERE cl.started_at >= $1::date AND cl.started_at < $2::date + 1 AND cl.direction IN ('IN', 'OUT')
+     GROUP BY 1, 2`,
+    [from, to],
+  );
+  res.json({ from, to, rows, daily, hourly });
 });
 
 // Ulanish holati (rahbar, sozlamada): agent oxirgi marta qachon yozdi, qaysi ichki raqamlar xodimga biriktirilmagan

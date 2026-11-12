@@ -578,7 +578,18 @@ export interface CallStatRow {
   incoming: number;
   missed: number;
   internal: number;
+  /** Javob berilgan qo'ng'iroqlar (o'rtacha suhbat uchun) */
+  answered: number;
   talkSec: number;
+}
+/** GET /api/calls/stats: xodimlar kesimi + grafiklar uchun kunlik va hafta kuni × soat */
+export interface CallStats {
+  from: string;
+  to: string;
+  rows: CallStatRow[];
+  daily: { day: string; outgoing: number; incomingAnswered: number; missed: number; internal: number; talkSec: number }[];
+  /** dow: 1 = dushanba … 7 = yakshanba; faqat tashqi (IN/OUT) qo'ng'iroqlar */
+  hourly: { dow: number; hour: number; total: number; missed: number }[];
 }
 export interface CallsStatus {
   enabled: boolean;
