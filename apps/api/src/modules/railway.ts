@@ -29,6 +29,8 @@ export type ServerState = 'UP' | 'DOWN' | 'SLEEPING' | 'DEPLOYING' | 'UNKNOWN';
 export interface ServerStatus {
   configured: boolean;
   fetchedAt: string | null;
+  /** Server soati (javob paytida) — brauzer sanog'i kompyuter soati noto'g'ri bo'lsa ham to'g'ri yursin */
+  serverTime: string;
   server: { state: ServerState; since: string | null } | null;
   usage: {
     cpu: number;
@@ -44,6 +46,8 @@ export interface ServerStatus {
     paymentFailed: boolean;
     /** Keyingi to'lov sanasi (Asia/Tashkent, yyyy-MM-dd) */
     nextPaymentDate: string | null;
+    /** Aniq vaqt (ISO, UTC): sinovda — tugash payti (sahifa va xabarda "soat HH:mm"); ma'lum bo'lmasa null */
+    nextPaymentAt: string | null;
     daysLeft: number | null;
     /** Keyingi to'lov taxminiy summasi ($) */
     nextAmount: number | null;
@@ -164,8 +168,11 @@ interface RawBilling {
   nextAmount: number | null;
   currentUsage: number | null;
   card: { brand: string; last4: string } | null;
-  trial: { daysLeft: number; creditLeft: number | null; creditTotal: number | null } | null;
+  trial: { daysLeft: number; startedAt: string | null; creditLeft: number | null; creditTotal: number | null } | null;
 }
+
+/** Railway sinovi 30 kun (hisob ochilgan paytdan) */
+const TRIAL_DAYS = 30;
 
 async function loadBilling(): Promise<RawBilling> {
   const d = await gql<{
@@ -179,7 +186,7 @@ async function loadBilling(): Promise<RawBilling> {
           creditBalance: number | null;
           remainingUsageCreditBalance: number | null;
           currentUsage: number | null;
-          billingPeriod: { end: string } | null;
+          billingPeriod: { start?: string | null; end: string } | null;
           defaultPaymentMethod: { card: { brand: string; last4: string } | null } | null;
           subscriptions: { status: string; nextInvoiceDate: string; nextInvoiceCurrentTotal: number }[];
         };
@@ -187,7 +194,7 @@ async function loadBilling(): Promise<RawBilling> {
     };
   }>(
     `query($id: String!) { project(id: $id) { subscriptionType workspace { customer {
-       state isTrialing trialDaysRemaining creditBalance remainingUsageCreditBalance currentUsage billingPeriod { end } defaultPaymentMethod { card { brand last4 } }
+       state isTrialing trialDaysRemaining creditBalance remainingUsageCreditBalance currentUsage billingPeriod { start end } defaultPaymentMethod { card { brand last4 } }
        subscriptions { status nextInvoiceDate nextInvoiceCurrentTotal }
      } } } }`,
     { id: config.railway.projectId },
@@ -205,7 +212,7 @@ async function loadBilling(): Promise<RawBilling> {
     currentUsage: c.currentUsage,
     card: c.defaultPaymentMethod?.card ? { brand: c.defaultPaymentMethod.card.brand, last4: c.defaultPaymentMethod.card.last4 } : null,
     trial: c.isTrialing
-      ? { daysLeft: c.trialDaysRemaining, creditLeft: c.remainingUsageCreditBalance, creditTotal: c.creditBalance }
+      ? { daysLeft: c.trialDaysRemaining, startedAt: parseRailwayDate(c.billingPeriod?.start)?.toISO() ?? null, creditLeft: c.remainingUsageCreditBalance, creditTotal: c.creditBalance }
       : null,
   };
 }
@@ -299,15 +306,26 @@ async function snapshot(): Promise<Snapshot> {
 
 function billingView(b: RawBilling, now: DateTime): NonNullable<ServerStatus['billing']> {
   const today = now.setZone(TZ).startOf('day');
-  // Sinovda billing davri oxiri to'lov emas: sana — sinov tugashi (trialDaysRemaining)
+  // Sinovda billing davri oxiri to'lov emas: sana — sinov tugashi. trialDaysRemaining faqat butun kun (yuqoriga
+  // yaxlitlangan), aniq payt — sinov boshi (billingPeriod.start, sinovda hisob ochilgan payt) + 30 kun.
+  // Tekshirildi (13.11.2026): billingPeriod.start = workspace.createdAt = "Trial credits" berilgan payt.
+  // TODO(tasdiqlash): sinov 30 kun deb olindi (Railway qoidasi; API tugash paytini to'g'ridan-to'g'ri bermaydi); trialDaysRemaining bilan 1 kundan ortiq
+  // farq qilsa ishonilmaydi va eski usul (bugun + qolgan kun, soatsiz) qoladi.
+  let dueAt: DateTime | null = null;
+  if (b.trial) {
+    const end = b.trial.startedAt ? DateTime.fromISO(b.trial.startedAt).plus({ days: TRIAL_DAYS }).setZone(TZ) : null;
+    const byDays = now.setZone(TZ).plus({ days: b.trial.daysLeft });
+    if (end && Math.abs(end.diff(byDays, 'days').days) <= 1) dueAt = end;
+  } else if (b.nextPayment) dueAt = DateTime.fromISO(b.nextPayment).setZone(TZ);
   const due = b.trial
-    ? today.plus({ days: b.trial.daysLeft })
-    : b.nextPayment ? DateTime.fromISO(b.nextPayment).setZone(TZ).startOf('day') : null;
+    ? (dueAt?.startOf('day') ?? today.plus({ days: b.trial.daysLeft }))
+    : dueAt?.startOf('day') ?? null;
   return {
     plan: b.plan,
     state: b.state,
     paymentFailed: b.state === 'PAST_DUE' || b.state === 'UNPAID',
     nextPaymentDate: due?.toISODate() ?? null,
+    nextPaymentAt: dueAt?.toUTC().toISO() ?? null,
     daysLeft: due ? Math.round(due.diff(today, 'days').days) : null,
     nextAmount: b.nextAmount,
     currentUsage: b.currentUsage,
@@ -319,13 +337,14 @@ function billingView(b: RawBilling, now: DateTime): NonNullable<ServerStatus['bi
 /** Qolgan kun so'rov paytida hisoblanadi (kesh 1 daqiqa, kun almashsa ham to'g'ri) */
 export async function getServerStatus(now: DateTime = DateTime.now()): Promise<ServerStatus> {
   if (!railwayConfigured()) {
-    return { configured: false, fetchedAt: null, server: null, usage: null, billing: null, costHistory: [], billingUrl: RAILWAY_BILLING_URL, errors: [] };
+    return { configured: false, fetchedAt: null, serverTime: new Date().toISOString(), server: null, usage: null, billing: null, costHistory: [], billingUrl: RAILWAY_BILLING_URL, errors: [] };
   }
   const [s, costHistory] = await Promise.all([snapshot(), loadCostHistory()]);
   const billing = s.billing ? billingView(s.billing, now) : null;
   return {
     configured: true,
     fetchedAt: new Date(s.at).toISOString(),
+    serverTime: new Date().toISOString(),
     server: s.server,
     usage: s.usage,
     billing,
@@ -359,6 +378,7 @@ export async function remindServerPayment(now: DateTime = DateTime.now()) {
       paymentFailed: b.paymentFailed,
       daysLeft: b.daysLeft,
       nextPaymentDate: b.nextPaymentDate,
+      nextPaymentAt: b.nextPaymentAt,
       amount: b.nextAmount,
       hasCard: !!b.card,
       billingUrl: RAILWAY_BILLING_URL,

@@ -134,11 +134,13 @@ export function renderNotification(kind: string, p: any, lang: Lang): string {
       const amount = p.amount != null ? ` (~$${Number(p.amount).toFixed(2)})` : '';
       const when = p.daysLeft === 0 ? L('bugun', 'сегодня') : uz ? `${p.daysLeft} kundan keyin` : `через ${p.daysLeft} дн.`;
       if (p.trial) {
+        const time = p.nextPaymentAt ? DateTime.fromISO(p.nextPaymentAt).setZone(TZ).toFormat('HH:mm') : null;
+        const at = time ? L(`${date}, soat ${time} da`, `${date} в ${time}`) : uz ? `${date} kuni` : date;
         return post({
           icon: '⏳',
-          title: L(`Server sinov muddati ${when} tugaydi`, `Пробный период сервера закончится ${when}`),
-          rows: [{ icon: '📅', label: L('Sana', 'Дата'), value: date, strong: true }],
-          quote: L("CRM to'xtamasligi uchun Railway'da Hobby tarifini tanlang va karta ulang.", 'Чтобы CRM не остановилась, выберите тариф Hobby в Railway и привяжите карту.'),
+          title: L(`Server tarifi ${at} tugaydi`, `Тариф сервера закончится ${at}`),
+          rows: [{ icon: '⏰', label: L('Qoldi', 'Осталось'), value: p.daysLeft === 0 ? L('bugun', 'сегодня') : uz ? `${p.daysLeft} kun` : `${p.daysLeft} дн.`, strong: true }],
+          quote: L("Undan oldin to'lov qiling, aks holda server to'xtaydi.", 'Оплатите до этого времени, иначе сервер остановится.'),
           extra: pay,
         });
       }

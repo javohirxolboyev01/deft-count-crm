@@ -8,7 +8,7 @@ import { Pagination } from '@/components/ui/pagination';
 import { Empty, QueryState } from '@/components/ui/states';
 import { api, qs } from '@/lib/api';
 import { cn } from '@/lib/cn';
-import { fmtDateTime, fmtIsoDate, fmtRelative } from '@/lib/time';
+import { fmtDateTime, fmtIsoDate, fmtRelative, fmtTime } from '@/lib/time';
 import type { AppNotification, NotificationKind, Paged } from '@/lib/types';
 
 const params = (n: AppNotification, t: TFunction) => {
@@ -34,6 +34,10 @@ const params = (n: AppNotification, t: TFunction) => {
     // SERVER_PAYMENT
     payDate: p.nextPaymentDate ? fmtIsoDate(p.nextPaymentDate) : '—',
     payWhen: p.daysLeft === 0 ? t('server.today') : t('server.inDays', { n: p.daysLeft ?? 0 }),
+    // Sinov: "16.11.2026, soat 13:19 da" (vaqt ma'lum bo'lmasa "16.11.2026 kuni")
+    payAt: p.nextPaymentAt
+      ? t('server.trialAt', { date: fmtIsoDate(p.nextPaymentDate), time: fmtTime(p.nextPaymentAt) })
+      : t('server.trialAtDay', { date: p.nextPaymentDate ? fmtIsoDate(p.nextPaymentDate) : '—' }),
     payAmount: p.amount != null ? ` (~$${Number(p.amount).toFixed(2)})` : '',
   };
 };

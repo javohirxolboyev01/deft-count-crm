@@ -34,6 +34,7 @@ import { ChatWidget } from './ChatWidget';
 import { DesktopNotifPrompt } from './DesktopNotifPrompt';
 import { Logo } from './Logo';
 import { NotificationsDrawer, notificationParts, notificationText } from './NotificationsDrawer';
+import { BANNER_H, ServerBillingBanner, useServerBillingBanner } from './ServerBillingBanner';
 import { TaskPanel } from './TaskPanel';
 import { UrgentDialog } from './UrgentDialog';
 
@@ -186,15 +187,20 @@ export function Layout() {
   const itemCls = (active = false) => cn('menu-item group', active ? 'menu-item-active' : 'menu-item-inactive', !wide && 'justify-center');
   const iconCls = (active = false) => cn('menu-item-icon-size', active ? 'menu-item-icon-active' : 'menu-item-icon-inactive');
 
+  // Tarif/to'lov ogohlantirishi: chiqsa sidebar va header shuncha pastga suriladi (--banner-h)
+  const billingBanner = useServerBillingBanner(isLeader);
+  const bannerStyle = { '--banner-h': `${billingBanner ? BANNER_H : 0}px` } as React.CSSProperties;
+
   return (
-    <div className="flex min-h-screen">
+    <div className="flex min-h-screen pt-[var(--banner-h)]" style={bannerStyle}>
+      {billingBanner && <ServerBillingBanner data={billingBanner} />}
       <a href="#main" className="sr-only focus:not-sr-only focus:absolute focus:left-2 focus:top-2 focus:z-[70] focus:bg-white focus:p-2">
         {t('common.skipToContent')}
       </a>
 
       <aside
         className={cn(
-          'fixed left-0 top-0 z-[51] mt-14 flex h-[calc(100vh-56px)] flex-col border-r border-gray-200 bg-white dark:bg-page text-gray-900 transition-[width,transform] duration-300 xl:mt-0 xl:h-screen xl:translate-x-0',
+          'fixed left-0 top-[var(--banner-h)] z-[51] mt-14 flex h-[calc(100vh-56px-var(--banner-h))] flex-col border-r border-gray-200 bg-white dark:bg-page text-gray-900 transition-[width,transform] duration-300 xl:mt-0 xl:h-[calc(100vh-var(--banner-h))] xl:translate-x-0',
           wide ? 'w-[256px] px-3.5' : 'w-[70px] px-2',
           mobileOpen ? 'translate-x-0' : '-translate-x-full',
         )}
@@ -270,7 +276,7 @@ export function Layout() {
 
       <div className={cn('flex min-w-0 grow flex-col transition-all duration-300', expanded ? 'xl:pl-[256px]' : 'xl:pl-[70px]')}>
         {/* Header: mobil menyu tugmasi va logo (xl'dan kichik), chapda shoshilinch, o'ngda til, bildirishnomalar */}
-        <header className="sticky top-0 z-[51] flex h-14 w-full items-center gap-2 border-b border-gray-200 bg-white px-2 dark:bg-page sm:px-4">
+        <header className="sticky top-[var(--banner-h)] z-[51] flex h-14 w-full items-center gap-2 border-b border-gray-200 bg-white px-2 dark:bg-page sm:px-4">
           <button type="button" onClick={() => setMobileOpen((v) => !v)} aria-label={t('nav.menu')} className="flex h-10 w-10 cursor-pointer items-center justify-center rounded-lg text-gray-500 xl:hidden">
             {mobileOpen ? <X className="h-6 w-6" /> : <AlignJustify className="h-6 w-6" />}
           </button>

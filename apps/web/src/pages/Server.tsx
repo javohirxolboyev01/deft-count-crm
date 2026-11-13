@@ -10,7 +10,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { QueryState } from '@/components/ui/states';
 import { api } from '@/lib/api';
 import { cn } from '@/lib/cn';
-import { fmtDateTime, fmtIsoDate, fmtShortDue } from '@/lib/time';
+import { fmtDateTime, fmtIsoDate, fmtShortDue, fmtTime } from '@/lib/time';
 import type { ServerStatus } from '@/lib/types';
 
 /*
@@ -180,6 +180,10 @@ export default function Server() {
   const srv = s?.server;
   const u = s?.usage;
   const trial = b?.trial;
+  // Tarif tugash payti: "16.11.2026, soat 13:19 da" (vaqt ma'lum bo'lmasa "16.11.2026 kuni")
+  const trialAt = b?.nextPaymentAt
+    ? t('server.trialAt', { date: fmtIsoDate(b.nextPaymentDate), time: fmtTime(b.nextPaymentAt) })
+    : t('server.trialAtDay', { date: fmtIsoDate(b?.nextPaymentDate) || '—' });
 
   const days = b?.daysLeft;
   const payTone = b?.paymentFailed || (days != null && days < 0) ? 'overdue' : days != null && days <= 3 ? 'soon' : 'done';
@@ -265,7 +269,7 @@ export default function Server() {
                     {trial && (
                       <div className="mb-2 flex items-start gap-2 rounded-md bg-soon-bg px-3 py-2.5 text-sm text-soon">
                         <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                        <span>{t('server.trialWarning')}</span>
+                        <span>{t('server.trialWarning', { at: trialAt })}</span>
                       </div>
                     )}
                     <Row label={t('server.billingStatus')}>
@@ -295,6 +299,7 @@ export default function Server() {
                     </Row>
                     <Row label={t(trial ? 'server.trialEndLabel' : 'server.nextPaymentLabel')}>
                       {b.nextPaymentDate ? fmtIsoDate(b.nextPaymentDate) : '—'}
+                      {trial && b.nextPaymentAt && <span className="ml-1.5">{fmtTime(b.nextPaymentAt)}</span>}
                       {b.nextAmount != null && <span className="ml-1.5 text-gray-500">(~{usd(b.nextAmount)})</span>}
                     </Row>
                     <p className="mt-3 text-xs text-gray-500">{t(trial ? 'server.trialHint' : 'server.autoPay')}</p>

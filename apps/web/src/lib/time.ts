@@ -7,6 +7,7 @@ const dt = (iso: string) => DateTime.fromISO(iso).setZone(TZ);
 
 export const fmtDate = (iso?: string | null) => (iso ? dt(iso).toFormat('dd.MM.yyyy') : '—');
 export const fmtDateTime = (iso?: string | null) => (iso ? dt(iso).toFormat('dd.MM.yyyy HH:mm') : '—');
+export const fmtTime = (iso?: string | null) => (iso ? dt(iso).toFormat('HH:mm') : '');
 export const fmtShortDue = (iso?: string | null) => (iso ? dt(iso).toFormat('dd.MM HH:mm') : '—');
 /** 'YYYY-MM-DD' -> 'dd.MM.yyyy' (oylik jadval sarlavhasi, Sheet'dagidek: 15.10.2026) */
 export const fmtIsoDate = (isoDate?: string | null) => (isoDate ? DateTime.fromISO(isoDate).toFormat('dd.MM.yyyy') : '');

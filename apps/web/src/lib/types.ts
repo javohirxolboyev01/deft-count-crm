@@ -603,6 +603,7 @@ export interface CallsStatus {
 export interface ServerStatus {
   configured: boolean;
   fetchedAt: string | null;
+  serverTime: string;
   server: { state: 'UP' | 'DOWN' | 'SLEEPING' | 'DEPLOYING' | 'UNKNOWN'; since: string | null } | null;
   usage: {
     cpu: number;
@@ -616,6 +617,8 @@ export interface ServerStatus {
     state: string;
     paymentFailed: boolean;
     nextPaymentDate: string | null;
+    /** Aniq vaqt (ISO); sinovda — tugash payti */
+    nextPaymentAt: string | null;
     daysLeft: number | null;
     nextAmount: number | null;
     currentUsage: number | null;

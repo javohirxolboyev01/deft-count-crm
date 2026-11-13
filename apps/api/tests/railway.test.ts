@@ -196,7 +196,25 @@ describe('to\'lov eslatmasi', () => {
     expect(rows).toHaveLength(2);
     expect(rows[0]!.payload).toMatchObject({ trial: true, daysLeft: 1, nextPaymentDate: '2026-11-11' });
     expect(rows[0]!.dedupe_key).toBe('server-trial:2026-11-11:1');
-    expect(renderNotification('SERVER_PAYMENT', rows[0]!.payload, 'uz')).toContain('sinov muddati 1 kundan keyin tugaydi');
+    expect(renderNotification('SERVER_PAYMENT', rows[0]!.payload, 'uz')).toContain('Server tarifi 11.11.2026 kuni tugaydi');
+  });
+
+  it('sinov tugash payti: hisob ochilgan payt + 30 kun (soat bilan), xabarda ham', async () => {
+    // Haqiqiy javob: start 17.10 08:19 UTC, 13.11 da trialDaysRemaining = 4 (yuqoriga yaxlitlangan)
+    Object.assign(billing, {
+      state: 'INACTIVE', isTrialing: true, trialDaysRemaining: 4, subscriptions: [], defaultPaymentMethod: null,
+      billingPeriod: { start: '2026-10-17T08:19:34.859Z', end: '2026-11-13T23:59:59.999Z' },
+    });
+    const { getServerStatus } = await import('../src/modules/railway');
+    const s = await getServerStatus(at('2026-11-13T10:00'));
+    expect(s.billing).toMatchObject({ nextPaymentDate: '2026-11-16', nextPaymentAt: '2026-11-16T08:19:34.859Z', daysLeft: 3 });
+    await remindServerPayment(at('2026-11-13T10:00'));
+    const rows = await sent();
+    expect(rows).toHaveLength(2);
+    const text = renderNotification('SERVER_PAYMENT', rows[0]!.payload, 'uz');
+    expect(text).toContain('Server tarifi 16.11.2026, soat 13:19 da tugaydi');
+    expect(text).toContain("aks holda server to'xtaydi");
+    expect(text).not.toContain('bepul');
   });
 
   it('kunlik ish (xarajat + eslatma) Railway\'ga bitta billing so\'rovi bilan, server holati/yuklama so\'ralmaydi', async () => {
