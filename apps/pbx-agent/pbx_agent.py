@@ -16,17 +16,24 @@ Sozlamalar (muhit o'zgaruvchilari, odatda /etc/pbx-agent.env):
   REC_STATE_FILE    /var/lib/pbx-agent/recordings.json (qaysi yozuvlar yuborilgani)
   REC_SINCE         2026-01-01   (shu sanadan eski yozuvlar yuborilmaydi; bo'sh = hammasi)
 
+Yozuvni qo'ng'iroqqa bog'lash: fayl nomida UNIQUEID bo'lsa ('1762750800.123.wav') — CRM o'zi oladi. Bo'lmasa
+(masalan 'out_1006_09913115_160235.wav', 'in_906338668_uztelecom_113659.wav') agent CDR'dan qidiradi: nomdagi
+raqamlar (ichki raqam, telefon — oxirgi raqamlari) src/dst bilan mos, nomdagi soat (HHMMSS, bo'lmasa fayl vaqti)
+qo'ng'iroq tugagan vaqtga +-15 s. CDR vaqti mahalliy yoki GMT (cdr.conf usegmtime) — ikkalasi ham sinaladi.
+
 Audio: serverda ffmpeg bo'lsa yozuv OGG/Opus'ga siqiladi (soatiga ~10 MB), bo'lmasa asl fayl yuboriladi
 (WAV soatiga ~60 MB; 50 MB dan kattasi Telegramga sig'maydi). Yozuvlar serverdan o'chirilmaydi.
 
 Tekshirish:  python3 pbx_agent.py --dry-run      (oxirgi 5 qatorni qanday tushunganini ko'rsatadi, yubormaydi)
 Tarixsiz:    python3 pbx_agent.py --from-end     (birinchi ishga tushishda eski qatorlarni o'tkazib yuboradi)
 """
+import calendar
 import csv
 import hashlib
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -48,6 +55,9 @@ REC_MAX_BYTES = 50 * 1024 * 1024   # Telegram Bot API yuklash chegarasi
 REC_MIN_AGE_SEC = 120              # hali yozilayotgan faylga tegilmaydi
 REC_SCAN_SEC = 30
 REC_PACE_SEC = 3.5                 # Telegram kanalga ~20 xabar/daqiqa chegarasi
+REC_MATCH_WINDOW_SEC = 15          # nomdagi soat va CDR tugash vaqti farqi
+REC_MATCH_WAIT_SEC = 900           # CDR qatori kechiksa shuncha kutiladi, keyin bog'lanmasdan yuboriladi
+UNIQUEID_IN_NAME = re.compile(r"\d{9,11}\.\d+")
 
 
 def log(msg):
@@ -66,14 +76,20 @@ def columns_for(n, override):
 
 
 def parse_line(raw, override):
-    text = raw.decode("utf-8", errors="replace").rstrip("\r\n")
+    # NUL va boshqa ikkilik baytlar (Master.csv'da uchraydi): qator tashlab ketilmaydi, faqat tozalanadi
+    text = raw.decode("utf-8", errors="replace").replace("\x00", "").rstrip("\r\n")
     if not text.strip():
         return None
-    row = next(csv.reader(io.StringIO(text)), None)
+    try:
+        row = next(csv.reader(io.StringIO(text)), None)
+    except csv.Error:
+        return None  # buzilgan qator butun agentni to'xtatib qo'ymasin
     if not row:
         return None
     cols = columns_for(len(row), override)
     fields = {c: v for c, v in zip(cols, row) if not c.startswith("extra")}
+    if "start" not in fields:
+        return None  # chala qator: CRM butun paketni rad etmasin
     return {"key": hashlib.sha1(raw.rstrip(b"\r\n")).hexdigest(), "fields": fields}
 
 
@@ -168,7 +184,7 @@ class Agent:
             sys.exit("CRM_URL va PBX_INGEST_TOKEN sozlanmagan")
         log("ishga tushdi: %s -> %s" % (self.cdr, self.url))
         if os.environ.get("REC_DIR", "/var/spool/asterisk/monitor").strip():
-            Recorder(self.url[: -len("/api/calls/ingest")], self.token).start()
+            Recorder(self.url[: -len("/api/calls/ingest")], self.token, self.cdr, self.override).start()
         delay = self.poll
         while True:
             try:
@@ -187,11 +203,99 @@ class Agent:
             time.sleep(delay)
 
 
+def digits(v):
+    return re.sub(r"\D", "", v or "")
+
+
+def number_match(clue, value):
+    """Telefon oxirgi raqamlari bo'yicha: '09913115' ~ '909913115', '906338668' ~ '998906338668', '1006' = '1006'"""
+    if not clue or not value:
+        return False
+    short = min(len(clue), len(value))
+    return short >= 3 and (value.endswith(clue) or clue.endswith(value)) and (short >= 7 or clue == value)
+
+
+def name_clues(rel, mtime):
+    """Fayl nomidan (vaqt, [raqamlar]). Vaqt: oxirgi 6 xonali qism (HHMMSS) fayl sanasida (yarim tun atrofida —
+    fayl vaqtiga eng yaqin kun), bo'lmasa fayl vaqtining o'zi. Raqamlar: qolgan 3+ xonali raqamli qismlar."""
+    parts = os.path.splitext(os.path.basename(rel))[0].split("_")
+    nums = [p for p in parts if p.isdigit() and len(p) >= 3]
+    when = mtime
+    if nums and len(nums[-1]) == 6:
+        hh, mi, ss = int(nums[-1][:2]), int(nums[-1][2:4]), int(nums[-1][4:])
+        if hh < 24 and mi < 60 and ss < 60:
+            nums = nums[:-1]
+            base = time.localtime(mtime)
+            day = time.mktime((base.tm_year, base.tm_mon, base.tm_mday, hh, mi, ss, 0, 0, -1))
+            when = min((day - 86400, day, day + 86400), key=lambda t: abs(t - mtime))
+    if not nums:
+        return None
+    return when, nums
+
+
+class CdrIndex:
+    """CDR qatorlari tugash vaqti (daqiqa) bo'yicha: yozuvni qo'ng'iroqqa bog'lash uchun. Faylni bir marta to'liq,
+    keyin faqat yangi qatorlarini o'qiydi."""
+
+    def __init__(self, path, override):
+        self.path = path
+        self.override = override
+        self.inode = None
+        self.offset = 0
+        self.buckets = {}
+
+    def refresh(self):
+        try:
+            st = os.stat(self.path)
+        except OSError:
+            return
+        if st.st_ino != self.inode or st.st_size < self.offset:
+            self.inode, self.offset = st.st_ino, 0  # logrotate: eski indeks ham qoladi (eski yozuvlar uchun)
+        while st.st_size > self.offset:
+            with open(self.path, "rb") as f:
+                f.seek(self.offset)
+                data = f.read(4 * 1024 * 1024)
+            end = data.rfind(b"\n")
+            if end < 0:
+                return
+            for line in data[: end + 1].splitlines():
+                self.add(parse_line(line, self.override))
+            self.offset += end + 1
+
+    def add(self, rec):
+        f = (rec or {}).get("fields") or {}
+        uniqueid = (f.get("uniqueid") or "").strip()
+        try:
+            t = time.strptime((f.get("end") or "").strip()[:19], "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            return
+        if not uniqueid:
+            return
+        row = (digits(f.get("src")), digits(f.get("dst")), uniqueid, f.get("disposition") == "ANSWERED")
+        # usegmtime noma'lum: mahalliy va GMT talqini — 5 soat farq, raqamlar ham mos kelishi kerak
+        for epoch in {time.mktime(t), calendar.timegm(t)}:
+            self.buckets.setdefault(int(epoch // 60), []).append((epoch, row))
+
+    def find(self, when, nums):
+        best = None
+        for minute in (int(when // 60) - 1, int(when // 60), int(when // 60) + 1):
+            for epoch, (src, dst, uniqueid, answered) in self.buckets.get(minute, ()):
+                diff = abs(epoch - when)
+                if diff > REC_MATCH_WINDOW_SEC:
+                    continue
+                if not all(number_match(n, src) or number_match(n, dst) for n in nums):
+                    continue
+                score = (diff, not answered)
+                if best is None or score < best[0]:
+                    best = (score, uniqueid)
+        return best[1] if best else None
+
+
 class Recorder(threading.Thread):
     """Audio yozuvlarni CRM'ga yuboradi (CRM ularni Telegram yopiq kanaliga saqlaydi). Alohida oqim: ko'p yozuvli
     navbat (birinchi ishga tushish) CDR yuborishni to'xtatib qo'ymasin."""
 
-    def __init__(self, base, token):
+    def __init__(self, base, token, cdr=None, override=None):
         super().__init__(daemon=True)
         self.dir = os.environ.get("REC_DIR", "/var/spool/asterisk/monitor").rstrip("/")
         self.url = base + "/api/calls/recordings"
@@ -201,6 +305,7 @@ class Recorder(threading.Thread):
         self.since = time.mktime(time.strptime(since, "%Y-%m-%d")) if since else 0
         self.ffmpeg = shutil.which("ffmpeg")
         self.done = self.load()
+        self.index = CdrIndex(cdr or os.environ.get("CDR_FILE", "/var/log/asterisk/cdr-csv/Master.csv"), override)
 
     def load(self):
         try:
@@ -251,19 +356,29 @@ class Recorder(threading.Thread):
         with open(full, "rb") as f:
             return f.read(), AUDIO_MIME[ext], ext
 
-    def send(self, rel, full, ext):
+    def send(self, rel, full, ext, uniqueid=None):
         data, mime, new_ext = self.encode(full, ext)
         if len(data) > REC_MAX_BYTES:
             log("yozuv 50 MB dan katta, yuborilmadi (serverda qoladi): %s" % rel)
             return {"skipped": "too_large"}
         name = os.path.splitext(os.path.basename(rel))[0] + new_ext
-        req = urllib.request.Request(
-            self.url, data=data, method="POST",
-            headers={"Content-Type": mime, "Authorization": "Bearer " + self.token, "User-Agent": "pbx-agent/1",
-                     "X-Source-Path": urllib.parse.quote(rel), "X-File-Name": urllib.parse.quote(name)},
-        )
+        headers = {"Content-Type": mime, "Authorization": "Bearer " + self.token, "User-Agent": "pbx-agent/1",
+                   "X-Source-Path": urllib.parse.quote(rel), "X-File-Name": urllib.parse.quote(name)}
+        if uniqueid:
+            headers["X-Uniqueid"] = uniqueid
+        req = urllib.request.Request(self.url, data=data, method="POST", headers=headers)
         with urllib.request.urlopen(req, timeout=300) as r:
             return json.loads(r.read() or b"{}")
+
+    def resolve(self, rel, mtime):
+        """(uniqueid | None, kutish kerakmi)"""
+        if UNIQUEID_IN_NAME.search(os.path.basename(rel)):
+            return None, False  # CRM nomdan oladi
+        clues = name_clues(rel, mtime)
+        if not clues:
+            return None, False
+        uniqueid = self.index.find(*clues)
+        return uniqueid, uniqueid is None and time.time() - mtime < REC_MATCH_WAIT_SEC
 
     def run(self):
         if not os.path.isdir(self.dir):
@@ -273,9 +388,15 @@ class Recorder(threading.Thread):
         delay = REC_SCAN_SEC
         while True:
             try:
-                for _mtime, rel, full, ext in self.pending():
+                files = self.pending()
+                if files:
+                    self.index.refresh()
+                for mtime, rel, full, ext in files:
+                    uniqueid, wait = self.resolve(rel, mtime)
+                    if wait:
+                        continue  # CDR qatori hali yozilmagan — keyingi aylanishda
                     try:
-                        res = self.send(rel, full, ext)
+                        res = self.send(rel, full, ext, uniqueid)
                     except urllib.error.HTTPError as e:
                         if e.code not in (400, 413):
                             raise
@@ -284,7 +405,8 @@ class Recorder(threading.Thread):
                     self.done[rel] = res.get("id") or res.get("skipped") or res.get("rejected") or True
                     self.save()
                     if "id" in res:
-                        log("yozuv yuborildi: %s" % rel)
+                        log("yozuv yuborildi: %s%s" % (rel, "" if uniqueid or UNIQUEID_IN_NAME.search(rel)
+                                                       else " (qo'ng'iroq topilmadi)"))
                     time.sleep(REC_PACE_SEC)
                 delay = REC_SCAN_SEC
             except urllib.error.HTTPError as e:
@@ -304,6 +426,21 @@ def dry_run():
         lines = f.readlines()[-5:]
     for l in lines:
         print(json.dumps(parse_line(l, override), ensure_ascii=False, indent=2))
+    rec = Recorder("", "", path, override)
+    if not os.path.isdir(rec.dir):
+        print("yozuvlar papkasi topilmadi: %s" % rec.dir)
+        return
+    rec.index.refresh()
+    files = []
+    for root, _dirs, names in os.walk(rec.dir):
+        for name in names:
+            full = os.path.join(root, name)
+            if os.path.splitext(name)[1].lower() in AUDIO_MIME:
+                files.append((os.stat(full).st_mtime, os.path.relpath(full, rec.dir)))
+    print("\nyozuvlar (%s), oxirgi 10 tasi -> qo'ng'iroq UNIQUEID:" % rec.dir)
+    for mtime, rel in sorted(files)[-10:]:
+        uniqueid, _wait = rec.resolve(rel, mtime)
+        print("  %s -> %s" % (rel, uniqueid or ("nomida" if UNIQUEID_IN_NAME.search(rel) else "TOPILMADI")))
 
 
 if __name__ == "__main__":

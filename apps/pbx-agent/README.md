@@ -37,8 +37,8 @@ journalctl -u pbx-agent -f                          # "yuborildi: {'inserted': N
 Agar ustunlar siljigan bo'lsa (`cdr.conf` dagi `[csv]` sozlamasi boshqacha bo'lsa), `/etc/pbx-agent.env` faylidagi
 `CDR_COLUMNS` qatoriga ustun nomlarini fayldagi tartibda yozing.
 
-Agar `asterisk` foydalanuvchisi bo'lmasa, `pbx-agent.service` dagi `User=` va `Group=` qatorlarini
-`Master.csv` faylini o'qiy oladigan foydalanuvchiga almashtiring.
+Xizmat alohida vaqtinchalik foydalanuvchi bilan ishlaydi (`DynamicUser=yes`, root emas). `Master.csv` va
+yozuvlar hamma uchun o'qiladigan (`-rw-r--r--`) bo'lishi kerak.
 
 Birinchi ishga tushishda fayldagi **eski qo'ng'iroqlar ham** yuboriladi va statistikaga kiradi.
 Eski qo'ng'iroqlar kerak bo'lmasa, birinchi marta `--from-end` bilan ishga tushiring.
@@ -47,9 +47,13 @@ Eski qo'ng'iroqlar kerak bo'lmasa, birinchi marta `--from-end` bilan ishga tushi
 
 - Agent `REC_DIR` papkasini (ichki papkalari bilan) har 30 soniyada tekshiradi. Yozilib bo'lgan fayllarni
   (oxirgi o'zgarishidan 2 daqiqa o'tgan) yuboradi.
-- Fayl nomida Asterisk UNIQUEID bo'lishi kerak (masalan `...-1762750800.123.wav` yoki `1762750800.123.wav`).
-  CRM yozuvni qo'ng'iroqqa shu raqam orqali bog'laydi. Odatdagi `MixMonitor(${UNIQUEID}.wav)` shunday nom beradi.
-  CDR faylida ham `uniqueid` ustuni bo'lishi kerak (`cdr.conf` → `[csv]` → `loguniqueid=yes`).
+- Yozuv qo'ng'iroqqa Asterisk UNIQUEID orqali bog'lanadi. CDR faylida `uniqueid` ustuni bo'lishi kerak
+  (`cdr.conf` → `[csv]` → `loguniqueid=yes`).
+  - Fayl nomida UNIQUEID bo'lsa (`1762750800.123.wav`, odatdagi `MixMonitor(${UNIQUEID}.wav)`) — CRM nomdan oladi.
+  - Bo'lmasa (masalan `out_1006_09913115_160235.wav`, `in_906338668_uztelecom_113659.wav`) agent CDR'dan qidiradi:
+    nomdagi raqamlar (ichki raqam, telefonning oxirgi raqamlari) `src`/`dst` bilan, nomdagi soat (HHMMSS)
+    qo'ng'iroq tugagan vaqt bilan ±15 soniyada mos kelishi kerak. CDR vaqti GMT bo'lsa ham (`usegmtime=yes`) topadi.
+    `--dry-run` oxirida oxirgi 10 ta yozuv qaysi qo'ng'iroqqa bog'lanishi ko'rsatiladi.
 - **ffmpeg o'rnatish tavsiya etiladi** (`apt install ffmpeg`). U bo'lsa yozuv OGG formatiga siqiladi va 1 soatlik suhbat
   taxminan 10 MB bo'ladi. ffmpeg bo'lmasa asl WAV yuboriladi: soatiga ~60 MB. Telegram 50 MB dan katta faylni
   qabul qilmaydi, CRM'da esa 20 MB gacha bo'lgan yozuvni eshitish mumkin.
@@ -74,5 +78,6 @@ Eski qo'ng'iroqlar kerak bo'lmasa, birinchi marta `--from-end` bilan ishga tushi
 | `CRM xatosi 404` | CRM'da `PBX_INGEST_TOKEN` qo'yilmagan |
 | `aloqa yo'q` | Serverdan internetga yoki CRM manziliga chiqib bo'lmayapti |
 | `CRM xatosi (yozuv) 503` | CRM'da Telegram bot yoki kanal sozlanmagan yoki Telegram vaqtincha band. Agent keyin qayta urinadi |
-| Yozuv qo'ng'iroq qatorida chiqmayapti | Fayl nomida UNIQUEID yo'q yoki CDR'da `uniqueid` ustuni yozilmayapti |
+| Yozuv qo'ng'iroq qatorida chiqmayapti | `--dry-run` da `TOPILMADI`: fayl nomida raqam/soat yo'q yoki CDR'da `uniqueid` ustuni yozilmayapti |
+| Qo'ng'iroq vaqti 5 soat farq qiladi | `cdr.conf` da `usegmtime=yes`: Railway'da `PBX_CDR_TIMEZONE=UTC` qo'ying |
 | Xodim ustunida bo'sh | Ichki raqam hali xodimga biriktirilmagan («Qo'ng'iroqlar» sahifasining yuqorisida ko'rinadi) |

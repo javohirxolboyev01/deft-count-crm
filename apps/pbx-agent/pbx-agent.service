@@ -8,14 +8,13 @@ EnvironmentFile=/etc/pbx-agent.env
 ExecStart=/usr/bin/python3 /opt/pbx-agent/pbx_agent.py
 Restart=always
 RestartSec=10
-# Faqat o'qish: CDR fayli va o'z holat fayli
-User=asterisk
-Group=asterisk
+# Alohida vaqtinchalik foydalanuvchi (root emas; serverda "asterisk" foydalanuvchisi bo'lmasligi mumkin).
+# CDR va yozuvlar hamma uchun o'qiladigan (644) bo'lishi kerak; yozish faqat o'z holat papkasiga
+DynamicUser=yes
 StateDirectory=pbx-agent
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/lib/pbx-agent
 # ffmpeg siqish uchun vaqtinchalik fayl (ProtectSystem=strict ostida /tmp yozilmaydi)
 PrivateTmp=true
 

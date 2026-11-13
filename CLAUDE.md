@@ -238,5 +238,5 @@ Audio yozuvlar (V48, rahbar qarori — xodimlarni nazorat qilish uchun): Asteris
 2. Vazifa faqat buxgalterga o'tkaziladi, rahbarga emas (V40).
 3. Chatda o'chirilgan xabar fayli Telegram kanalidan o'chirilmaydi (arxiv), fayl chegarasi 20 MB (V43).
 4. Telefoniya (V46): Asterisk server vaqti Asia/Tashkent; CDR ustunlari cdr_csv standarti (uniqueid, userfield bilan) — serverchidan `--dry-run` natijasi bilan tasdiqlanadi; navbat/guruh qo'ng'iroqlarida javobsiz qolgan har bir tarmoq alohida qator bo'lishi mumkin.
-5. Audio yozuvlar (V48): fayl nomida Asterisk UNIQUEID bor deb olingan (yozuvlar papkasi `/var/spool/asterisk/monitor`) — serverchi tasdiqlaydi; ilovada eshitish 20 MB gacha.
+5. Audio yozuvlar (V48): ofis serverida yozuvlar `/srv/records/YYYY-MM-DD/out_<ichki>_<raqam>_<HHMMSS>.wav` (nomida UNIQUEID yo'q) — agent CDR'dan raqam + tugash vaqti (±15 s) bo'yicha topib `X-Uniqueid` yuboradi; CDR vaqti GMT (`usegmtime=yes`) → Railway `PBX_CDR_TIMEZONE=UTC`; ilovada eshitish 20 MB gacha.
 5. Server to'lovi (6.14): Railway API'dagi keyingi to'lov summasi (`nextInvoiceCurrentTotal`) sentda deb olingan — Hobby obunasi ochilgach dashboard bilan solishtiriladi.
