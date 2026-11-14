@@ -12,7 +12,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardHeader, PageHeader } from '@/components/ui/card';
 import { Dialog } from '@/components/ui/dialog';
 import { DatePicker } from '@/components/ui/date-picker';
-import { Field, Input, NumberInput, PhoneInput, Textarea } from '@/components/ui/input';
+import { Field, Input, NumberInput, PhoneListInput, Textarea } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Empty, QueryState } from '@/components/ui/states';
 import { FormSkeleton, ListSkeleton } from '@/components/ui/skeleton';
@@ -159,7 +159,7 @@ export default function ClientCard() {
           </Field>
           <Field label={t('clients.name')} htmlFor="name"><Input id="name" required value={form.name} disabled={ro} onChange={(e) => set({ name: e.target.value })} /></Field>
           <Field label={t('clients.contact')} htmlFor="contact"><Input id="contact" value={form.contactPerson} onChange={(e) => set({ contactPerson: e.target.value })} /></Field>
-          <Field label={t('clients.phone')} htmlFor="phone" hint={t('clients.phoneHint')}><PhoneInput id="phone" value={form.phone} onChange={(v) => set({ phone: v })} /></Field>
+          <Field label={t('clients.phone')} htmlFor="phone" hint={t('clients.phoneHint')}><PhoneListInput id="phone" value={form.phone} onChange={(v) => set({ phone: v })} addLabel={t('clients.addPhone')} removeLabel={t('clients.removePhone')} /></Field>
           <Field
             label={t('clients.taxType')}
             htmlFor="tax"

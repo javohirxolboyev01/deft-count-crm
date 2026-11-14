@@ -156,7 +156,7 @@ const uz = {
   },
   clients: {
     title: 'Mijozlar', new: 'Yangi mijoz', joinedSection: "Bu STIR bilan mijoz boshqa bo'limda bor edi — u shu bo'limga ham qo'shildi", card: 'Mijoz kartasi', stir: 'STIR', name: 'Korxona nomi', contact: "Mas'ul shaxs (FISh)",
-    phone: 'Telefon', phoneHint: 'Faqat aloqa uchun: mijozga avtomatik xabar yuborilmaydi', taxType: 'Soliq turi',
+    phone: 'Telefon', phoneHint: "Faqat aloqa uchun: mijozga avtomatik xabar yuborilmaydi. Qo'ng'iroqlar barcha raqamlar bo'yicha shu mijozga bog'lanadi", addPhone: "Raqam qo'shish", removePhone: "Raqamni o'chirish", taxType: 'Soliq turi',
     taxLeaderOnly: "Soliq turini faqat rahbar o'zgartiradi", effectiveFrom: 'Soliq turi qachondan', effectiveFromHint: "Bo'sh bo'lsa: joriy oydan",
     accountant: 'Javobgar buxgalter', status: 'Holati', note: 'Izoh', noAccountant: 'Biriktirilmagan',
     allStatuses: 'Barcha holatlar', allTaxTypes: 'Barcha soliq turlari', taxNone: 'Aniqlanmagan', taxNoneHint: 'Soliq turi aniqlanmagan — vazifalar chiqmaydi. Tanlang: fayldagi kataklar o\'zi qo\'llanadi',

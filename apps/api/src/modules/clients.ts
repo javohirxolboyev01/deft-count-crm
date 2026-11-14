@@ -82,7 +82,8 @@ export const clientInput = z.object({
   stir: stirSchema,
   name: z.string().trim().min(1).max(300),
   contactPerson: z.string().trim().max(200).nullable().optional(),
-  phone: z.string().trim().max(50).nullable().optional(),
+  // Bir nechta raqam vergul bilan (kartada 5 tagacha): "+998 90 123 45 67, +998 93 ..."
+  phone: z.string().trim().max(200).nullable().optional(),
   // Faqat ikki qiymat (CLAUDE.md "Asosiy qoida")
   taxType: z.enum(['AOS', 'QQS', 'YATT']),
   taxTypeEffectiveFrom: isoDate.nullable().optional(),

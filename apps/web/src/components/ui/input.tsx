@@ -1,4 +1,5 @@
-import { forwardRef, useLayoutEffect, useRef, type InputHTMLAttributes, type TextareaHTMLAttributes } from 'react';
+import { Plus, X } from 'lucide-react';
+import { forwardRef, useEffect, useLayoutEffect, useRef, useState, type InputHTMLAttributes, type TextareaHTMLAttributes } from 'react';
 import { cn } from '@/lib/cn';
 
 // WinPro input uslubi (my-winpro-admin/src/components/ui/input.tsx): teal chegara, fokusda 3px teal halqa
@@ -83,6 +84,89 @@ export function PhoneInput({
         onChange(formatPhones(raw, multiple));
       }}
     />
+  );
+}
+
+/** Mijoz kartasida nechta raqam qo'shish mumkin */
+export const MAX_PHONES = 5;
+const splitPhones = (v: string) => {
+  const parts = v.split(',').map((s) => s.trim()).filter(Boolean);
+  return parts.length ? parts : [''];
+};
+const joinPhones = (rows: string[]) => rows.map((s) => s.trim()).filter(Boolean).join(', ');
+
+/**
+ * Bir nechta raqam, har biri alohida maydonda (+ bilan qo'shiladi, max tagacha).
+ * Qiymat bitta satr "a, b, c" bo'lib saqlanadi: server fn_phone_keys har birini qo'ng'iroqlarga bog'laydi (V46),
+ * shuning uchun bazada yangi jadval/ustun kerak emas.
+ */
+export function PhoneListInput({
+  id,
+  value,
+  onChange,
+  disabled,
+  max = MAX_PHONES,
+  addLabel,
+  removeLabel,
+}: {
+  id?: string;
+  value: string;
+  onChange: (v: string) => void;
+  disabled?: boolean;
+  max?: number;
+  addLabel: string;
+  removeLabel: string;
+}) {
+  const [rows, setRows] = useState(() => splitPhones(value));
+  // Tashqaridan kelgan o'zgarish (karta yuklandi/qayta o'qildi) — o'zimiz yuborgan qiymatdan farq qilsa qatorlar yangilanadi
+  const emitted = useRef(value);
+  useEffect(() => {
+    if (value !== emitted.current) {
+      emitted.current = value;
+      setRows(splitPhones(value));
+    }
+  }, [value]);
+  const update = (next: string[]) => {
+    setRows(next);
+    emitted.current = joinPhones(next);
+    onChange(emitted.current);
+  };
+  return (
+    <div className="space-y-2">
+      {rows.map((r, i) => (
+        <div key={i} className="flex items-center gap-2">
+          <PhoneInput
+            id={i === 0 ? id : undefined}
+            aria-label={i === 0 ? undefined : `№${i + 1}`}
+            value={r}
+            disabled={disabled}
+            onChange={(v) => update(rows.map((x, j) => (j === i ? v : x)))}
+          />
+          {rows.length > 1 && !disabled && (
+            <button
+              type="button"
+              title={removeLabel}
+              aria-label={removeLabel}
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-gray-500 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/40"
+              onClick={() => update(rows.filter((_, j) => j !== i))}
+            >
+              <X className="h-4 w-4" />
+            </button>
+          )}
+        </div>
+      ))}
+      {!disabled && rows.length < max && (
+        <button
+          type="button"
+          className="ml-1.5 inline-flex items-center gap-1 text-sm font-medium text-brand-600 hover:text-brand-700 disabled:cursor-not-allowed disabled:opacity-50 dark:text-brand-400 dark:hover:text-brand-300"
+          disabled={!rows[rows.length - 1].trim()}
+          onClick={() => setRows([...rows, ''])}
+        >
+          <Plus className="h-4 w-4" />
+          {addLabel}
+        </button>
+      )}
+    </div>
   );
 }
 
