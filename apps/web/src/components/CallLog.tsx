@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { ArrowLeftRight, Loader2, PhoneIncoming, PhoneMissed, PhoneOutgoing, Play } from 'lucide-react';
+import { ArrowLeftRight, Loader2, PhoneIncoming, PhoneMissed, PhoneOutgoing, Play, X } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
@@ -55,6 +55,8 @@ export function dispositionText(d: string, t: (k: string, o?: Record<string, unk
 
 // Ochilgan yozuvlar sessiya davomida xotirada (qayta bosilganda Telegram'dan qayta olinmaydi)
 const recordingUrls = new Map<number, string>();
+// Bir vaqtda bitta yozuv: yangisi chala boshlasa oldingisi pauza (bir nechta pleer ochiq tursa ham ovoz aralashmasin)
+let playing: HTMLAudioElement | null = null;
 
 /**
  * Qo'ng'iroq audio yozuvi (V48): faqat rahbarga keladi (server boshqalarga recordingId bermaydi).
@@ -81,7 +83,34 @@ export function RecordingPlayer({ id, className }: { id: number; className?: str
     }
   };
   if (open && url) {
-    return <audio controls autoPlay src={url} className={cn('h-8 w-56 max-w-full', className)} aria-label={t('calls.recording')} />;
+    return (
+      <span className={cn('inline-flex max-w-full items-center gap-1', className)}>
+        <audio
+          controls
+          autoPlay
+          src={url}
+          className="h-8 w-56 max-w-full"
+          aria-label={t('calls.recording')}
+          onPlay={(e) => {
+            if (playing && playing !== e.currentTarget) playing.pause();
+            playing = e.currentTarget;
+          }}
+          onPause={(e) => {
+            if (playing === e.currentTarget) playing = null;
+          }}
+        />
+        {/* Yopish: pleer yo'qoladi (ovoz to'xtaydi), qatorda yana ▶ */}
+        <button
+          type="button"
+          onClick={() => setOpen(false)}
+          title={t('common.close')}
+          aria-label={t('common.close')}
+          className="inline-flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-full text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700"
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </span>
+    );
   }
   return (
     <button
