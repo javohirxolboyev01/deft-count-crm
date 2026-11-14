@@ -105,9 +105,9 @@ export function RecordingPlayer({ id, className }: { id: number; className?: str
           onClick={() => setOpen(false)}
           title={t('common.close')}
           aria-label={t('common.close')}
-          className="inline-flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-full text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700"
+          className="inline-flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-full text-red-600 transition-colors hover:bg-red-50 hover:text-red-700"
         >
-          <X className="h-3.5 w-3.5" />
+          <X className="h-5 w-5" strokeWidth={2.5} />
         </button>
       </span>
     );
