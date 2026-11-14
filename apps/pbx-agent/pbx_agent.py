@@ -55,9 +55,11 @@ REC_MAX_BYTES = 50 * 1024 * 1024   # Telegram Bot API yuklash chegarasi
 REC_MIN_AGE_SEC = 120              # hali yozilayotgan faylga tegilmaydi
 REC_SCAN_SEC = 30
 REC_PACE_SEC = 3.5                 # Telegram kanalga ~20 xabar/daqiqa chegarasi
-REC_MATCH_WINDOW_SEC = 15          # nomdagi soat va CDR tugash vaqti farqi
+REC_BATCH = 50                     # bir aylanishda yuboriladigan yozuvlar (yangilari birinchi)
+REC_MATCH_WINDOW_SEC = 15         # nomdagi soat va CDR tugash vaqti farqi
 REC_MATCH_WAIT_SEC = 900           # CDR qatori kechiksa shuncha kutiladi, keyin bog'lanmasdan yuboriladi
 UNIQUEID_IN_NAME = re.compile(r"\d{9,11}\.\d+")
+CHANNEL_PEER = re.compile(r"^(?:PJSIP|SIP|IAX2|Local)/(\d{2,6})[-@;]")
 
 
 def log(msg):
@@ -271,21 +273,30 @@ class CdrIndex:
             return
         if not uniqueid:
             return
-        row = (digits(f.get("src")), digits(f.get("dst")), uniqueid, f.get("disposition") == "ANSWERED")
+        # Kanal ichki raqamlari: ish vaqtidagi kiruvchi (ring group) — ko'targan xodim faqat dstchannel'da
+        # ('PJSIP/1006-00000039'), yozuv nomi esa in_<raqam>_<ichki>_<HHMMSS>.wav
+        peers = tuple(m.group(1) for m in (CHANNEL_PEER.match(f.get(k) or "") for k in ("channel", "dstchannel")) if m)
+        row = ((digits(f.get("src")), digits(f.get("dst"))) + peers, uniqueid, f.get("disposition") == "ANSWERED")
         # usegmtime noma'lum: mahalliy va GMT talqini — 5 soat farq, raqamlar ham mos kelishi kerak
         for epoch in {time.mktime(t), calendar.timegm(t)}:
             self.buckets.setdefault(int(epoch // 60), []).append((epoch, row))
 
     def find(self, when, nums):
+        """Telefon raqami (7+ xona) va vaqt majburiy; ichki raqam faqat nomzodlarni saralaydi — o'tkazilgan
+        qo'ng'iroqda (1008 ko'tarib 1007 ga o'tkazgan) nomda 1008, oxirgi CDR qatorida 1007 bo'ladi.
+        Nomda telefon bo'lmasa, barcha raqamlar mos kelishi shart."""
+        phones = [n for n in nums if len(n) >= 7]
+        required, optional = (phones, [n for n in nums if len(n) < 7]) if phones else (nums, [])
         best = None
         for minute in (int(when // 60) - 1, int(when // 60), int(when // 60) + 1):
-            for epoch, (src, dst, uniqueid, answered) in self.buckets.get(minute, ()):
+            for epoch, (values, uniqueid, answered) in self.buckets.get(minute, ()):
                 diff = abs(epoch - when)
                 if diff > REC_MATCH_WINDOW_SEC:
                     continue
-                if not all(number_match(n, src) or number_match(n, dst) for n in nums):
+                hit = lambda n: any(number_match(n, v) for v in values)
+                if not all(hit(n) for n in required):
                     continue
-                score = (diff, not answered)
+                score = (sum(not hit(n) for n in optional), diff, not answered)
                 if best is None or score < best[0]:
                     best = (score, uniqueid)
         return best[1] if best else None
@@ -338,7 +349,9 @@ class Recorder(threading.Thread):
                 if mtime > now - REC_MIN_AGE_SEC or mtime < self.since:
                     continue
                 out.append((mtime, rel, full, ext))
-        return sorted(out)
+        # Yangilari birinchi va bo'lak-bo'lak: katta arxiv (birinchi ishga tushish) yuklanayotganda ham
+        # yangi qo'ng'iroq yozuvi keyingi aylanishda (2–3 daqiqada) chiqadi
+        return sorted(out, reverse=True)[:REC_BATCH]
 
     def encode(self, full, ext):
         """(bayt, mime, nom kengaytmasi). ffmpeg bo'lsa — mono Opus 24 kbit/s (nutq uchun yetarli)"""
@@ -403,12 +416,18 @@ class Recorder(threading.Thread):
                         res = {"rejected": e.code, "detail": e.read()[:200].decode("utf-8", "replace")}
                         log("CRM yozuvni qabul qilmadi: %s %s" % (rel, res))
                     self.done[rel] = res.get("id") or res.get("skipped") or res.get("rejected") or True
-                    self.save()
+                    # Holat fayli katta arxivda ~1 MB: har 10 ta yozuvda saqlanadi (to'xtab qolsa takror
+                    # yuborilganini CRM X-Source-Path bo'yicha tanib, qayta saqlamaydi)
+                    if len(self.done) % 10 == 0:
+                        self.save()
                     if "id" in res:
                         log("yozuv yuborildi: %s%s" % (rel, "" if uniqueid or UNIQUEID_IN_NAME.search(rel)
                                                        else " (qo'ng'iroq topilmadi)"))
                     time.sleep(REC_PACE_SEC)
-                delay = REC_SCAN_SEC
+                if files:
+                    self.save()
+                # To'liq bo'lak bo'lsa — arxiv davom etmoqda, kutmasdan keyingisi
+                delay = 1 if len(files) == REC_BATCH else REC_SCAN_SEC
             except urllib.error.HTTPError as e:
                 log("CRM xatosi (yozuv) %s: %s" % (e.code, e.read()[:300].decode("utf-8", "replace")))
                 delay = min(delay * 2, 600)
