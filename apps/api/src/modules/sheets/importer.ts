@@ -114,7 +114,7 @@ export async function importTable(
         db,
         `SELECT id, stir, name, tax_type AS "taxType", tax_type_raw AS "taxTypeRaw",
                 to_char(tax_type_effective_from, 'YYYY-MM-DD') AS "taxTypeEffectiveFrom", status, note, in_reports AS "inReports"
-         FROM client WHERE ${where} ORDER BY stir IS NULL DESC, id LIMIT 1 FOR UPDATE`,
+         FROM client WHERE deleted_at IS NULL AND (${where}) ORDER BY stir IS NULL DESC, id LIMIT 1 FOR UPDATE`,
         [v],
       );
     let existing = stirOk ? await find('stir = $1', stir) : null;
@@ -128,7 +128,7 @@ export async function importTable(
     if (!stirOk) {
       existing = await find(
         `name_normalized = $1 AND (stir IS NULL OR NOT EXISTS (
-           SELECT 1 FROM client x WHERE x.name_normalized = client.name_normalized AND x.id <> client.id))`,
+           SELECT 1 FROM client x WHERE x.name_normalized = client.name_normalized AND x.id <> client.id AND x.deleted_at IS NULL))`,
         normalizeName(name || rawStir),
       );
       // Natija: qaysi mijozga yozilgani aniq ko'rinsin (rahbar kartada tekshiradi)

@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Archive, CheckCircle2, ExternalLink, Plus, RotateCcw, Search } from 'lucide-react';
+import { Archive, CheckCircle2, ExternalLink, Plus, RotateCcw, Search, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useSearchParams } from 'react-router-dom';
@@ -42,8 +42,14 @@ const TH = 'border-r border-brand-400 px-2 py-2.5 text-left text-xs font-semibol
 const TD = 'border-b border-r px-0.5 text-xs';
 const STICKY_TD = 'sticky z-10 bg-white group-hover:bg-gray-100';
 
+const CONFIRM_TEXT = {
+  end: { title: 'clients.endTitle', body: 'clients.endBody' },
+  worksOff: { title: 'clients.worksOffTitle', body: 'clients.worksOffBody' },
+  delete: { title: 'clients.deleteTitle', body: 'clients.deleteBody' },
+} as const;
+
 type Filters = { search: string; accountantId: string; taxType: string; status: string; page: number; pageSize: number };
-type Confirm = { kind: 'worksOff' | 'end'; client: Client } | null;
+type Confirm = { kind: 'worksOff' | 'end' | 'delete'; client: Client } | null;
 
 export default function Clients() {
   const { t } = useTranslation();
@@ -97,6 +103,15 @@ export default function Clients() {
     onSuccess: (_r, c) => {
       toast.success(t('clients.restored', { name: c.name }));
       afterSectionChange();
+    },
+    onError: (e) => toast.error(errorText(e, t)),
+  });
+  const remove = useMutation({
+    mutationFn: (c: Client) => api.del(`/clients/${c.id}`),
+    onSuccess: (_r, c) => {
+      toast.success(t('clients.deleted', { name: c.name }));
+      afterSectionChange();
+      setConfirm(null);
     },
     onError: (e) => toast.error(errorText(e, t)),
   });
@@ -170,7 +185,7 @@ export default function Clients() {
                     <th className={cn(TH, 'hidden min-w-[150px] 2xl:table-cell')}>{t('clients.phone')}</th>
                     <th className={cn(TH, 'w-[96px] min-w-[96px] whitespace-normal text-center leading-tight')}>{t('clients.col.works')}</th>
                     <th className={cn(TH, 'hidden w-[96px] min-w-[96px] whitespace-normal text-center leading-tight md:table-cell')}>{t('clients.col.reports')}</th>
-                    <th className={cn(TH, 'w-[96px] min-w-[96px] border-r-0 text-center')}>{t('clients.col.actions')}</th>
+                    <th className={cn(TH, 'border-r-0 text-center', section === 'ENDED' ? 'w-[148px] min-w-[148px]' : 'w-[96px] min-w-[96px]')}>{t('clients.col.actions')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -186,6 +201,7 @@ export default function Clients() {
                       onWorks={(inWorks) => (inWorks ? setWorks.mutate({ client: c, inWorks }) : setConfirm({ kind: 'worksOff', client: c }))}
                       onEnd={() => setConfirm({ kind: 'end', client: c })}
                       onRestore={() => restore.mutate(c)}
+                      onDelete={() => setConfirm({ kind: 'delete', client: c })}
                     />
                   ))}
                 </tbody>
@@ -219,19 +235,21 @@ export default function Clients() {
         <Dialog
           open
           onClose={() => setConfirm(null)}
-          title={t(confirm.kind === 'end' ? 'clients.endTitle' : 'clients.worksOffTitle')}
+          title={t(CONFIRM_TEXT[confirm.kind].title)}
           footer={
             <>
               <Button variant="outline" onClick={() => setConfirm(null)}>{t('common.cancel')}</Button>
               {confirm.kind === 'end' ? (
                 <Button variant="danger" loading={endContract.isPending} onClick={() => endContract.mutate(confirm.client)}>{t('clients.endContract')}</Button>
+              ) : confirm.kind === 'delete' ? (
+                <Button variant="danger" loading={remove.isPending} onClick={() => remove.mutate(confirm.client)}><Trash2 className="h-4 w-4" /> {t('common.delete')}</Button>
               ) : (
                 <Button variant="danger" loading={setWorks.isPending} onClick={() => setWorks.mutate({ client: confirm.client, inWorks: false })}>{t('common.confirm')}</Button>
               )}
             </>
           }
         >
-          <p className="text-sm">{t(confirm.kind === 'end' ? 'clients.endBody' : 'clients.worksOffBody', { name: confirm.client.name })}</p>
+          <p className="text-sm">{t(CONFIRM_TEXT[confirm.kind].body, { name: confirm.client.name })}</p>
         </Dialog>
       )}
     </div>
@@ -252,6 +270,7 @@ function ClientRow({
   onWorks,
   onEnd,
   onRestore,
+  onDelete,
 }: {
   no: number;
   client: Client;
@@ -262,6 +281,7 @@ function ClientRow({
   onWorks: (inWorks: boolean) => void;
   onEnd: () => void;
   onRestore: () => void;
+  onDelete: () => void;
 }) {
   const { t } = useTranslation();
   const save = useClientPatch(c.id);
@@ -347,9 +367,21 @@ function ClientRow({
       </td>
       <td className="border-b px-1 text-center">
         {ended ? (
-          <Button size="sm" variant="outline" loading={busy} onClick={onRestore} aria-label={`${c.name} — ${t('clients.restore')}`}>
-            <RotateCcw className="h-3.5 w-3.5" /> {t('clients.restore')}
-          </Button>
+          <div className="flex items-center justify-center gap-1">
+            <Button size="sm" variant="outline" loading={busy} onClick={onRestore} aria-label={`${c.name} — ${t('clients.restore')}`}>
+              <RotateCcw className="h-3.5 w-3.5" /> {t('clients.restore')}
+            </Button>
+            <button
+              type="button"
+              className="inline-flex h-8 w-8 items-center justify-center rounded text-red-600 hover:bg-red-50 disabled:opacity-50 dark:text-red-400 dark:hover:bg-red-950/40"
+              title={t('clients.delete')}
+              aria-label={`${c.name} — ${t('clients.delete')}`}
+              disabled={busy}
+              onClick={onDelete}
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+          </div>
         ) : (
           <button
             type="button"

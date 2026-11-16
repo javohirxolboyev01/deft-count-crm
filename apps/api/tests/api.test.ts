@@ -615,6 +615,30 @@ describe("«Mijozlar» bo'limi (V51): hamma mijoz Hisobot topshirishda, Buxgalte
     expect((await L.post(`/api/clients/${id}/restore`)).status).toBe(404);
   });
 
+  it("o'chirish: faqat shartnomasi tugagan mijoz; hech qayerda ko'rinmaydi, STIR bo'shaydi, bajarilgan vazifa qoladi", async () => {
+    const body = { stir: '402000007', name: "O'CHADI MCHJ", taxType: 'AOS', status: 'ACTIVE', inWorks: true };
+    const id = (await L.post('/api/clients', body)).body.id;
+    const [done] = await q(pool, `SELECT id FROM task WHERE client_id = $1 AND kind = 'REPORT' ORDER BY id LIMIT 1`, [id]);
+    await pool.query(`UPDATE task SET status = 'DONE', done_at = now() WHERE id = $1`, [done.id]);
+
+    expect((await L.del(`/api/clients/${id}`)).body.code).toBe('CLIENT_NOT_ENDED'); // avval shartnoma tugaydi
+    await L.post(`/api/clients/${id}/end-contract`);
+    expect((await A1.del(`/api/clients/${id}`)).status).toBe(403);
+    expect((await L.del(`/api/clients/${id}`)).status).toBe(204);
+
+    expect((await L.get('/api/clients?section=ENDED&search=402000007')).body.items).toHaveLength(0);
+    expect((await L.get(`/api/clients?section=ENDED&search=${encodeURIComponent("O'CHADI")}`)).body.items).toHaveLength(0);
+    expect((await L.get(`/api/clients/${id}`)).status).toBe(404);
+    expect((await L.post(`/api/clients/${id}/restore`)).status).toBe(404);
+    expect((await L.del(`/api/clients/${id}`)).status).toBe(404);
+    expect((await one(pool, 'SELECT status FROM task WHERE id = $1', [done.id])).status).toBe('DONE');
+    expect((await one(pool, `SELECT before FROM audit_log WHERE client_id = $1 AND action = 'CLIENT_DELETED'`, [id])).before).toMatchObject({ stir: '402000007' });
+    // Shu STIR bilan qayta qo'shilsa — yangi mijoz
+    const again = await L.post('/api/clients', body);
+    expect(again.status).toBe(201);
+    expect(again.body.id).not.toBe(id);
+  });
+
   it("bazadagi qoida: Buxgalter ishlaridagi mijoz hisobotdan chiqarib bo'lmaydi", async () => {
     await expect(pool.query(`UPDATE client SET in_reports = false WHERE stir = '402000005'`)).rejects.toThrow(/ck_client_works_in_reports/);
   });

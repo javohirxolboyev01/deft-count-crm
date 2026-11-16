@@ -183,6 +183,8 @@ const uz = {
     endBody: "«{{name}}» Hisobot topshirish va Buxgalter ishlari jadvallaridan olib tashlanadi. Ochiq vazifalari bekor qilinadi, bajarilganlari va tarix saqlanadi. Mijoz «Shartnoma tugagan» ro'yxatida turadi va istalgan vaqtda qaytariladi.",
     ended: '«{{name}}» — shartnoma tugagan ro\'yxatiga o\'tdi', restore: 'Qaytarish', restored: "«{{name}}» qaytarildi: Hisobot topshirishda",
     endedLock: "Shartnoma tugagan: avval qaytaring",
+    delete: "O'chirish", deleteTitle: "Mijozni o'chirish", deleted: "«{{name}}» o'chirildi",
+    deleteBody: "«{{name}}» butunlay o'chiriladi va hech qayerda ko'rinmaydi, qaytarib bo'lmaydi. Bajarilgan vazifalari statistikada va o'zgarishlar tarixida qoladi. Shu STIR bilan keyin qo'shilsa yoki Excel'dan kelsa — yangi mijoz bo'ladi.",
     dirHint: "Hamma mijoz Hisobot topshirish bo'limida turadi. Buxgalter ishlarida ko'rinishini almashtirgich bilan tanlang — yoqilsa joriy oydan oylik ishlar chiqadi. STIR, nom, soliq turi, buxgalter va holat — katakni bosib o'sha joyda; qolgan ma'lumotlar mijoz kartasida.",
     sheetSection: "To'lov, bank-kalit va my.mehnat.uz", monthlyFee: "Oylik to'lov (so'm)", accountantShare: 'Buxgalter ulushi (so\'m)',
     bankKey: 'Bank-kalit', unknown: "Noma'lum", employeeCount: 'Xodim soni', mehnatCheckedAt: 'my.mehnat.uz tekshirilgan sana',

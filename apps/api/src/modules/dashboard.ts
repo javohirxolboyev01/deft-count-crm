@@ -41,7 +41,7 @@ dashboardRouter.get('/clients', async (req, res) => {
      LEFT JOIN app_user a ON a.id = c.accountant_id
      LEFT JOIN task t ON t.client_id = c.id AND t.status <> 'CANCELLED'
        AND (t.period = $1 OR (t.status IN ${OPEN} AND t.due_at < now()) OR t.status IN ('IN_PROGRESS','WAITING_CLIENT'))
-     WHERE c.status <> 'ARCHIVED'
+     WHERE c.status <> 'ARCHIVED' AND c.deleted_at IS NULL
      GROUP BY c.id, a.id ORDER BY c.name_normalized`,
     [period],
   );
@@ -124,7 +124,7 @@ dashboardRouter.get('/accountants', async (req, res) => {
        (SELECT count(*) FROM task t JOIN client tc ON tc.id = t.client_id AND ${COUNTED_CLIENT('tc')} WHERE t.assignee_id = u.id AND t.status = 'TODO' AND t.due_at < now())::int AS overdue,
        (SELECT count(*) FROM task t JOIN client tc ON tc.id = t.client_id AND ${COUNTED_CLIENT('tc')} WHERE t.assignee_id = u.id AND t.status = 'WAITING_CLIENT')::int AS waiting,
        (SELECT count(*) FROM task t JOIN client tc ON tc.id = t.client_id AND ${COUNTED_CLIENT('tc')} WHERE t.assignee_id = u.id AND t.status IN ${OPEN})::int AS "openTasks",
-       (SELECT count(*) FROM client c WHERE c.accountant_id = u.id)::int AS clients,
+       (SELECT count(*) FROM client c WHERE c.accountant_id = u.id AND c.deleted_at IS NULL)::int AS clients,
        (SELECT coalesce(sum(extract(epoch FROM least(coalesce(te.ended_at, now()), $2) - greatest(te.started_at, $1))), 0)::int
           FROM time_entry te JOIN task tt ON tt.id = te.task_id JOIN client tc ON tc.id = tt.client_id AND ${COUNTED_CLIENT('tc')}
           WHERE te.user_id = u.id AND te.started_at <= $2 AND coalesce(te.ended_at, now()) >= $1) AS "spentSec"

@@ -218,6 +218,7 @@ Faqat rahbar (`/clients`; buxgalter shu manzilni ochsa — `/works`). Barcha mij
 - STIR, nom, soliq turi (almashsa tasdiq), buxgalter, holat — katak ichida (`PATCH /api/clients/:id`); qolgani kartada.
 - Buxgalter ishlari almashtirgichi (`PATCH inWorks`, faqat rahbar): yoqilsa joriy oydan oylik ishlar chiqadi, o'chirilsa (tasdiq bilan) ochiq oylik ishlar bekor (`reconcileClient`), bajarilganlari va tarix qoladi. Shartnomasi tugagan mijozda yopiq (409 `CLIENT_ENDED`).
 - Shartnoma tugadi (`POST /api/clients/:id/end-contract`): mijoz o'chirilmaydi — `in_reports = in_works = false`, barcha ochiq vazifalari bekor (bajarilganlari va audit qoladi). Qaytarish (`POST /api/clients/:id/restore`): faqat Hisobot topshirishga (joriy oy hisobotlari chiqadi), Buxgalter ishlari alohida yoqiladi.
+- O'chirish (V52, rahbar qarori 2026-11-16): faqat «Shartnoma tugagan» ro'yxatidan, tasdiq bilan (`DELETE /api/clients/:id`, faqat rahbar; shartnomasi davom etayotgan mijozda 409 `CLIENT_NOT_ENDED`). Yumshoq: `deleted_at`, mijoz hech qayerda ko'rinmaydi (ro'yxatlar, karta 404, qo'ng'iroqlar bog'lanishi, import qidiruvi), STIR bo'shatiladi (eski qiymati audit'da) — shu STIR qayta qo'shilsa yoki fayldan kelsa yangi mijoz bo'ladi. Bajarilgan vazifalar statistikada va audit qoladi. Ilovada qaytarilmaydi.
 - Menyu: Mijozlar (rahbar) → Buxgalter ishlari (`/works`, oldin `/clients`) → Hisobot topshirish.
 
 ### 6.13 Qo'ng'iroqlar jurnali (V46, rahbar tasdiqlagan "a" varianti)

@@ -174,7 +174,7 @@ const CALL_FROM = `call_log cl
 /** Ro'yxatda tashqi raqamga mos mijoz va lead (bittadan) */
 const MATCH = `
   LEFT JOIN LATERAL (SELECT c.id, c.name, c.accountant_id FROM client c
-                     WHERE cl.external_number IS NOT NULL AND fn_phone_keys(c.phone) @> ARRAY[cl.external_number]
+                     WHERE cl.external_number IS NOT NULL AND c.deleted_at IS NULL AND fn_phone_keys(c.phone) @> ARRAY[cl.external_number]
                      ORDER BY c.id LIMIT 1) mc ON true
   LEFT JOIN LATERAL (SELECT l.id, l.name, l.status FROM lead l
                      WHERE cl.external_number IS NOT NULL AND fn_phone_keys(l.phone) @> ARRAY[cl.external_number]
@@ -279,7 +279,7 @@ callsRouter.get('/recordings/:id', requireStaff, async (req, res) => {
        SELECT 1 FROM call_log cl WHERE r.uniqueid IS NOT NULL AND cl.uniqueid = r.uniqueid AND (
          cl.user_id = $2 OR cl.peer_user_id = $2
          OR (cl.external_number IS NOT NULL AND EXISTS (SELECT 1 FROM client c
-               WHERE c.accountant_id = $2 AND fn_phone_keys(c.phone) @> ARRAY[cl.external_number]))))`}`,
+               WHERE c.accountant_id = $2 AND c.deleted_at IS NULL AND fn_phone_keys(c.phone) @> ARRAY[cl.external_number]))))`}`,
     isLeader(u) ? [id] : [id, u.id],
   );
   if (!r) throw notFound('Yozuv');
@@ -329,7 +329,7 @@ callsRouter.get('/', async (req, res) => {
     const norm = p(`%${normalizeName(f.company)}%`);
     const conds: string[] = [];
     if (u.role !== 'OPERATOR') {
-      conds.push(`EXISTS (SELECT 1 FROM client c WHERE (c.name ILIKE ${like} OR c.name_normalized LIKE ${norm})
+      conds.push(`EXISTS (SELECT 1 FROM client c WHERE c.deleted_at IS NULL AND (c.name ILIKE ${like} OR c.name_normalized LIKE ${norm})
         AND fn_phone_keys(c.phone) @> ARRAY[cl.external_number] ${isLeader(u) ? '' : `AND c.accountant_id = ${p(u.id)}`})`);
     }
     if (isLeader(u) || u.role === 'OPERATOR') {

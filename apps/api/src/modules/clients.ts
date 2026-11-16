@@ -69,7 +69,7 @@ export const clientListQuery = z.object({
 });
 
 export function clientListWhere(u: AuthUser, f: z.infer<typeof clientListQuery>, p: (v: unknown) => string, opts: { includeArchived?: boolean } = {}) {
-  const where: string[] = [];
+  const where: string[] = ['c.deleted_at IS NULL']; // o'chirilgan mijoz (V52) hech qayerda ko'rinmaydi
   if (!isLeader(u)) where.push(`c.accountant_id = ${p(u.id)}`); // serverda cheklov
   if (f.search) {
     const s = normalizeName(f.search);
@@ -84,7 +84,7 @@ export function clientListWhere(u: AuthUser, f: z.infer<typeof clientListQuery>,
   else if (f.taxType) where.push(`c.tax_type = ${p(f.taxType)}`);
   if (f.accountantId === 'none') where.push('c.accountant_id IS NULL');
   else if (f.accountantId) where.push(`c.accountant_id = ${p(f.accountantId)}`);
-  return where.length ? `WHERE ${where.join(' AND ')}` : '';
+  return `WHERE ${where.join(' AND ')}`;
 }
 
 const stirSchema = z
@@ -126,7 +126,7 @@ async function assertAccountant(db: Db, id: number | null | undefined) {
 }
 
 export async function loadClientForUser(db: Db, id: number, user: AuthUser, lock = false) {
-  const c = await one(db, `SELECT ${CLIENT} ${FROM} WHERE c.id = $1 ${lock ? 'FOR UPDATE OF c' : ''}`, [id]);
+  const c = await one(db, `SELECT ${CLIENT} ${FROM} WHERE c.id = $1 AND c.deleted_at IS NULL ${lock ? 'FOR UPDATE OF c' : ''}`, [id]);
   if (!c) throw notFound('Mijoz');
   if (!isLeader(user) && c.accountantId !== user.id) throw notFound('Mijoz'); // boshqaning mijozi "yo'q"
   return c;
@@ -445,6 +445,25 @@ clientsRouter.patch('/:id', async (req, res) => {
   res.json(presentClient(await loadClientForUser(pool, id, u), u, await sharePercent(pool)));
 });
 
+/** Mijozning barcha ochiq vazifalari bekor (shartnoma tugadi / mijoz o'chirildi); bajarilganlari tegilmaydi */
+async function cancelOpenTasks(db: Db, clientId: number, actorId: number) {
+  const cancelled = await q<{ id: number; title: string; prevStatus: string }>(
+    db,
+    `UPDATE task SET prev_status = status, status = 'CANCELLED', cancel_reason = 'CONTRACT_ENDED'
+     WHERE client_id = $1 AND status IN ('TODO', 'IN_PROGRESS', 'WAITING_CLIENT')
+     RETURNING id, title, prev_status AS "prevStatus"`,
+    [clientId],
+  );
+  for (const t of cancelled) {
+    await stopTimersForTask(db, t.id);
+    await audit(db, {
+      actorId, entity: 'task', entityId: t.id, clientId, action: 'CANCEL_CONTRACT_ENDED',
+      before: { status: t.prevStatus }, after: { status: 'CANCELLED', title: t.title },
+    });
+  }
+  return cancelled.length;
+}
+
 /**
  * Shartnoma tugadi (faqat rahbar, «Mijozlar» bo'limidan): mijoz Hisobot topshirish va Buxgalter ishlari jadvallaridan
  * chiqadi. Qaror: mijoz o'chirilmaydi — in_reports = in_works = false (V25/V51). Ma'lumot, tarix va audit qoladi.
@@ -455,28 +474,15 @@ clientsRouter.post('/:id/end-contract', requireLeader, async (req, res) => {
   const actorId = me(req).id;
   res.json(
     await tx(async (db) => {
-      const client = await one<{ inWorks: boolean }>(db, 'SELECT in_works AS "inWorks" FROM client WHERE id = $1 AND in_reports FOR UPDATE', [clientId]);
+      const client = await one<{ inWorks: boolean }>(db, 'SELECT in_works AS "inWorks" FROM client WHERE id = $1 AND in_reports AND deleted_at IS NULL FOR UPDATE', [clientId]);
       if (!client) throw notFound('Mijoz');
       await db.query('UPDATE client SET in_reports = false, in_works = false WHERE id = $1', [clientId]);
       await audit(db, {
         actorId, entity: 'client', entityId: clientId, clientId, action: 'CONTRACT_ENDED',
         before: { inReports: true, inWorks: client.inWorks }, after: { inReports: false, inWorks: false },
       });
-      const cancelled = await q<{ id: number; title: string; prevStatus: string }>(
-        db,
-        `UPDATE task SET prev_status = status, status = 'CANCELLED', cancel_reason = 'CONTRACT_ENDED'
-         WHERE client_id = $1 AND status IN ('TODO', 'IN_PROGRESS', 'WAITING_CLIENT')
-         RETURNING id, title, prev_status AS "prevStatus"`,
-        [clientId],
-      );
-      for (const t of cancelled) {
-        await stopTimersForTask(db, t.id);
-        await audit(db, {
-          actorId, entity: 'task', entityId: t.id, clientId, action: 'CANCEL_CONTRACT_ENDED',
-          before: { status: t.prevStatus }, after: { status: 'CANCELLED', title: t.title },
-        });
-      }
-      return { clientId, cancelled: cancelled.length };
+      const cancelled = await cancelOpenTasks(db, clientId, actorId);
+      return { clientId, cancelled };
     }),
   );
 });
@@ -489,12 +495,38 @@ clientsRouter.post('/:id/restore', requireLeader, async (req, res) => {
   const u = me(req);
   const clientId = parse(z.coerce.number().int().positive(), req.params.id);
   await tx(async (db) => {
-    const r = await db.query('UPDATE client SET in_reports = true WHERE id = $1 AND NOT in_reports', [clientId]);
+    const r = await db.query('UPDATE client SET in_reports = true WHERE id = $1 AND NOT in_reports AND deleted_at IS NULL', [clientId]);
     if (!r.rowCount) throw notFound('Mijoz');
     await audit(db, { actorId: u.id, entity: 'client', entityId: clientId, clientId, action: 'CONTRACT_RESTORED', before: { inReports: false }, after: { inReports: true } });
     await reconcileClient(db, clientId, u.id);
   });
   res.json(presentClient(await loadClientForUser(pool, clientId, u), u, await sharePercent(pool)));
+});
+
+/**
+ * Mijozni o'chirish (faqat rahbar, V52): faqat shartnomasi tugagan mijoz («Shartnoma tugagan» ro'yxatidan).
+ * Yumshoq: mijoz hech qayerda ko'rinmaydi, STIR bo'shatiladi (qayta qo'shilsa — yangi mijoz), bajarilgan vazifalari
+ * statistikada va audit tarixda qoladi. Qaytarib bo'lmaydi (ilovada).
+ */
+clientsRouter.delete('/:id', requireLeader, async (req, res) => {
+  const actorId = me(req).id;
+  const clientId = parse(z.coerce.number().int().positive(), req.params.id);
+  await tx(async (db) => {
+    const c = await one<{ stir: string | null; name: string; inReports: boolean }>(
+      db,
+      'SELECT stir, name, in_reports AS "inReports" FROM client WHERE id = $1 AND deleted_at IS NULL FOR UPDATE',
+      [clientId],
+    );
+    if (!c) throw notFound('Mijoz');
+    if (c.inReports) throw new AppError(409, 'CLIENT_NOT_ENDED', "Avval shartnomani tugating, keyin o'chiring");
+    await cancelOpenTasks(db, clientId, actorId);
+    await db.query('UPDATE client SET deleted_at = now(), stir = NULL WHERE id = $1', [clientId]);
+    await audit(db, {
+      actorId, entity: 'client', entityId: clientId, clientId, action: 'CLIENT_DELETED',
+      before: { stir: c.stir, name: c.name }, after: { deleted: true },
+    });
+  });
+  res.status(204).end();
 });
 
 /** my.mehnat.uz parolini ochish: rahbar yoki mijozning buxgalteri; har ochish audit_log'da (qiymatsiz) */

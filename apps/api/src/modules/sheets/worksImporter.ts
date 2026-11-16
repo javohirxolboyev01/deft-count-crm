@@ -169,7 +169,7 @@ export async function importWorks(
         `SELECT id, stir, name, tax_type AS "taxType", tax_type_raw AS "taxTypeRaw", accountant_id AS "accountantId", note, monthly_fee AS "monthlyFee",
                 bank_key AS "bankKey", employee_count AS "employeeCount", to_char(mehnat_checked_at, 'YYYY-MM-DD') AS "mehnatCheckedAt",
                 mehnat_login AS "mehnatLogin", mehnat_password_enc AS "mehnatPasswordEnc", in_works AS "inWorks", in_reports AS "inReports"
-         FROM client WHERE ${where} ORDER BY stir IS NULL DESC, id LIMIT 1 FOR UPDATE`,
+         FROM client WHERE deleted_at IS NULL AND (${where}) ORDER BY stir IS NULL DESC, id LIMIT 1 FOR UPDATE`,
         [v],
       );
     let existing = stirOk ? await find('stir = $1', stir) : null;
@@ -183,7 +183,7 @@ export async function importWorks(
     if (!stirOk) {
       existing = await find(
         `name_normalized = $1 AND (stir IS NULL OR NOT EXISTS (
-           SELECT 1 FROM client x WHERE x.name_normalized = client.name_normalized AND x.id <> client.id))`,
+           SELECT 1 FROM client x WHERE x.name_normalized = client.name_normalized AND x.id <> client.id AND x.deleted_at IS NULL))`,
         normalizeName(name || rawStir),
       );
       // Natija: qaysi mijozga yozilgani aniq ko'rinsin (rahbar kartada tekshiradi)

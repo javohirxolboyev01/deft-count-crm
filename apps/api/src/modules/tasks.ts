@@ -139,7 +139,7 @@ tasksRouter.post('/urgent', requireLeader, async (req, res) => {
     req.body,
   );
   const task = await tx(async (db) => {
-    const client = await one(db, 'SELECT id, name FROM client WHERE id = $1', [body.clientId]);
+    const client = await one(db, 'SELECT id, name FROM client WHERE id = $1 AND deleted_at IS NULL', [body.clientId]);
     if (!client) throw notFound('Mijoz');
     const assignee = await one(db, `SELECT id FROM app_user WHERE id = $1 AND active AND role = 'ACCOUNTANT'`, [
       body.assigneeId,
@@ -241,7 +241,7 @@ tasksRouter.post('/', async (req, res) => {
     req.body,
   );
   const task = await tx(async (db) => {
-    const c = await one<{ accountant_id: number | null }>(db, 'SELECT accountant_id FROM client WHERE id = $1', [body.clientId]);
+    const c = await one<{ accountant_id: number | null }>(db, 'SELECT accountant_id FROM client WHERE id = $1 AND deleted_at IS NULL', [body.clientId]);
     if (!c) throw notFound('Mijoz');
     let assigneeId = body.assigneeId ?? c.accountant_id;
     if (!isLeader(u)) {
