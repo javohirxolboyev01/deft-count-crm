@@ -69,6 +69,7 @@ export function PhoneInput({
   ...p
 }: Omit<InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange' | 'type'> & { value: string; onChange: (v: string) => void; multiple?: boolean }) {
   const shown = formatPhones(value, multiple);
+  if (!multiple) return <UzPhoneInput value={shown} onChange={onChange} {...p} />;
   return (
     <Input
       type="tel"
@@ -84,6 +85,49 @@ export function PhoneInput({
         onChange(formatPhones(raw, multiple));
       }}
     />
+  );
+}
+
+const UZ = '+998 ';
+/**
+ * Bitta raqam: '+998' maydon ichida qotib turadi, foydalanuvchi faqat 90 123 45 67 qismini yozadi
+ * (nima kiritishi bir qarashda tushunarli). Saqlanadigan qiymat o'zgarmaydi: '+998 90 123 45 67'.
+ * '+' bilan boshlab boshqa davlat raqamini yozsa (yoki shunday qiymat kelsa) prefiks yashiriladi.
+ */
+function UzPhoneInput({
+  value,
+  onChange,
+  className,
+  ...p
+}: Omit<InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange' | 'type'> & { value: string; onChange: (v: string) => void }) {
+  const uz = !value || value.startsWith(UZ);
+  const inner = uz ? value.slice(UZ.length) : value;
+  return (
+    <div className="relative w-full min-w-0">
+      {uz && (
+        <span className={cn('pointer-events-none absolute inset-y-0 left-3 flex items-center text-sm', p.disabled && 'opacity-50')}>+998</span>
+      )}
+      <Input
+        type="tel"
+        inputMode="tel"
+        autoComplete="off"
+        placeholder={uz ? '90 123 45 67' : undefined}
+        {...p}
+        className={cn(uz && 'pl-12', className)}
+        value={inner}
+        onChange={(e) => {
+          let raw = e.target.value;
+          // Backspace faqat bo'shliqni o'chirgan bo'lsa natija o'zgarmay qolardi: oxirgi ajratkich ham olinadi
+          if (raw.length < inner.length) raw = raw.replace(/\D+$/, '');
+          const digits = raw.replace(/\D/g, '');
+          // Prefiks ko'rinib turganda: '+' bilan yozilgan yoki to'liq (998…) qo'yilgan raqam o'zicha, aks holda +998 ga qo'shiladi
+          // (10-xona yozilsa chet raqamga aylanib ketmasin — 9 xonada to'xtaydi)
+          const pasted998 = digits.length >= 12 && digits.startsWith('998');
+          const full = !uz || raw.trim().startsWith('+') || pasted998 ? raw : digits ? `+998${digits}` : '';
+          onChange(formatPhone(full));
+        }}
+      />
+    </div>
   );
 }
 

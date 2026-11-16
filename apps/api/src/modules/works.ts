@@ -1,3 +1,4 @@
+import ExcelJS from 'exceljs';
 import { Router } from 'express';
 import { DateTime } from 'luxon';
 import { z } from 'zod';
@@ -360,6 +361,117 @@ worksRouter.use(requireAuth);
 worksRouter.get('/', async (req, res) => {
   const { month } = parse(z.object({ month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'Oy formati YYYY-MM').optional() }), req.query);
   res.json(await loadWorks(pool, me(req), parse(clientListQuery, req.query), month));
+});
+
+// ---------- Yuklab olish (Excel) ----------
+// "Hisobot topshirish" eksporti (grid.ts) bilan bir xil mantiq: tanlangan oy, filtrsiz, katak 1 / 0 / X,
+// muddati o'tgan katak "0" + qizil fon. Farqi: bu bo'limda buxgalter faqat o'z mijozlarini ko'radi (loadWorks →
+// clientListWhere), faylga ham faqat shular tushadi. Oylik to'lov faqat rahbarga (presentClient), parol yozilmaydi.
+const WORKS_HEAD = {
+  uz: {
+    no: '№', stir: 'STIR', company: 'Korxona nomi', taxType: 'Soliq turi', accountant: 'Javobgar', fee: "Oylik to'lov",
+    share: (pct: number) => `${pct}% (Buxgalterlar ulushi)`, bankKey: 'Bank-klyuch', employees: 'Xodim soni',
+    checkedAt: 'my.mehnat.uz sana', login: 'my.mehnat.uz login', note: 'Izoh', yes: 'Bor', no_: "Yo'q",
+  },
+  ru: {
+    no: '№', stir: 'ИНН', company: 'Название предприятия', taxType: 'Налоговый режим', accountant: 'Ответственный', fee: 'Ежемесячная оплата',
+    share: (pct: number) => `${pct}% (доля бухгалтеров)`, bankKey: 'Банк-ключ', employees: 'Кол-во сотрудников',
+    checkedAt: 'my.mehnat.uz дата', login: 'my.mehnat.uz логин', note: 'Примечание', yes: 'Есть', no_: 'Нет',
+  },
+};
+const WORKS_FILL = { done: 'FFDCFCE7', overdue: 'FFFEE2E2', na: 'FFF3F4F6', head: 'FF37A0AD' };
+const monthQuery = z.object({ month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'Oy formati YYYY-MM').optional() });
+
+/** Ish muddati: ish oyidan keyingi oyning dueDay-kuni (null — oy oxiri); ekrandagi workDueDate bilan bir xil */
+export function workDueDate(month: string, dueDay: number | null) {
+  const next = DateTime.fromISO(`${month}-01`).plus({ months: 1 });
+  return next.set({ day: Math.min(dueDay ?? 31, next.daysInMonth!) }).toFormat('dd.MM.yyyy');
+}
+
+/** Excel katagi: fayldagi tanilmagan qiymat boricha, aks holda 1 (bajarilgan) / X (chiqmaydi) / 0 */
+export function workExportValue(cell: WorkMonthCell | undefined): { value: string; fill: keyof typeof WORKS_FILL | null } {
+  if (!cell) return { value: '', fill: null };
+  if (cell.raw) return { value: cell.raw, fill: null };
+  if (cell.state === 'done') return { value: '1', fill: 'done' };
+  if (cell.state === 'na') return { value: 'X', fill: 'na' };
+  return { value: '0', fill: cell.state === 'overdue' ? 'overdue' : null };
+}
+
+worksRouter.get('/export.xlsx', async (req, res) => {
+  const u = me(req);
+  const month = parse(monthQuery, req.query).month ?? monthOfPeriod(currentPeriod());
+  const data = await loadWorks(pool, u, parse(clientListQuery, { pageSize: 500 }), month);
+  const lang = u.language === 'ru' ? 'ru' : 'uz';
+  const h = WORKS_HEAD[lang];
+  const leader = isLeader(u);
+
+  const info: { header: string; width: number; get: (r: (typeof data.items)[number]) => string | number; align?: 'center' | 'right' }[] = [
+    { header: h.accountant, width: 22, get: (r) => r.accountantName ?? '' },
+    ...(leader ? [{ header: h.fee, width: 14, get: (r: any) => r.monthlyFee ?? '', align: 'right' as const }] : []),
+    { header: h.share(data.sharePercent), width: 14, get: (r) => r.accountantShare ?? '', align: 'right' },
+    { header: h.bankKey, width: 11, get: (r) => (r.bankKey == null ? '' : r.bankKey ? h.yes : h.no_), align: 'center' },
+    { header: h.employees, width: 10, get: (r) => r.employeeCount ?? '', align: 'center' },
+    { header: h.checkedAt, width: 13, get: (r) => (r.mehnatCheckedAt ? String(r.mehnatCheckedAt).slice(0, 10).split('-').reverse().join('.') : ''), align: 'center' },
+    { header: h.login, width: 18, get: (r) => r.mehnatLogin ?? '' },
+  ];
+  const colTitle = (c: WorkColumn) => {
+    const short = (lang === 'ru' ? c.shortNameRu : c.shortName) || (lang === 'ru' ? c.nameRu : c.name);
+    const group = lang === 'ru' ? c.groupRu : c.group;
+    return `${group ? `${group}: ` : ''}${short} ${workDueDate(month, c.dueDay)}`;
+  };
+
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet(month, { views: [{ state: 'frozen', xSplit: 3, ySplit: 1 }] });
+  ws.columns = [
+    { header: h.no, width: 5 },
+    { header: h.stir, width: 12 },
+    { header: h.company, width: 40 },
+    { header: h.taxType, width: 10 },
+    ...info.map((i) => ({ header: i.header, width: i.width })),
+    ...data.columns.map((c) => ({ header: colTitle(c), width: 14 })),
+    { header: h.note, width: 50 },
+  ];
+  const head = ws.getRow(1);
+  head.height = 32;
+  head.eachCell((cell) => {
+    cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: WORKS_FILL.head } };
+    cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+  });
+
+  const firstWork = 5 + info.length;
+  data.items.forEach((r, i) => {
+    const cells = data.columns.map((c) => workExportValue(r.cells[c.routineTypeId] as WorkMonthCell | undefined));
+    const row = ws.addRow([
+      i + 1,
+      r.stir ?? r.stirRaw ?? '',
+      r.name,
+      (r.taxType === 'YATT' ? 'YaTT' : r.taxType) ?? r.taxTypeRaw ?? '',
+      ...info.map((x) => x.get(r)),
+      ...cells.map((c) => c.value),
+      r.note ?? '',
+    ]);
+    row.getCell(1).alignment = { horizontal: 'center' };
+    row.getCell(4).alignment = { horizontal: 'center' };
+    info.forEach((x, j) => x.align && (row.getCell(5 + j).alignment = { horizontal: x.align }));
+    cells.forEach((c, j) => {
+      const cell = row.getCell(firstWork + j);
+      cell.alignment = { horizontal: 'center' };
+      if (c.fill) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: WORKS_FILL[c.fill] } };
+    });
+    row.getCell(firstWork + data.columns.length).alignment = { wrapText: true, vertical: 'top' };
+  });
+  ws.eachRow((row) =>
+    row.eachCell({ includeEmpty: true }, (cell) => {
+      const thin = { style: 'thin' as const, color: { argb: 'FFD1D5DB' } };
+      cell.border = { top: thin, left: thin, bottom: thin, right: thin };
+    }),
+  );
+
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="buxgalter-ishlari-${month}.xlsx"`);
+  await wb.xlsx.write(res);
+  res.end();
 });
 
 /**

@@ -59,7 +59,7 @@ const recordingUrls = new Map<number, string>();
 let playing: HTMLAudioElement | null = null;
 
 /**
- * Qo'ng'iroq audio yozuvi (V48): faqat rahbarga keladi (server boshqalarga recordingId bermaydi).
+ * Qo'ng'iroq audio yozuvi (V48): rahbar va buxgalterga keladi (server operatorga recordingId bermaydi).
  * Fayl Authorization bilan olinadi, shuning uchun <audio src> o'rniga blob: URL.
  */
 export function RecordingPlayer({ id, className }: { id: number; className?: string }) {

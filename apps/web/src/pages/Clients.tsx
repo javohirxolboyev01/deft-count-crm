@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Pencil, Plus, Search } from 'lucide-react';
-import { useState } from 'react';
+import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, FileSpreadsheet, FileText, Pencil, Plus, Search } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { Link, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -19,6 +20,7 @@ import { Pagination } from '@/components/ui/pagination';
 import { Select } from '@/components/ui/select';
 import { Empty, QueryState } from '@/components/ui/states';
 import { TableSkeleton } from '@/components/ui/skeleton';
+import { Logo } from '@/components/Logo';
 import { invalidateTasks, taskTitle, useAccountants } from '@/hooks/tasks';
 import { useOpenTask } from '@/hooks/outlet';
 import { api, qs } from '@/lib/api';
@@ -26,7 +28,7 @@ import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
 import { errorText } from '@/lib/errors';
 import { monthLabel, shiftMonth, workDueDate, workMonth } from '@/lib/time';
-import { type AdvanceResult, CLIENT_STATUSES, TAX_TYPE_OPTIONS, type Task, type WorkCell, type WorkColumn, type WorkState, type Works, type WorksRow } from '@/lib/types';
+import { type AdvanceResult, CLIENT_STATUSES, TAX_TYPE_OPTIONS, type Task, type WorkCell, type WorkColumn, type WorkState, type Works, type WorksRow, taxTypeLabel } from '@/lib/types';
 
 // "Oylik ishlar" ("Бухгалтер ишлари" fayli): qatorda mijoz, ustunda doimiy ish, katakda tanlangan oy ishining
 // holati ("Hisobot topshirish"dagidek oyma-oy). Holat serverda vazifalardan hisoblanadi (works.ts, ?month=).
@@ -204,6 +206,51 @@ export default function Clients() {
     if (label && last?.label === label) last.cols.push(c);
     else headGroups.push({ key: `g${c.routineTypeId}`, label, cols: [c] });
   }
+  // Yuklab olish ("Hisobot topshirish"dagidek): tanlangan oy, filtrsiz. Buxgalterga — o'z mijozlari (server cheklaydi)
+  const [busy, setBusy] = useState<'xlsx' | 'pdf' | null>(null);
+  const [printData, setPrintData] = useState<{ works: Works; downloadedByName: string; downloadedByRole: 'LEADER' | 'ACCOUNTANT' } | null>(null);
+  const downloadXlsx = async () => {
+    setBusy('xlsx');
+    try {
+      await api.download(`/works/export.xlsx${qs({ month })}`, `buxgalter-ishlari-${month}.xlsx`);
+    } catch (e) {
+      toast.error(errorText(e, t));
+    } finally {
+      setBusy(null);
+    }
+  };
+  // PDF: brauzerning chop etish oynasi ("PDF sifatida saqlash"), serverda PDF dvijoki shart emas
+  const downloadPdf = async () => {
+    setBusy('pdf');
+    try {
+      const [works, pdfInfo] = await Promise.all([
+        api.get<Works>(`/works${qs({ month, pageSize: 500 })}`),
+        api.get<{ downloadedByName: string; downloadedByRole: 'LEADER' | 'ACCOUNTANT' }>('/users/report-pdf-info'),
+      ]);
+      setPrintData({ works, ...pdfInfo });
+    } catch (e) {
+      toast.error(errorText(e, t));
+      setBusy(null);
+    }
+  };
+  useEffect(() => {
+    if (!printData) return;
+    const title = document.title;
+    document.title = `buxgalter-ishlari-${printData.works.month}`; // PDF fayl nomi shundan olinadi
+    const done = () => {
+      document.title = title;
+      setPrintData(null);
+      setBusy(null);
+    };
+    // afterprint: print() bloklamaydigan brauzerlarda jadval oyna yopilguncha turadi
+    window.addEventListener('afterprint', done, { once: true });
+    const id = requestAnimationFrame(() => window.print());
+    return () => {
+      cancelAnimationFrame(id);
+      window.removeEventListener('afterprint', done);
+    };
+  }, [printData]);
+
   const sectionW = columns.length * WORK_W + NOTE_W;
   const bgAt = (c: WorkColumn) => sectionBg(columns.indexOf(c) * WORK_W, sectionW);
 
@@ -214,6 +261,8 @@ export default function Clients() {
         actions={
           <>
             {isLeader && <SheetImportActions kind="WORKS" beforeImport={<Button onClick={() => setNewOpen(true)}><Plus className="h-4 w-4" /> {t('clients.new')}</Button>} />}
+            <Button variant="outline" onClick={downloadXlsx} disabled={!!busy}><FileSpreadsheet className="h-4 w-4" /> Excel</Button>
+            <Button variant="outline" onClick={downloadPdf} disabled={!!busy}><FileText className="h-4 w-4" /> PDF</Button>
             <div className="flex items-center gap-1">
               <Button variant="outline" size="icon" onClick={() => setMonth(shiftMonth(month, -1))} aria-label={t('common.prev')}><ChevronLeft className="h-4 w-4" /></Button>
               <span className="min-w-[140px] text-center text-sm font-medium capitalize">{monthLabel(month, months)}</span>
@@ -361,7 +410,92 @@ export default function Clients() {
         {t('works.hint')} {isLeader && t('works.leaderHint')}
       </p>
       {isLeader && <NewClientDialog open={newOpen} onClose={() => setNewOpen(false)} section="WORKS" />}
+      {printData && createPortal(<WorksPrintTable {...printData} colLabel={colLabel} />, document.body)}
       {isLeader && edit && <BaselineDialog key={`${edit.row.clientId}:${edit.col.routineTypeId}`} {...edit} colName={colLabel(edit.col)} onClose={() => setEdit(null)} />}
+    </div>
+  );
+}
+
+/** PDF katagi: Excel bilan bir xil 1 / 0 / X; muddati o'tgani "0" + qizil, fayldagi tanilmagan qiymat boricha */
+const PRINT_CELL: Record<WorkState, { sym: string; cls?: string }> = {
+  done: { sym: '1', cls: 'done' },
+  open: { sym: '0' },
+  soon: { sym: '0' },
+  waiting: { sym: '0' },
+  overdue: { sym: '0', cls: 'overdue' },
+  na: { sym: 'X', cls: 'na' },
+};
+
+/** Faqat chop etishda ko'rinadigan oddiy jadval (index.css: .print-root), "Hisobot topshirish" PDF'i bilan bir xil ko'rinish */
+function WorksPrintTable({
+  works: w,
+  downloadedByName,
+  downloadedByRole,
+  colLabel,
+}: {
+  works: Works;
+  downloadedByName: string;
+  downloadedByRole: 'LEADER' | 'ACCOUNTANT';
+  colLabel: (c: WorkColumn) => string;
+}) {
+  const { t } = useTranslation();
+  const months = t('months', { returnObjects: true }) as string[];
+  return (
+    <div className="print-root">
+      <header className="print-heading">
+        <div className="print-brand">
+          <Logo variant="row" className="print-logo" />
+          <div>
+            <h1>{t('works.title')}</h1>
+            <p>{monthLabel(w.month, months)}</p>
+          </div>
+        </div>
+        <div className="print-leader">
+          <strong>{downloadedByName}</strong>
+          <span className="print-role">{t(`monthly.roles.${downloadedByRole}`)}</span>
+          <div className="print-signature">
+            <span>{t('monthly.signature')}</span>
+            <span className="print-signature-line" aria-hidden="true" />
+          </div>
+        </div>
+      </header>
+      <table className="print-grid">
+        <thead>
+          <tr>
+            <th className="col-no">{t('works.no')}</th>
+            <th className="col-stir">{t('works.stir')}</th>
+            <th className="col-name">{t('monthly.company')}</th>
+            <th className="col-tax">{t('clients.taxType')}</th>
+            <th className="col-acc">{t('works.accountant')}</th>
+            {w.columns.map((c) => (
+              <th key={c.routineTypeId}>
+                {colLabel(c)}
+                <div className="due">{workDueDate(w.month, c.dueDay)}</div>
+              </th>
+            ))}
+            <th className="col-note">{t('works.note')}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {w.items.map((r, i) => (
+            <tr key={r.clientId}>
+              <td className="c">{i + 1}</td>
+              <td className="nowrap">{r.stir ?? r.stirRaw}</td>
+              <td>{r.name}</td>
+              <td className="c nowrap">{r.taxType ? taxTypeLabel(r.taxType) : r.taxTypeRaw}</td>
+              <td>{r.accountantName}</td>
+              {w.columns.map((c) => {
+                const cell = r.cells[c.routineTypeId];
+                if (!cell) return <td key={c.routineTypeId} />;
+                if (cell.raw) return <td key={c.routineTypeId} className="c">{cell.raw}</td>;
+                const m = PRINT_CELL[cell.state];
+                return <td key={c.routineTypeId} className={cn('c', m.cls)}>{m.sym}</td>;
+              })}
+              <td>{r.note}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

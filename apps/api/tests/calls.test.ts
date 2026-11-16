@@ -216,7 +216,7 @@ describe('audio yozuvlar (V48)', () => {
     expect(row).toMatchObject({ uniqueid: '1762750800.11', tg_chat_id: '-100777', size_bytes: 10 });
   });
 
-  it('faqat rahbar ko\'radi va eshitadi', async () => {
+  it('rahbar va buxgalter (o\'z qo\'ng\'irog\'i/mijozi) eshitadi, operator va boshqa buxgalter yo\'q', async () => {
     const all = await L.get('/api/calls?from=2026-11-01&to=2026-11-30');
     const out = all.body.items.find((c: any) => c.direction === 'OUT' && c.userId === team.acc1);
     expect(out.recordingId).toBeTruthy();
@@ -229,11 +229,17 @@ describe('audio yozuvlar (V48)', () => {
     expect(play.headers['content-type']).toBe('audio/ogg');
     expect((play.body as Buffer).toString()).toBe('OggS-audio');
 
+    // acc1: o'zi gaplashgan qo'ng'iroq — jurnalda ham, o'z mijozi kartasida ham yozuv bor va eshitadi
     const mine = await A1.get('/api/calls?from=2026-11-01&to=2026-11-30');
-    expect(mine.body.items[0]).not.toHaveProperty('recordingId');
+    expect(mine.body.items.find((c: any) => c.id === out.id).recordingId).toBe(out.recordingId);
     const card = await A1.get(`/api/calls/client/${clientId}`);
-    expect(card.body.items.every((c: any) => !('recordingId' in c))).toBe(true);
-    expect((await A1.get(`/api/calls/recordings/${out.recordingId}`)).status).toBe(403);
+    expect(card.body.items.find((c: any) => c.id === out.id).recordingId).toBe(out.recordingId);
+    expect((await A1.get(`/api/calls/recordings/${out.recordingId}`)).status).toBe(200);
+    // acc2: na qo'ng'iroq, na mijoz uniki — yozuv borligi ham bildirilmaydi
+    expect((await A2.get(`/api/calls/recordings/${out.recordingId}`)).status).toBe(404);
+    // operator: yozuv yo'q
+    const op = await O.get('/api/calls?from=2026-11-01&to=2026-11-30');
+    expect(op.body.items.every((c: any) => !('recordingId' in c))).toBe(true);
     expect((await O.get(`/api/calls/recordings/${out.recordingId}`)).status).toBe(403);
   });
 });

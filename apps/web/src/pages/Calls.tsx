@@ -142,7 +142,8 @@ export function CallsStaff() {
 /** «Qo'ng'iroqlar jurnali»: filtrlar URL'dan ham boshlanadi (analitikadan xodim bosilganda) */
 export function CallsJournal() {
   const { t } = useTranslation();
-  const { isLeader } = useAuth();
+  const { isLeader, user } = useAuth();
+  const hearsRecordings = user?.role !== 'OPERATOR'; // yozuv rahbar va buxgalterga (server operatorga recordingId bermaydi)
   const [params] = useSearchParams();
   const [f, setF] = useState({
     from: params.get('from') || startOfMonthIso(),
@@ -221,7 +222,7 @@ export function CallsJournal() {
                   <th className="px-2 py-2.5 sm:px-4">{t('calls.who')}</th>
                   <th className="hidden px-4 py-2.5 sm:table-cell">{t('calls.employee')}</th>
                   <th className="px-2 py-2.5 text-right sm:px-4">{t('calls.talk')}</th>
-                  {isLeader && <th className="hidden px-4 py-2.5 sm:table-cell">{t('calls.recording')}</th>}
+                  {hearsRecordings && <th className="hidden px-4 py-2.5 sm:table-cell">{t('calls.recording')}</th>}
                 </tr>
               </thead>
               <tbody>
@@ -249,7 +250,7 @@ export function CallsJournal() {
                       {/* Telefonda yozuv alohida ustunda emas, davomiylik ostida */}
                       {c.recordingId && <div className="mt-1 flex justify-end sm:hidden"><RecordingPlayer id={c.recordingId} /></div>}
                     </td>
-                    {isLeader && <td className="hidden px-4 py-1.5 sm:table-cell">{c.recordingId ? <RecordingPlayer id={c.recordingId} /> : null}</td>}
+                    {hearsRecordings && <td className="hidden px-4 py-1.5 sm:table-cell">{c.recordingId ? <RecordingPlayer id={c.recordingId} /> : null}</td>}
                   </tr>
                 ))}
               </tbody>

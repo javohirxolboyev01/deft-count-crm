@@ -262,3 +262,61 @@ describe("Excel kabi ish katagi: PUT /api/works/cell (V31)", () => {
     expect((await put(A1, 'salary', month(0), '1')).status).toBe(403);
   });
 });
+
+describe('Excel yuklab olish (/api/works/export.xlsx)', () => {
+  const bin = (req: ReturnType<ReturnType<typeof api>['get']>) =>
+    req.buffer(true).parse((res, cb) => {
+      const chunks: Buffer[] = [];
+      res.on('data', (c: Buffer) => chunks.push(c));
+      res.on('end', () => cb(null, Buffer.concat(chunks)));
+    });
+  const read = async (body: Buffer) => {
+    const ExcelJS = (await import('exceljs')).default;
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(body as any);
+    const ws = wb.worksheets[0];
+    const head = (ws.getRow(1).values as any[]).slice(1).map(String);
+    const rows = [] as any[][];
+    ws.eachRow((row, n) => n > 1 && rows.push((row.values as any[]).slice(1)));
+    return { ws, head, rows };
+  };
+
+  it('buxgalter — faqat o\'z mijozlari, oylik to\'lovsiz; rahbar — hammasi; katak 1 / 0 / X', async () => {
+    const m = month(-1);
+    const r = await bin(A1.get(`/api/works/export.xlsx?month=${m}`));
+    expect(r.status).toBe(200);
+    expect(r.headers['content-type']).toContain('spreadsheetml');
+    expect(r.headers['content-disposition']).toContain(`buxgalter-ishlari-${m}.xlsx`);
+    const { ws, head, rows } = await read(r.body);
+    const screen = (await A1.get(`/api/works?month=${m}&pageSize=100`)).body;
+    const leaderTotal = (await L.get('/api/works?pageSize=100')).body.total;
+    // Ekrandagi ro'yxat bilan bir xil (faqat acc1 mijozlari), acc2 mijozi yo'q
+    expect(rows.map((x) => x[1]).sort()).toEqual(screen.items.map((x: any) => x.stir).sort());
+    expect(rows.map((x) => x[1])).toContain('305123456');
+    expect(rows.map((x) => x[1])).not.toContain('306234567');
+    expect(head).not.toContain("Oylik to'lov");
+    expect(head.some((h) => /parol/i.test(h))).toBe(false);
+
+    // Ish ustunlari ekrandagi tartibda, Izohdan oldin; katak qiymati ekrandagi holat bilan mos
+    const first = head.indexOf('Izoh') - screen.columns.length;
+    const at = (stir: string, work: string) => {
+      const i = rows.findIndex((x) => x[1] === stir);
+      const j = first + screen.columns.findIndex((c: any) => c.routineTypeId === ids[work]);
+      return { value: rows[i][j], fill: (ws.getRow(i + 2).getCell(j + 1).fill as any)?.fgColor?.argb };
+    };
+    const state = (clientId: number, work: string) => screen.items.find((x: any) => x.clientId === clientId).cells[ids[work]].state;
+    const expected = (s: string) => (s === 'done' ? '1' : s === 'na' ? 'X' : '0');
+    expect(at('305123456', 'salary').value).toBe(expected(state(aos, 'salary')));
+    expect(at('307345678', 'salary')).toMatchObject({ value: 'X', fill: 'FFF3F4F6' }); // nol hisobot: chiqmaydi
+    if (state(aos, 'bank') === 'overdue') expect(at('305123456', 'bank')).toMatchObject({ value: '0', fill: 'FFFEE2E2' });
+
+    const all = await read((await bin(L.get(`/api/works/export.xlsx?month=${m}`))).body);
+    expect(all.rows).toHaveLength(leaderTotal);
+    expect(all.rows.map((x) => x[1])).toContain('306234567');
+    expect(all.head).toContain("Oylik to'lov");
+  });
+
+  it('oy formati tekshiriladi', async () => {
+    expect((await L.get('/api/works/export.xlsx?month=2026-13')).status).toBe(400);
+  });
+});

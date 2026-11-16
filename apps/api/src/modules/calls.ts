@@ -181,9 +181,13 @@ const MATCH = `
                      ORDER BY l.id LIMIT 1) ml ON true`;
 const MATCH_COLS = `mc.id AS "mcId", mc.name AS "mcName", mc.accountant_id AS "mcAcc", ml.id AS "mlId", ml.name AS "mlName", ml.status AS "mlStatus"`;
 
-/** Audio yozuv faqat rahbarga (rahbar qarori, V48): boshqalarga yozuv borligi ham ko'rsatilmaydi */
+/**
+ * Audio yozuv: rahbar va buxgalter (V48, keyin rahbar qarori bilan buxgalterga ham ochildi). Buxgalterga keladigan
+ * qatorlar allaqachon cheklangan (jurnal — o'z qo'ng'iroqlari, karta — o'z mijozi). Operatorga yozuv borligi ham ko'rsatilmaydi
+ */
+const canHearRecordings = (u: AuthUser) => u.role === 'LEADER' || u.role === 'ACCOUNTANT';
 function stripRecording(u: AuthUser, row: Record<string, any>) {
-  if (isLeader(u)) return row;
+  if (canHearRecordings(u)) return row;
   const { recordingId: _r, recordingBytes: _b, ...rest } = row;
   return rest;
 }
@@ -263,13 +267,20 @@ callsRouter.post('/recordings', express.raw({ type: () => true, limit: RECORDING
 
 callsRouter.use(requireAuth);
 
-// Eshitish: faqat rahbar
-callsRouter.get('/recordings/:id', requireLeader, async (req, res) => {
+// Eshitish: rahbar — hammasi; buxgalter — ko'ra oladigan qo'ng'iroqlari: o'zi gaplashgan (jurnal) yoki o'z mijozining
+// raqami bilan (mijoz kartasi). Boshqasi 404 (yozuv borligi ham bildirilmaydi)
+callsRouter.get('/recordings/:id', requireStaff, async (req, res) => {
+  const u = me(req);
   const id = parse(z.coerce.number().int(), req.params.id);
   const r = await one<{ mime: string; file_name: string; size_bytes: number; tg_file_id: string }>(
     pool,
-    'SELECT mime, file_name, size_bytes, tg_file_id FROM call_recording WHERE id = $1',
-    [id],
+    `SELECT r.mime, r.file_name, r.size_bytes, r.tg_file_id FROM call_recording r WHERE r.id = $1
+     ${isLeader(u) ? '' : `AND EXISTS (
+       SELECT 1 FROM call_log cl WHERE r.uniqueid IS NOT NULL AND cl.uniqueid = r.uniqueid AND (
+         cl.user_id = $2 OR cl.peer_user_id = $2
+         OR (cl.external_number IS NOT NULL AND EXISTS (SELECT 1 FROM client c
+               WHERE c.accountant_id = $2 AND fn_phone_keys(c.phone) @> ARRAY[cl.external_number]))))`}`,
+    isLeader(u) ? [id] : [id, u.id],
   );
   if (!r) throw notFound('Yozuv');
   if (r.size_bytes > CHAT_FILE_MAX_BYTES) {
