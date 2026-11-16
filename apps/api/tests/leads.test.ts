@@ -39,7 +39,7 @@ beforeAll(async () => {
   A1 = api(await token('acc1'));
   O = api(opToken);
   // Allaqachon mijozimiz bo'lgan firma: importda o'tkazib yuborilishi kerak
-  await L.post('/api/clients', { stir: '300000001', name: 'ESKI MIJOZ', taxType: 'AOS', accountantId: team.acc1 });
+  await L.post('/api/clients', { stir: '300000001', name: 'ESKI MIJOZ', taxType: 'AOS', accountantId: team.acc1, inWorks: true });
 });
 
 describe('operator ruxsatlari (serverda)', () => {

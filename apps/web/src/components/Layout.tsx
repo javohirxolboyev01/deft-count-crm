@@ -5,6 +5,7 @@ import {
   Bell,
   Building2,
   CircleUserRound,
+  Contact,
   History,
   LayoutDashboard,
   LogOut,
@@ -158,7 +159,9 @@ export function Layout() {
     { to: '/dashboard', label: t('nav.dashboard'), icon: LayoutDashboard, leader: true },
     // Rahbarga "Mening kunim" hozircha kerak emas (sahifa o'zi ochiladi, faqat menyuda yo'q)
     ...(isLeader ? [] : [{ to: '/my-day', label: t('nav.home'), icon: LayoutDashboard, staff: true }]),
-    { to: '/clients', label: t(isLeader ? 'nav.clientsLeader' : 'nav.clients'), icon: Building2, staff: true },
+    // «Mijozlar» (V51): hamma mijoz, yangi mijoz, Excel yuklash va bo'limlarni tanlash — faqat rahbar
+    { to: '/clients', label: t('nav.clients'), icon: Contact, leader: true },
+    { to: '/works', label: t(isLeader ? 'nav.worksLeader' : 'nav.works'), icon: Building2, staff: true },
     { to: '/monthly', label: t('nav.monthly'), icon: Sheet, staff: true },
     { to: '/client-issues', label: t('nav.issues'), icon: AlertTriangle, leader: true },
     ...(isLeader || isOperator ? [{ to: '/leads', label: t('nav.leads'), icon: PhoneCall }] : []),

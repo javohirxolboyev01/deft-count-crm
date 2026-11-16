@@ -10,20 +10,12 @@ async function login(page: Page, login: string) {
   await expect(page.getByRole('navigation', { name: 'Asosiy menyu' })).toBeVisible();
 }
 
-/** Yangi mijoz o'z sahifasidan: Buxgalter ishlari -> to'liq forma, kartaga o'tadi; Hisobot topshirish -> jadval maydonlari, jadvalda qoladi */
-async function createClient(page: Page, c: { stir: string; name: string; tax: 'AOS' | 'QQS' }, from: 'clients' | 'monthly' = 'clients') {
-  await page.goto(`/${from}`);
-  if (from === 'monthly') {
-    await page.getByRole('button', { name: 'Yangi mijoz' }).click();
-    const dlg = page.getByRole('dialog');
-    await dlg.getByLabel('STIR').fill(c.stir);
-    await dlg.getByLabel('Korxona nomi').fill(c.name);
-    await dlg.getByLabel('Soliq turi').click();
-    await page.getByRole('option', { name: c.tax, exact: true }).click();
-    await dlg.getByRole('button', { name: 'Yaratish' }).click();
-    await expect(page.getByRole('button', { name: `${c.name} — Korxona nomi` })).toBeVisible();
-    return;
-  }
+/**
+ * Yangi mijoz faqat «Mijozlar» bo'limidan (V51): Hisobot topshirishda har doim, Buxgalter ishlarida — almashtirgich bilan.
+ * Yaratilgach ro'yxatda qoladi (qidiruvda shu STIR).
+ */
+async function createClient(page: Page, c: { stir: string; name: string; tax: 'AOS' | 'QQS'; inWorks?: boolean; accountant?: boolean }) {
+  await page.goto('/clients');
   await page.getByRole('button', { name: 'Yangi mijoz' }).click();
   // Sahifadagi filtrlarda ham "Soliq turi" bor: faqat dialog ichidan
   const dlg = page.getByRole('dialog');
@@ -31,11 +23,14 @@ async function createClient(page: Page, c: { stir: string; name: string; tax: 'A
   await dlg.getByLabel('Korxona nomi').fill(c.name);
   await dlg.getByLabel('Soliq turi', { exact: true }).click();
   await page.getByRole('option', { name: c.tax, exact: true }).click();
-  await dlg.getByLabel('Javobgar buxgalter').click();
-  await page.getByRole('option', { name: /Aziza Karimova/ }).click();
+  if (c.accountant) {
+    await dlg.getByLabel('Javobgar buxgalter').click();
+    await page.getByRole('option', { name: /Aziza Karimova/ }).click();
+  }
+  if (c.inWorks) await dlg.getByRole('switch', { name: "Buxgalter ishlari bo'limida ham ko'rinsin" }).click();
   await dlg.getByRole('button', { name: 'Yaratish' }).click();
-  await expect(page).toHaveURL(/\/clients\/\d+$/);
-  await expect(page.getByRole('heading', { name: c.name })).toBeVisible();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: `${c.name} — Korxona nomi` })).toBeVisible();
 }
 
 test('login: rahbar dashboardga, buxgalter rahbar sahifalariga kira olmaydi', async ({ page }) => {
@@ -52,9 +47,9 @@ test('login: rahbar dashboardga, buxgalter rahbar sahifalariga kira olmaydi', as
 
 test('mijoz yaratish (AOS va QQS) va oylik jadvalda X qoidasi', async ({ page }) => {
   await login(page, 'rahbar');
-  // Hisobot topshirish sahifasidan: faqat shu bo'limga qo'shiladi
-  await createClient(page, { stir: '401000001', name: 'E2E AOS MChJ', tax: 'AOS' }, 'monthly');
-  await createClient(page, { stir: '401000002', name: 'E2E QQS MChJ', tax: 'QQS' }, 'monthly');
+  // «Mijozlar»dan, almashtirgichsiz: faqat Hisobot topshirishda
+  await createClient(page, { stir: '401000001', name: 'E2E AOS MChJ', tax: 'AOS' });
+  await createClient(page, { stir: '401000002', name: 'E2E QQS MChJ', tax: 'QQS' });
   await page.goto('/monthly');
   await page.getByLabel('Qidiruv').fill('E2E');
   await expect(page.getByRole('button', { name: 'E2E AOS MChJ — Korxona nomi' })).toBeVisible();
@@ -119,8 +114,8 @@ test('shoshilinch vazifa: buxgalter ekranida bir necha soniyada qizil xabar', as
 
 test("Buxgalter ishlari: mijoz maydonlari Excel'dagidek katak ichida tahrirlanadi", async ({ page }) => {
   await login(page, 'rahbar');
-  await createClient(page, { stir: '401000009', name: 'E2E EDIT MChJ', tax: 'AOS' });
-  await page.goto('/clients');
+  await createClient(page, { stir: '401000009', name: 'E2E EDIT MChJ', tax: 'AOS', inWorks: true, accountant: true });
+  await page.goto('/works');
   await page.getByLabel('Qidiruv').fill('E2E EDIT');
   const name = 'E2E EDIT MChJ';
   // Oylik to'lov: bosish -> input, Enter saqlaydi, 1,500,000 ko'rinishida
@@ -165,7 +160,10 @@ test("Buxgalter ishlari: mijoz maydonlari Excel'dagidek katak ichida tahrirlanad
   // Buxgalter: o'z maydonlarini tahrirlaydi, javobgar va oylik to'lov yo'q/o'zgarmaydi
   await page.getByRole('button', { name: 'Chiqish' }).click();
   await login(page, 'aziza');
+  // Eski manzil: buxgalter o'z jadvaliga (Oylik ishlar) o'tadi, «Mijozlar» menyuda yo'q
   await page.goto('/clients');
+  await expect(page).toHaveURL(/\/works$/);
+  await expect(page.getByRole('link', { name: 'Mijozlar', exact: true })).toHaveCount(0);
   await page.getByLabel('Qidiruv').fill('E2E EDIT');
   await expect(page.getByRole('link', { name })).toBeVisible();
   await expect(page.getByRole('button', { name: `${name} — Oylik to'lov` })).toHaveCount(0);
@@ -175,4 +173,46 @@ test("Buxgalter ishlari: mijoz maydonlari Excel'dagidek katak ichida tahrirlanad
   await page.getByLabel(`${name} — Xodim soni`).press('Enter');
   await expect(page.getByText('Saqlandi')).toBeVisible();
   await expect(page.getByRole('button', { name: `${name} — Xodim soni` })).toHaveText('6');
+});
+
+test("«Mijozlar»: Buxgalter ishlari almashtirgichi, shartnoma tugadi va qaytarish; boshqa bo'limlarda yangi mijoz tugmasi yo'q", async ({ page }) => {
+  await login(page, 'rahbar');
+  const name = 'E2E BOLIM MChJ';
+  await createClient(page, { stir: '401000010', name, tax: 'QQS' });
+  const works = page.getByRole('switch', { name: `${name} — Buxgalter ishlari` });
+  await expect(works).toHaveAttribute('aria-checked', 'false');
+
+  // Yoqish: darhol, Buxgalter ishlari jadvalida paydo bo'ladi
+  await works.click();
+  await expect(page.getByText(`«${name}» Buxgalter ishlariga qo'shildi`)).toBeVisible();
+  await expect(works).toHaveAttribute('aria-checked', 'true');
+  await page.goto('/works');
+  await page.getByLabel('Qidiruv').fill('E2E BOLIM');
+  await expect(page.getByRole('link', { name })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Yangi mijoz' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Excel yuklash' })).toHaveCount(0);
+  await page.goto('/monthly');
+  await expect(page.getByRole('button', { name: 'Yangi mijoz' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Excel yuklash' })).toHaveCount(0);
+
+  // O'chirish: tasdiq bilan
+  await page.goto('/clients?section=WORKS');
+  await page.getByLabel('Qidiruv').fill('401000010');
+  await works.click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Tasdiqlash' }).click();
+  await expect(page.getByText(`«${name}» Buxgalter ishlaridan olib tashlandi`)).toBeVisible();
+  await expect(page.getByRole('button', { name: `${name} — Korxona nomi` })).toHaveCount(0); // "Buxgalter ishlarida" yorlig'idan chiqdi
+
+  // Shartnoma tugadi -> «Shartnoma tugagan» yorlig'ida, qaytarish
+  await page.getByRole('tab', { name: /Hammasi/ }).click();
+  await page.getByRole('button', { name: `${name} — Shartnoma tugadi` }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Shartnoma tugadi' }).click();
+  await expect(page.getByRole('button', { name: `${name} — Korxona nomi` })).toHaveCount(0);
+  await page.getByRole('tab', { name: /Shartnoma tugagan/ }).click();
+  await expect(works).toBeDisabled();
+  await page.getByRole('button', { name: `${name} — Qaytarish` }).click();
+  await expect(page.getByText(`«${name}» qaytarildi: Hisobot topshirishda`)).toBeVisible();
+  await page.goto('/monthly');
+  await page.getByLabel('Qidiruv').fill('E2E BOLIM');
+  await expect(page.getByRole('button', { name: `${name} — Korxona nomi` })).toBeVisible();
 });

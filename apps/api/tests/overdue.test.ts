@@ -54,7 +54,7 @@ describe('kechikkan mijozlar: buxgalter va rahbarga kunlik xabar', () => {
 
   beforeAll(async () => {
     const mk = async (stir: string, name: string, accountantId: number) =>
-      (await L.post('/api/clients', { stir, name, taxType: 'AOS', accountantId })).body.id as number;
+      (await L.post('/api/clients', { stir, name, taxType: 'AOS', accountantId, inWorks: true })).body.id as number;
     a = await mk('301000001', 'ALFA', team.acc1);
     b = await mk('301000002', 'BETA', team.acc2);
     c = await mk('301000003', 'GAMMA', team.acc1);

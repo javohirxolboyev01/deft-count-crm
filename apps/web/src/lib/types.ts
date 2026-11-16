@@ -93,6 +93,10 @@ export interface Client {
   mehnatCheckedAt: string | null;
   mehnatLogin: string | null;
   hasMehnatPassword: boolean;
+  /** Hisobot topshirishda (V51: har doim; false — shartnoma tugagan) */
+  inReports: boolean;
+  /** Buxgalter ishlarida ham (rahbar «Mijozlar» bo'limida tanlaydi) */
+  inWorks: boolean;
 }
 
 export interface ClientCard extends Client {
@@ -107,6 +111,14 @@ export interface Paged<T> {
   total: number;
   page: number;
   pageSize: number;
+}
+
+/** «Mijozlar» bo'limi yorliqlari (server: clients.ts CLIENT_SECTIONS) */
+export const CLIENT_SECTIONS = ['ALL', 'WORKS', 'REPORTS_ONLY', 'ENDED'] as const;
+export type ClientSection = (typeof CLIENT_SECTIONS)[number];
+export interface ClientDirectory extends Paged<Client> {
+  /** Har yorliqdagi mijozlar soni (qolgan filtrlar bilan) */
+  sections: Record<ClientSection, number>;
 }
 
 export interface Task {

@@ -9,6 +9,7 @@ import Login from './pages/Login';
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const MyDay = lazy(() => import('./pages/MyDay'));
 const Clients = lazy(() => import('./pages/Clients'));
+const Works = lazy(() => import('./pages/Works'));
 const ClientCard = lazy(() => import('./pages/ClientCard'));
 const Monthly = lazy(() => import('./pages/Monthly'));
 const Settings = lazy(() => import('./pages/Settings'));
@@ -33,6 +34,16 @@ function Protected({ roles, children }: { roles?: Role[]; children: React.ReactN
   return <>{children}</>;
 }
 
+/**
+ * /clients — «Mijozlar» bo'limi (rahbar, V51). Buxgalter ishlari jadvali oldin shu manzilda edi: buxgalterning eski
+ * havola/xatcho'pi (filtr parametrlari bilan) /works ga o'tadi
+ */
+function ClientsRoute() {
+  const { isLeader } = useAuth();
+  const { search } = useLocation();
+  return isLeader ? <Clients /> : <Navigate to={`/works${search}`} replace />;
+}
+
 function Home() {
   const { user } = useAuth();
   const home = { LEADER: '/dashboard', ACCOUNTANT: '/my-day', OPERATOR: '/leads' } as const;
@@ -55,8 +66,9 @@ export default function App() {
           {/* Kamchiligi bor mijozlar: import kamchiliklari va tuzatish faqat rahbarga (server ham yopiq) */}
           <Route path="client-issues" element={<Protected roles={L}><ClientIssues /></Protected>} />
           <Route path="my-day" element={<Protected roles={S}><MyDay /></Protected>} />
-          <Route path="clients" element={<Protected roles={S}><Clients /></Protected>} />
+          <Route path="clients" element={<Protected roles={S}><ClientsRoute /></Protected>} />
           <Route path="clients/new" element={<Navigate to="/clients" replace />} />
+          <Route path="works" element={<Protected roles={S}><Works /></Protected>} />
           <Route path="clients/:id" element={<Protected roles={S}><ClientCard /></Protected>} />
           <Route path="monthly" element={<Protected roles={S}><Monthly /></Protected>} />
           {/* Hisobot topshirish detail: faqat rahbar (buxgalter jadvalni faqat ko'radi) */}

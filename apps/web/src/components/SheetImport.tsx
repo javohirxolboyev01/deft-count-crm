@@ -19,9 +19,9 @@ import { MonthPicker } from './ui/date-picker';
 import { Dialog } from './ui/dialog';
 import { Field } from './ui/input';
 
-// Excel import har sahifaning o'zida (Google Sheets sinxron olib tashlangan):
-// "Hisobot topshirish" — hisobot jadvali (REPORTS), "Buxgalter ishlari" — «Бухгалтер ишлари» fayli (WORKS).
-// Server fayl turini sarlavhadan aniqlaydi va sahifaga mos kelmasa rad etadi.
+// Excel import (Google Sheets sinxron olib tashlangan): «Mijozlar» bo'limida bitta tugma (V51) — kind berilmaydi,
+// server fayl turini sarlavhadan o'zi aniqlaydi: hisobot jadvali (REPORTS) yoki «Бухгалтер ишлари» fayli (WORKS).
+// kind berilsa (ma'lum bir jadval sahifasi) — mos kelmagan fayl rad etiladi (WRONG_FILE_KIND).
 export type ImportKind = ImportReport['kind'];
 
 const actionCls = {
@@ -64,7 +64,7 @@ function ImportSteps({ step }: { step: 1 | 2 | 3 | 4 }) {
   );
 }
 
-function ImportDialog({ kind, open, onClose }: { kind: ImportKind; open: boolean; onClose: () => void }) {
+function ImportDialog({ kind, open, onClose }: { kind?: ImportKind; open: boolean; onClose: () => void }) {
   const { t } = useTranslation();
   const qc = useQueryClient();
   const [file, setFile] = useState<File | null>(null);
@@ -111,7 +111,7 @@ function ImportDialog({ kind, open, onClose }: { kind: ImportKind; open: boolean
     },
     onError: (e) => {
       if (e instanceof ApiError && e.code === 'FILE_ALREADY_IMPORTED') warnDuplicate(e.details as PreviousImport);
-      else if (e instanceof ApiError && e.code === 'WRONG_FILE_KIND') toast.error(t(`sheets.wrongKind.${kind}`), { duration: 8000 });
+      else if (kind && e instanceof ApiError && e.code === 'WRONG_FILE_KIND') toast.error(t(`sheets.wrongKind.${kind}`), { duration: 8000 });
       else toast.error(errorText(e, t));
     },
   });
@@ -149,7 +149,7 @@ function ImportDialog({ kind, open, onClose }: { kind: ImportKind; open: boolean
       <Dialog
         open={open}
         onClose={onClose}
-        title={t(`sheets.importTitle.${kind}`)}
+        title={t(`sheets.importTitle.${kind ?? 'ANY'}`)}
         className="max-w-4xl"
         footer={
           // Tugmalar doim pastda ko'rinadi (natija jadvali uzun bo'lsa ham). Tavsiya etilgan qadam asosiy rangda:
@@ -186,7 +186,7 @@ function ImportDialog({ kind, open, onClose }: { kind: ImportKind; open: boolean
         }
       >
         <div className="space-y-6 text-sm">
-          <p className="text-gray-500">{t(`sheets.fileHintFor.${kind}`)}</p>
+          <p className="text-gray-500">{t(`sheets.fileHintFor.${kind ?? 'ANY'}`)}</p>
           <ImportSteps step={step} />
 
           <div className="grid gap-4 sm:grid-cols-3">
@@ -300,15 +300,15 @@ function ImportDialog({ kind, open, onClose }: { kind: ImportKind; open: boolean
 
 /**
  * Import aniqlagan kamchiliklar — jadvaldagi ⚠ belgisi uchun (faqat rahbar; buxgalterga so'rov yuborilmaydi — server ham yopiq).
- * kind — sahifa: faqat shu jadval faylining kamchiliklari (Hisobot topshirish / Buxgalter ishlari, V27).
+ * kind — sahifa: faqat shu jadval faylining kamchiliklari (Hisobot topshirish / Buxgalter ishlari, V27); berilmasa — hammasi («Mijozlar»).
  */
-export function useReviewItems(kind: ImportKind) {
+export function useReviewItems(kind?: ImportKind) {
   const { isLeader } = useAuth();
   return useQuery({ queryKey: ['sheets', 'review', kind], queryFn: () => api.get<ReviewItem[]>(`/sheets/review${qs({ kind })}`), enabled: isLeader });
 }
 
 /** Mijoz bo'yicha ochiq kamchiliklar: jadvaldagi belgi va mijoz kartasi uchun */
-export function useReviewByClient(kind: ImportKind) {
+export function useReviewByClient(kind?: ImportKind) {
   const items = useReviewItems(kind).data;
   const map = new Map<number, ReviewItem[]>();
   for (const r of items ?? []) if (r.clientId) map.set(r.clientId, [...(map.get(r.clientId) ?? []), r]);
@@ -363,12 +363,11 @@ export function ClientReviewBanner({ kind, clientId, needs }: { kind: ImportKind
 }
 
 /**
- * Sahifa sarlavhasidagi "Excel yuklash" (faqat rahbar). Kamchiliklar alohida ro'yxatda emas — jadvalda
- * korxona nomi yonidagi ⚠ belgisida (rahbar qarori).
- * Buxgalter ishlari va Hisobot topshirish sahifalari bir xil komponentni o'z fayl turi bilan ishlatadi.
+ * Sahifa sarlavhasidagi "Excel yuklash" (faqat rahbar, «Mijozlar» bo'limi). Kamchiliklar alohida ro'yxatda emas —
+ * jadvalda korxona nomi yonidagi ⚠ belgisida (rahbar qarori). kind berilmasa — fayl turi serverda aniqlanadi.
  */
 /** beforeImport — "Excel yuklash"dan oldin turadigan tugma ("Yangi mijoz") */
-export function SheetImportActions({ kind, beforeImport }: { kind: ImportKind; beforeImport?: React.ReactNode }) {
+export function SheetImportActions({ kind, beforeImport }: { kind?: ImportKind; beforeImport?: React.ReactNode }) {
   const { t } = useTranslation();
   const [importOpen, setImportOpen] = useState(false);
   return (

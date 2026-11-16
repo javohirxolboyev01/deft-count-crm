@@ -23,7 +23,7 @@ beforeAll(async () => {
   A1 = api(await token('acc1'));
   A2 = api(await token('acc2'));
   A3 = api(await token('acc3'));
-  const c = await L.post('/api/clients', { stir: '301000001', name: 'TRANSFER MCHJ', taxType: 'AOS', accountantId: team.acc1 });
+  const c = await L.post('/api/clients', { stir: '301000001', name: 'TRANSFER MCHJ', taxType: 'AOS', accountantId: team.acc1, inWorks: true });
   clientId = c.body.id;
 });
 

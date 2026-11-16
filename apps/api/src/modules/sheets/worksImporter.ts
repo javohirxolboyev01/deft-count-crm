@@ -168,7 +168,7 @@ export async function importWorks(
         db,
         `SELECT id, stir, name, tax_type AS "taxType", tax_type_raw AS "taxTypeRaw", accountant_id AS "accountantId", note, monthly_fee AS "monthlyFee",
                 bank_key AS "bankKey", employee_count AS "employeeCount", to_char(mehnat_checked_at, 'YYYY-MM-DD') AS "mehnatCheckedAt",
-                mehnat_login AS "mehnatLogin", mehnat_password_enc AS "mehnatPasswordEnc", in_works AS "inWorks"
+                mehnat_login AS "mehnatLogin", mehnat_password_enc AS "mehnatPasswordEnc", in_works AS "inWorks", in_reports AS "inReports"
          FROM client WHERE ${where} ORDER BY stir IS NULL DESC, id LIMIT 1 FOR UPDATE`,
         [v],
       );
@@ -211,8 +211,8 @@ export async function importWorks(
           mehnatCheckedAt: (upd.mehnatCheckedAt as string) ?? null,
           mehnatLogin: (upd.mehnatLogin as string) ?? null,
           mehnatPassword: password || null,
-          // Faqat shu bo'limda: Hisobot topshirishga hisobot jadvali bilan qo'shiladi (V25)
-          inReports: false,
+          // V51: Buxgalter ishlaridagi mijoz Hisobot topshirishda ham (hamma mijozga har oy hisobot topshiriladi)
+          inReports: true,
           inWorks: true,
         },
         opts.actorId,
@@ -221,9 +221,14 @@ export async function importWorks(
     } else {
       clientId = existing.id;
       if (!existing.inWorks) {
-        // Hisobot jadvalidagi mijoz «Бухгалтер ишлари» faylida ham bor: endi ikkala bo'limda, joriy oy ishlari chiqadi (V25)
-        await db.query('UPDATE client SET in_works = true WHERE id = $1', [clientId]);
-        await audit(db, { actorId: opts.actorId, entity: 'client', entityId: clientId, clientId, action: 'IMPORT_UPDATE', before: { inWorks: false }, after: { inWorks: true } });
+        // Mijoz «Бухгалтер ишлари» faylida: Buxgalter ishlariga qo'shiladi, joriy oy ishlari chiqadi. Shartnomasi tugagan
+        // (arxivdagi) mijoz bo'lsa Hisobot topshirishga ham qaytadi — V51: Buxgalter ishlaridagi mijoz hisobotda ham
+        const back = !existing.inReports;
+        await db.query('UPDATE client SET in_works = true, in_reports = true WHERE id = $1', [clientId]);
+        await audit(db, {
+          actorId: opts.actorId, entity: 'client', entityId: clientId, clientId, action: 'IMPORT_UPDATE',
+          before: { inWorks: false, ...(back && { inReports: false }) }, after: { inWorks: true, ...(back && { inReports: true }) },
+        });
         await reconcileClient(db, clientId, opts.actorId);
         res.changes.push('inWorks');
         res.action = 'UPDATED';

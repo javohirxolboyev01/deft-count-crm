@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { type AuthUser, isLeader, me, requireAuth } from '../common/auth';
+import { type AuthUser, isLeader, me, requireAuth, requireLeader } from '../common/auth';
 import { audit, diff } from '../common/audit';
 import { AppError, forbidden, notFound, parse } from '../common/errors';
 import { normalizeName, normalizeStir, normalizeTaxType } from '../common/normalize';
@@ -10,13 +10,14 @@ import { type Db, one, pool, q, tx } from '../db';
 import { reassignOpenTasks, reconcileClient } from './generator';
 import { applyPendingReportCells } from './sheets/reportCells';
 import { resolveReviewOnSave } from './sheets/review';
+import { stopTimersForTask } from './taskService';
 
 export const CLIENT = `c.id, c.stir, c.name, c.contact_person AS "contactPerson", c.phone, c.tax_type AS "taxType",
   c.stir_raw AS "stirRaw", c.tax_type_raw AS "taxTypeRaw", c.tax_type_effective_from AS "taxTypeEffectiveFrom", c.accountant_id AS "accountantId",
   a.full_name AS "accountantName", c.status, c.note, c.created_at AS "createdAt", c.updated_at AS "updatedAt",
   c.monthly_fee AS "monthlyFee", c.bank_key AS "bankKey", c.employee_count AS "employeeCount",
   c.mehnat_checked_at AS "mehnatCheckedAt", c.mehnat_login AS "mehnatLogin",
-  (c.mehnat_password_enc IS NOT NULL) AS "hasMehnatPassword"`;
+  (c.mehnat_password_enc IS NOT NULL) AS "hasMehnatPassword", c.in_reports AS "inReports", c.in_works AS "inWorks"`;
 export const FROM = `FROM client c LEFT JOIN app_user a ON a.id = c.accountant_id`;
 
 /** Buxgalter ulushi foizi (sozlamada, standart 30) */
@@ -43,12 +44,26 @@ function auditSafe<T extends { mehnatPassword?: string | null }>(body: T) {
 /** Mijozlar ro'yxati filtri: /clients va /works bir xil qoidada (buxgalter faqat o'z mijozlari, serverda) */
 export const CLIENT_STATUSES = ['ACTIVE', 'ZERO_REPORT', 'LIQUIDATING', 'ARCHIVED'] as const;
 
+/**
+ * «Mijozlar» bo'limi filtri (V51): ALL — shartnomasi davom etayotgan hamma (Hisobot topshirishdagilar),
+ * WORKS — Buxgalter ishlarida ham, REPORTS_ONLY — faqat Hisobot topshirishda, ENDED — shartnoma tugagan (arxiv).
+ */
+export const CLIENT_SECTIONS = ['ALL', 'WORKS', 'REPORTS_ONLY', 'ENDED'] as const;
+const SECTION_WHERE: Record<(typeof CLIENT_SECTIONS)[number], string> = {
+  ALL: 'c.in_reports',
+  WORKS: 'c.in_works',
+  REPORTS_ONLY: 'c.in_reports AND NOT c.in_works',
+  ENDED: 'NOT c.in_reports',
+};
+
 export const clientListQuery = z.object({
   search: z.string().trim().optional(),
   status: z.enum(CLIENT_STATUSES).optional(),
   // NONE: soliq turi aniqlanmagan ("to'ldirilmagan") mijozlar
   taxType: z.enum(['AOS', 'QQS', 'YATT', 'NONE']).optional(),
   accountantId: z.union([z.coerce.number().int(), z.literal('none')]).optional(),
+  // Berilsa — «Mijozlar» bo'limi: Arxiv holatidagilar ham ko'rinadi (hamma mijoz bitta ro'yxatda)
+  section: z.enum(CLIENT_SECTIONS).optional(),
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(500).default(25),
 });
@@ -61,9 +76,10 @@ export function clientListWhere(u: AuthUser, f: z.infer<typeof clientListQuery>,
     const digits = f.search.replace(/\D/g, '');
     where.push(`(c.name_normalized ILIKE ${p(`%${s}%`)} ${digits.length >= 3 ? `OR c.stir LIKE ${p(`${digits}%`)}` : ''})`);
   }
-  // Arxiv standart ro'yxatda ko'rinmaydi, faqat filtr bilan
+  if (f.section) where.push(SECTION_WHERE[f.section]);
+  // Arxiv standart ro'yxatda ko'rinmaydi, faqat filtr bilan («Mijozlar» bo'limida — hammasi)
   if (f.status) where.push(`c.status = ${p(f.status)}`);
-  else if (!opts.includeArchived) where.push(`c.status <> 'ARCHIVED'`);
+  else if (!opts.includeArchived && !f.section) where.push(`c.status <> 'ARCHIVED'`);
   if (f.taxType === 'NONE') where.push('c.tax_type IS NULL');
   else if (f.taxType) where.push(`c.tax_type = ${p(f.taxType)}`);
   if (f.accountantId === 'none') where.push('c.accountant_id IS NULL');
@@ -81,7 +97,8 @@ const monthSchema = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'Oy formati: 202
 export const clientInput = z.object({
   stir: stirSchema,
   name: z.string().trim().min(1).max(300),
-  contactPerson: z.string().trim().max(200).nullable().optional(),
+  // Bir nechta mas'ul shaxs vergul bilan, telefonlar tartibida (kartada 5 tagacha)
+  contactPerson: z.string().trim().max(1000).nullable().optional(),
   // Bir nechta raqam vergul bilan (kartada 5 tagacha): "+998 90 123 45 67, +998 93 ..."
   phone: z.string().trim().max(200).nullable().optional(),
   // Faqat ikki qiymat (CLAUDE.md "Asosiy qoida")
@@ -98,6 +115,8 @@ export const clientInput = z.object({
   mehnatLogin: z.string().trim().max(200).nullable().optional(),
   // Faqat yoziladi (javobda qaytmaydi); bo'sh satr = o'chirish
   mehnatPassword: z.string().max(200).nullable().optional(),
+  // Buxgalter ishlari bo'limida ham (V51: faqat rahbar tanlaydi; Hisobot topshirishda har doim)
+  inWorks: z.boolean().optional(),
 });
 
 async function assertAccountant(db: Db, id: number | null | undefined) {
@@ -163,7 +182,7 @@ type NewClient = Omit<z.infer<typeof clientInput>, 'taxType' | 'stir'> & {
   stirRaw?: string | null;
   taxType: 'AOS' | 'QQS' | 'YATT' | null;
   taxTypeRaw?: string | null;
-  /** V25: qaysi bo'limda (import faqat o'z bo'limini qo'yadi; forma va lead — ikkalasi) */
+  /** Bo'limlar (V51): Hisobot topshirishda har doim; Buxgalter ishlarida — rahbar tanlovi yoki «Бухгалтер ишлари» fayli */
   inReports?: boolean;
   inWorks?: boolean;
 };
@@ -217,6 +236,17 @@ clientsRouter.get('/', async (req, res) => {
   const p = (v: unknown) => (params.push(v), `$${params.length}`);
   const w = clientListWhere(u, f, p);
   const total = (await one<{ n: number }>(pool, `SELECT count(*) AS n FROM client c ${w}`, params))!.n;
+  // «Mijozlar» bo'limi yorliqlari: har bo'limdagi soni (qolgan filtrlar bilan), bitta so'rovda
+  let sections: Record<(typeof CLIENT_SECTIONS)[number], number> | undefined;
+  if (f.section) {
+    const cp: unknown[] = [];
+    const cw = clientListWhere(u, { ...f, section: undefined }, (v) => (cp.push(v), `$${cp.length}`), { includeArchived: true });
+    sections = (await one(
+      pool,
+      `SELECT ${CLIENT_SECTIONS.map((s) => `count(*) FILTER (WHERE ${SECTION_WHERE[s]})::int AS "${s}"`).join(', ')} FROM client c ${cw}`,
+      cp,
+    ))!;
+  }
   const items = await q(
     pool,
     `SELECT ${CLIENT},
@@ -228,7 +258,7 @@ clientsRouter.get('/', async (req, res) => {
     params,
   );
   const pct = await sharePercent(pool);
-  res.json({ items: items.map((c) => presentClient(c, u, pct)), total, page: f.page, pageSize: f.pageSize });
+  res.json({ items: items.map((c) => presentClient(c, u, pct)), total, page: f.page, pageSize: f.pageSize, sections });
 });
 
 clientsRouter.get('/:id', async (req, res) => {
@@ -284,42 +314,21 @@ clientsRouter.get('/:id/history', async (req, res) => {
 });
 
 /**
- * Yangi mijoz (faqat rahbar). section — qaysi sahifadan qo'shilmoqda: mijoz faqat o'sha bo'limga tushadi
- * (Excel import qoidasi bilan bir xil, V25). Berilmasa (eski chaqiruvlar) — ikkala bo'limda.
- * Shu STIR boshqa bo'limda allaqachon bo'lsa — yangi mijoz yaratilmaydi: o'sha mijoz bu bo'limga ham qo'shiladi
- * (ma'lumot bitta), javob 200 va joined: true. Shu bo'limda bo'lsa — 409 DUPLICATE.
+ * Yangi mijoz (faqat rahbar, «Mijozlar» bo'limidan). V51: Hisobot topshirishda har doim, Buxgalter ishlarida —
+ * rahbar tanlasa (inWorks). Shu STIR bilan mijoz bor bo'lsa 409 DUPLICATE: details.ended — shartnomasi tugagan
+ * (rahbar «Mijozlar → Shartnoma tugagan»dan qaytaradi, yangisi yaratilmaydi: tarix bitta mijozda qoladi).
  */
-clientsRouter.post('/', async (req, res) => {
+clientsRouter.post('/', requireLeader, async (req, res) => {
   const u = me(req);
-  if (!isLeader(u)) throw forbidden();
-  const input = parse(clientInput.extend({ section: z.enum(['REPORTS', 'WORKS']).optional() }), req.body);
-  const { section, ...data } = input;
-  const result = await tx(async (db) => {
-    const existing = section
-      ? await one<{ id: number; inReports: boolean; inWorks: boolean }>(
-          db,
-          'SELECT id, in_reports AS "inReports", in_works AS "inWorks" FROM client WHERE stir = $1 FOR UPDATE',
-          [data.stir],
-        )
-      : undefined;
+  const { inWorks, ...data } = parse(clientInput, req.body);
+  const id = await tx(async (db) => {
+    const existing = await one<{ id: number; inReports: boolean }>(db, 'SELECT id, in_reports AS "inReports" FROM client WHERE stir = $1', [data.stir]);
     if (existing) {
-      const col = section === 'REPORTS' ? 'in_reports' : 'in_works';
-      const already = section === 'REPORTS' ? existing.inReports : existing.inWorks;
-      if (already) throw new AppError(409, 'DUPLICATE', 'Bu STIR bilan mijoz shu bo\'limda allaqachon bor', { clientId: existing.id });
-      await db.query(`UPDATE client SET ${col} = true WHERE id = $1`, [existing.id]);
-      await audit(db, {
-        actorId: u.id, entity: 'client', entityId: existing.id, clientId: existing.id, action: 'UPDATE',
-        before: { [section === 'REPORTS' ? 'inReports' : 'inWorks']: false }, after: { [section === 'REPORTS' ? 'inReports' : 'inWorks']: true },
-      });
-      // Bo'lim vazifalari joriy oydan chiqadi
-      await reconcileClient(db, existing.id, u.id);
-      return { id: existing.id, joined: true };
+      throw new AppError(409, 'DUPLICATE', 'Bu STIR bilan mijoz allaqachon bor', { clientId: existing.id, ended: !existing.inReports });
     }
-    const sections = section ? { inReports: section === 'REPORTS', inWorks: section === 'WORKS' } : {};
-    return { id: await createClient(db, { ...data, ...sections }, u.id), joined: false };
+    return createClient(db, { ...data, inReports: true, inWorks: inWorks ?? false }, u.id);
   });
-  const body = { ...presentClient(await loadClientForUser(pool, result.id, u), u, await sharePercent(pool)), joined: result.joined };
-  res.status(result.joined ? 200 : 201).json(body);
+  res.status(201).json(presentClient(await loadClientForUser(pool, id, u), u, await sharePercent(pool)));
 });
 
 clientsRouter.patch('/:id', async (req, res) => {
@@ -345,6 +354,9 @@ clientsRouter.patch('/:id', async (req, res) => {
     await resolveReviewOnSave(db, id, [...Object.keys(d.after), ...(pwChanged ? ['mehnatPassword'] : [])], !!reviewed && isLeader(u), u.id);
     if (!d.changed && !pwChanged) return;
     if (body.accountantId !== undefined) await assertAccountant(db, body.accountantId);
+    // Shartnomasi tugagan mijoz avval qaytariladi (/restore): Buxgalter ishlarida bo'lib, hisobotda bo'lmasligi mumkin emas (V51)
+    if (body.inWorks && !before.inReports) throw new AppError(409, 'CLIENT_ENDED', "Mijozning shartnomasi tugagan: avval qaytaring");
+    const worksChanged = body.inWorks !== undefined && body.inWorks !== before.inWorks;
 
     const taxChanged = body.taxType !== undefined && body.taxType !== before.taxType;
     // Soliq turi o'zgarsa "qachondan" majburiy emas: berilmasa joriy oyning 1-kuni. Birinchi marta aniqlanayotgan
@@ -368,7 +380,8 @@ clientsRouter.patch('/:id', async (req, res) => {
          employee_count = CASE WHEN $21 THEN $22::int ELSE employee_count END,
          mehnat_checked_at = CASE WHEN $23 THEN $24::date ELSE mehnat_checked_at END,
          mehnat_login = CASE WHEN $25 THEN $26 ELSE mehnat_login END,
-         mehnat_password_enc = CASE WHEN $27 THEN $28 ELSE mehnat_password_enc END
+         mehnat_password_enc = CASE WHEN $27 THEN $28 ELSE mehnat_password_enc END,
+         in_works = coalesce($29, in_works)
        WHERE id = $1`,
       [
         id,
@@ -400,6 +413,7 @@ clientsRouter.patch('/:id', async (req, res) => {
         body.mehnatLogin || null,
         pwChanged,
         body.mehnatPassword ? encryptSecret(body.mehnatPassword) : null,
+        body.inWorks ?? null,
       ],
     );
     if (taxChanged || (body.taxTypeEffectiveFrom && body.taxType)) {
@@ -420,14 +434,67 @@ clientsRouter.patch('/:id', async (req, res) => {
     if (body.accountantId !== undefined && body.accountantId !== before.accountantId) {
       await reassignOpenTasks(db, id, body.accountantId, u.id);
     }
-    // Soliq turi yoki holat o'zgarsa joriy davr vazifalari moslashtiriladi
-    if (taxChanged || body.taxTypeEffectiveFrom !== undefined || (body.status && body.status !== before.status)) {
+    // Soliq turi, holat yoki Buxgalter ishlari bo'limi o'zgarsa joriy davr vazifalari moslashtiriladi
+    // (bo'limdan chiqsa ochiq oylik ishlar bekor, kirsa joriy oy ishlari chiqadi — fn_routine_applicability, V31)
+    if (worksChanged || taxChanged || body.taxTypeEffectiveFrom !== undefined || (body.status && body.status !== before.status)) {
       await reconcileClient(db, id, u.id);
     }
     // Tur endi ma'lum: fayldan saqlangan kataklar (1 -> Bajarildi, X -> istisno) vazifalarga o'zi qo'llanadi
     if (firstTax) await applyPendingReportCells(db, id, u.id);
   });
   res.json(presentClient(await loadClientForUser(pool, id, u), u, await sharePercent(pool)));
+});
+
+/**
+ * Shartnoma tugadi (faqat rahbar, «Mijozlar» bo'limidan): mijoz Hisobot topshirish va Buxgalter ishlari jadvallaridan
+ * chiqadi. Qaror: mijoz o'chirilmaydi — in_reports = in_works = false (V25/V51). Ma'lumot, tarix va audit qoladi.
+ * Ochiq vazifalari (barcha oylar, barcha turlar) bekor qilinadi, bajarilganlari tegilmaydi.
+ */
+clientsRouter.post('/:id/end-contract', requireLeader, async (req, res) => {
+  const clientId = parse(z.coerce.number().int().positive(), req.params.id);
+  const actorId = me(req).id;
+  res.json(
+    await tx(async (db) => {
+      const client = await one<{ inWorks: boolean }>(db, 'SELECT in_works AS "inWorks" FROM client WHERE id = $1 AND in_reports FOR UPDATE', [clientId]);
+      if (!client) throw notFound('Mijoz');
+      await db.query('UPDATE client SET in_reports = false, in_works = false WHERE id = $1', [clientId]);
+      await audit(db, {
+        actorId, entity: 'client', entityId: clientId, clientId, action: 'CONTRACT_ENDED',
+        before: { inReports: true, inWorks: client.inWorks }, after: { inReports: false, inWorks: false },
+      });
+      const cancelled = await q<{ id: number; title: string; prevStatus: string }>(
+        db,
+        `UPDATE task SET prev_status = status, status = 'CANCELLED', cancel_reason = 'CONTRACT_ENDED'
+         WHERE client_id = $1 AND status IN ('TODO', 'IN_PROGRESS', 'WAITING_CLIENT')
+         RETURNING id, title, prev_status AS "prevStatus"`,
+        [clientId],
+      );
+      for (const t of cancelled) {
+        await stopTimersForTask(db, t.id);
+        await audit(db, {
+          actorId, entity: 'task', entityId: t.id, clientId, action: 'CANCEL_CONTRACT_ENDED',
+          before: { status: t.prevStatus }, after: { status: 'CANCELLED', title: t.title },
+        });
+      }
+      return { clientId, cancelled: cancelled.length };
+    }),
+  );
+});
+
+/**
+ * Shartnoma qayta boshlandi (faqat rahbar): mijoz Hisobot topshirishga qaytadi, joriy oy hisobotlari chiqadi.
+ * Buxgalter ishlariga avtomatik qaytmaydi — rahbar «Mijozlar»da alohida yoqadi (bo'limlar rahbar tanlovi).
+ */
+clientsRouter.post('/:id/restore', requireLeader, async (req, res) => {
+  const u = me(req);
+  const clientId = parse(z.coerce.number().int().positive(), req.params.id);
+  await tx(async (db) => {
+    const r = await db.query('UPDATE client SET in_reports = true WHERE id = $1 AND NOT in_reports', [clientId]);
+    if (!r.rowCount) throw notFound('Mijoz');
+    await audit(db, { actorId: u.id, entity: 'client', entityId: clientId, clientId, action: 'CONTRACT_RESTORED', before: { inReports: false }, after: { inReports: true } });
+    await reconcileClient(db, clientId, u.id);
+  });
+  res.json(presentClient(await loadClientForUser(pool, clientId, u), u, await sharePercent(pool)));
 });
 
 /** my.mehnat.uz parolini ochish: rahbar yoki mijozning buxgalteri; har ochish audit_log'da (qiymatsiz) */

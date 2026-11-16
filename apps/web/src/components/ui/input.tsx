@@ -133,18 +133,17 @@ function UzPhoneInput({
 
 /** Mijoz kartasida nechta raqam qo'shish mumkin */
 export const MAX_PHONES = 5;
-const splitPhones = (v: string) => {
+const splitList = (v: string) => {
   const parts = v.split(',').map((s) => s.trim()).filter(Boolean);
   return parts.length ? parts : [''];
 };
-const joinPhones = (rows: string[]) => rows.map((s) => s.trim()).filter(Boolean).join(', ');
+const joinList = (rows: string[]) => rows.map((s) => s.trim()).filter(Boolean).join(', ');
 
 /**
- * Bir nechta raqam, har biri alohida maydonda (+ bilan qo'shiladi, max tagacha).
- * Qiymat bitta satr "a, b, c" bo'lib saqlanadi: server fn_phone_keys har birini qo'ng'iroqlarga bog'laydi (V46),
- * shuning uchun bazada yangi jadval/ustun kerak emas.
+ * Bir nechta qiymat, har biri alohida maydonda (+ bilan qo'shiladi, max tagacha).
+ * Qiymat bitta satr "a, b, c" bo'lib saqlanadi — bazada yangi jadval/ustun kerak emas.
  */
-export function PhoneListInput({
+function ListInput({
   id,
   value,
   onChange,
@@ -152,6 +151,7 @@ export function PhoneListInput({
   max = MAX_PHONES,
   addLabel,
   removeLabel,
+  renderItem,
 }: {
   id?: string;
   value: string;
@@ -160,32 +160,33 @@ export function PhoneListInput({
   max?: number;
   addLabel: string;
   removeLabel: string;
+  renderItem: (p: { id?: string; 'aria-label'?: string; value: string; disabled?: boolean; onChange: (v: string) => void }) => React.ReactNode;
 }) {
-  const [rows, setRows] = useState(() => splitPhones(value));
+  const [rows, setRows] = useState(() => splitList(value));
   // Tashqaridan kelgan o'zgarish (karta yuklandi/qayta o'qildi) — o'zimiz yuborgan qiymatdan farq qilsa qatorlar yangilanadi
   const emitted = useRef(value);
   useEffect(() => {
     if (value !== emitted.current) {
       emitted.current = value;
-      setRows(splitPhones(value));
+      setRows(splitList(value));
     }
   }, [value]);
   const update = (next: string[]) => {
     setRows(next);
-    emitted.current = joinPhones(next);
+    emitted.current = joinList(next);
     onChange(emitted.current);
   };
   return (
     <div className="space-y-2">
       {rows.map((r, i) => (
         <div key={i} className="flex items-center gap-2">
-          <PhoneInput
-            id={i === 0 ? id : undefined}
-            aria-label={i === 0 ? undefined : `№${i + 1}`}
-            value={r}
-            disabled={disabled}
-            onChange={(v) => update(rows.map((x, j) => (j === i ? v : x)))}
-          />
+          {renderItem({
+            id: i === 0 ? id : undefined,
+            'aria-label': i === 0 ? undefined : `№${i + 1}`,
+            value: r,
+            disabled,
+            onChange: (v) => update(rows.map((x, j) => (j === i ? v : x))),
+          })}
           {rows.length > 1 && !disabled && (
             <button
               type="button"
@@ -213,6 +214,19 @@ export function PhoneListInput({
     </div>
   );
 }
+
+type ListProps = Omit<Parameters<typeof ListInput>[0], 'renderItem'>;
+
+/** Bir nechta raqam: server fn_phone_keys har birini qo'ng'iroqlarga bog'laydi (V46) */
+export const PhoneListInput = (p: ListProps) => <ListInput {...p} renderItem={(r) => <PhoneInput {...r} />} />;
+
+/** Bir nechta mas'ul shaxs (FISh). Vergul ajratkich bo'lgani uchun ismda vergul yozilmaydi */
+export const NameListInput = (p: ListProps) => (
+  <ListInput
+    {...p}
+    renderItem={({ onChange, ...r }) => <Input autoComplete="off" {...r} onChange={(e) => onChange(e.target.value.replace(/,/g, ' '))} />}
+  />
+);
 
 /** Butun son xonalarga ajratiladi (1,500,000 — jadvaldagi fmtMoney bilan bir xil); holatda faqat raqamlar turadi */
 const groupDigits = (digits: string) => digits.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
@@ -274,15 +288,22 @@ export function Field({
   htmlFor,
   children,
   hint,
+  error,
   group,
 }: {
   label: string;
   htmlFor?: string;
   children: React.ReactNode;
   hint?: string;
+  /** Maydon xatosi: izoh o'rnida qizil (ekran o'quvchiga ham aytiladi) */
+  error?: string;
   group?: boolean;
 }) {
-  const hintEl = hint && <p className="ml-1.5 mt-1 text-xs text-gray-500">{hint}</p>;
+  const hintEl = error ? (
+    <p className="ml-1.5 mt-1 text-xs text-red-600 dark:text-red-400" role="alert">{error}</p>
+  ) : (
+    hint && <p className="ml-1.5 mt-1 text-xs text-gray-500">{hint}</p>
+  );
   if (group) {
     return (
       <fieldset className="min-w-0">

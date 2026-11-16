@@ -1,37 +1,36 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { useAccountants } from '@/hooks/tasks';
-import { api } from '@/lib/api';
+import { ApiError, api } from '@/lib/api';
 import { errorText } from '@/lib/errors';
 import { type ClientStatus, type Lead, TAX_TYPE_OPTIONS, type TaxType } from '@/lib/types';
 import { Button } from './ui/button';
 import { Dialog } from './ui/dialog';
 import { DatePicker } from './ui/date-picker';
-import { Field, Input, PhoneListInput, Textarea } from './ui/input';
+import { Field, Input, NameListInput, PhoneListInput, Textarea } from './ui/input';
 import { Select } from './ui/select';
+import { Switch } from './ui/switch';
 
-const empty = { stir: '', name: '', contactPerson: '', phone: '', taxType: 'AOS' as TaxType, taxTypeEffectiveFrom: '', accountantId: '', status: 'ACTIVE' as ClientStatus, note: '' };
+const empty = { stir: '', name: '', contactPerson: '', phone: '', taxType: 'AOS' as TaxType, taxTypeEffectiveFrom: '', accountantId: '', status: 'ACTIVE' as ClientStatus, note: '', inWorks: false };
 
 /**
- * Yangi mijoz (faqat rahbar): alohida sahifa emas, jadval ustidagi modal.
- * section — qaysi sahifadan: mijoz faqat o'sha bo'limga tushadi (shu STIR boshqa bo'limda bo'lsa — o'sha mijoz qo'shiladi).
- * onCreated berilsa (Hisobot topshirish: detail sahifa yo'q) — jadvalda qoladi, aks holda mijoz kartasiga o'tadi.
+ * Yangi mijoz (faqat rahbar, «Mijozlar» bo'limi): modal. V51: Hisobot topshirishda har doim, Buxgalter ishlarida —
+ * "inWorks" almashtirgichi yoqilsa.
+ * onCreated berilsa — ro'yxatda qoladi (toast'da kartani ochish tugmasi), aks holda mijoz kartasiga o'tadi.
  * lead berilsa — operator topgan firmani mijozga aylantirish: forma uning ma'lumotlari bilan to'ldiriladi.
  */
 export function NewClientDialog({
   open,
   onClose,
   lead,
-  section,
   onCreated,
 }: {
   open: boolean;
   onClose: () => void;
   lead?: Lead | null;
-  section?: 'REPORTS' | 'WORKS';
   onCreated?: (c: { id: number; stir: string }) => void;
 }) {
   const { t } = useTranslation();
@@ -40,15 +39,22 @@ export function NewClientDialog({
   const accountants = useAccountants();
   const [form, setForm] = useState(empty);
   const set = (patch: Partial<typeof empty>) => setForm({ ...form, ...patch });
+  // STIR server qoidasi bilan bir xil (9 raqam, YaTT JShShIR — 14): yuborishdan oldin tekshiriladi, xato maydon ostida.
+  // Xato yozish paytida emas — maydondan chiqqanda yoki "Yaratish" bosilganda ko'rsatiladi
+  const stirRef = useRef<HTMLInputElement>(null);
+  const [stirTouched, setStirTouched] = useState(false);
+  const stirOk = /^(\d{9}|\d{14})$/.test(form.stir);
+  const stirError = stirTouched && !stirOk ? t('clients.stirInvalid', { n: form.stir.length }) : undefined;
 
   useEffect(() => {
-    if (open) setForm(lead ? { ...empty, stir: lead.stir, name: lead.name, contactPerson: lead.director ?? '', phone: lead.phone ?? '' } : empty);
+    if (!open) return;
+    setForm(lead ? { ...empty, stir: lead.stir.replace(/\D/g, ''), name: lead.name, contactPerson: lead.director ?? '', phone: lead.phone ?? '' } : empty);
+    setStirTouched(false);
   }, [open, lead]);
 
   const create = useMutation({
     mutationFn: () =>
-      api.post<{ id?: number; clientId?: number; joined?: boolean }>(lead ? `/leads/${lead.id}/convert` : '/clients', {
-        ...(!lead && section && { section }),
+      api.post<{ id?: number; clientId?: number }>(lead ? `/leads/${lead.id}/convert` : '/clients', {
         stir: form.stir,
         name: form.name,
         contactPerson: form.contactPerson || null,
@@ -57,18 +63,31 @@ export function NewClientDialog({
         accountantId: form.accountantId ? Number(form.accountantId) : null,
         status: form.status,
         note: form.note || null,
+        inWorks: form.inWorks,
         ...(form.taxTypeEffectiveFrom && { taxTypeEffectiveFrom: form.taxTypeEffectiveFrom }),
       }),
     onSuccess: (c) => {
-      // Shu STIR boshqa bo'limda bor edi: yangi mijoz emas, o'sha mijoz shu bo'limga qo'shildi
-      toast.success(c.joined ? t('clients.joinedSection') : t('common.saved'));
-      for (const key of ['clients', 'leads', 'grid', 'works']) void qc.invalidateQueries({ queryKey: [key] });
+      for (const key of ['clients', 'leads', 'grid', 'works', 'dashboard']) void qc.invalidateQueries({ queryKey: [key] });
       onClose();
       const id = (c.clientId ?? c.id)!;
-      if (onCreated) onCreated({ id, stir: form.stir });
-      else navigate(`/clients/${id}`);
+      if (onCreated) {
+        toast.success(t('clients.created'), { action: { label: t('clients.openCard'), onClick: () => navigate(`/clients/${id}`) } });
+        onCreated({ id, stir: form.stir });
+      } else {
+        toast.success(t('common.saved'));
+        navigate(`/clients/${id}`);
+      }
     },
-    onError: (e) => toast.error(errorText(e, t)),
+    onError: (e) => {
+      // Shu STIR bilan mijoz bor: yangisi yaratilmaydi — o'shani ochish taklif qilinadi (shartnoma tugagan bo'lsa — qaytarish yo'li)
+      if (e instanceof ApiError && e.code === 'DUPLICATE') {
+        const d = e.details as { clientId: number; ended: boolean } | undefined;
+        toast.error(t(d?.ended ? 'clients.duplicateEnded' : 'clients.duplicate'), {
+          duration: 8000,
+          ...(d?.clientId && { action: { label: t('clients.openCard'), onClick: () => navigate(`/clients/${d.clientId}`) } }),
+        });
+      } else toast.error(errorText(e, t));
+    },
   });
 
   return (
@@ -80,7 +99,7 @@ export function NewClientDialog({
       footer={
         <>
           <Button variant="outline" onClick={onClose}>{t('common.cancel')}</Button>
-          <Button type="submit" form="new-client" disabled={create.isPending}>{t('common.create')}</Button>
+          <Button type="submit" form="new-client" loading={create.isPending}>{t('common.create')}</Button>
         </>
       }
     >
@@ -88,13 +107,32 @@ export function NewClientDialog({
         id="new-client"
         onSubmit={(e) => {
           e.preventDefault();
+          if (!stirOk) {
+            setStirTouched(true);
+            stirRef.current?.focus();
+            return;
+          }
           create.mutate();
         }}
         className="grid gap-4 sm:grid-cols-2"
       >
-        <Field label={t('clients.stir')} htmlFor="nc-stir"><Input id="nc-stir" required inputMode="numeric" value={form.stir} onChange={(e) => set({ stir: e.target.value })} /></Field>
+        <Field label={t('clients.stir')} htmlFor="nc-stir" hint={t('clients.stirHint')} error={stirError}>
+          {/* Faqat raqam (bo'shliq, tire, nusxadagi boshqa belgilar tushib qoladi), 14 tagacha */}
+          <Input
+            ref={stirRef}
+            id="nc-stir"
+            required
+            inputMode="numeric"
+            autoComplete="off"
+            maxLength={14}
+            aria-invalid={!!stirError}
+            value={form.stir}
+            onChange={(e) => set({ stir: e.target.value.replace(/\D/g, '').slice(0, 14) })}
+            onBlur={() => form.stir && setStirTouched(true)}
+          />
+        </Field>
         <Field label={t('clients.name')} htmlFor="nc-name"><Input id="nc-name" required value={form.name} onChange={(e) => set({ name: e.target.value })} /></Field>
-        <Field label={t('clients.contact')} htmlFor="nc-contact"><Input id="nc-contact" value={form.contactPerson} onChange={(e) => set({ contactPerson: e.target.value })} /></Field>
+        <Field label={t('clients.contact')} htmlFor="nc-contact"><NameListInput id="nc-contact" value={form.contactPerson} onChange={(v) => set({ contactPerson: v })} addLabel={t('clients.addContact')} removeLabel={t('clients.removeContact')} /></Field>
         <Field label={t('clients.phone')} htmlFor="nc-phone" hint={t('clients.phoneHint')}><PhoneListInput id="nc-phone" value={form.phone} onChange={(v) => set({ phone: v })} addLabel={t('clients.addPhone')} removeLabel={t('clients.removePhone')} /></Field>
         <Field label={t('clients.taxType')} htmlFor="nc-tax">
           <Select id="nc-tax" value={form.taxType} onChange={(v) => set({ taxType: v as TaxType })} options={TAX_TYPE_OPTIONS} />
@@ -117,6 +155,14 @@ export function NewClientDialog({
         </Field>
         <div className="sm:col-span-2">
           <Field label={t('clients.note')} htmlFor="nc-note"><Textarea id="nc-note" value={form.note} onChange={(e) => set({ note: e.target.value })} /></Field>
+        </div>
+        {/* Bo'limlar (V51): Hisobot topshirishda har doim, Buxgalter ishlarida — rahbar tanlovi */}
+        <div className="flex items-start gap-3 rounded-lg border border-brand-500/40 p-3 sm:col-span-2 dark:border-brand-800">
+          <Switch checked={form.inWorks} onChange={(v) => set({ inWorks: v })} label={t('clients.inWorks')} />
+          <button type="button" className="min-w-0 cursor-pointer text-left" onClick={() => set({ inWorks: !form.inWorks })}>
+            <span className="block text-sm font-medium">{t('clients.inWorks')}</span>
+            <span className="block text-xs text-gray-500">{t('clients.inWorksHint')}</span>
+          </button>
         </div>
       </form>
     </Dialog>

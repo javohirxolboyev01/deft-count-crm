@@ -132,7 +132,7 @@ function IssueRow({ n, issue, full: f }: { n: number; issue: ClientIssue; full: 
         />
       </td>
       <td className="whitespace-nowrap border-b border-r px-2 py-2 align-top text-xs text-gray-600">
-        {[c.inReports && t('nav.monthly'), c.inWorks && t('nav.clientsLeader')].filter(Boolean).join(', ')}
+        {[c.inReports && t('nav.monthly'), c.inWorks && t('nav.worksLeader')].filter(Boolean).join(', ')}
       </td>
       <td className={cn(P, 'min-w-[170px]', issue.noAccountant && MISSING)}>
         <SelectCell

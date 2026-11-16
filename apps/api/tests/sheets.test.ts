@@ -423,7 +423,7 @@ describe('Import "boricha" (V24)', () => {
   });
 });
 
-describe("Bo'limlar alohida yuklanadi (V25)", () => {
+describe("Bo'limlar va import (V25 → V51: hamma mijoz Hisobot topshirishda)", () => {
   let L: ReturnType<typeof api>;
   let leader: number;
   beforeAll(async () => {
@@ -457,30 +457,13 @@ describe("Bo'limlar alohida yuklanadi (V25)", () => {
     expect(await openKinds('305123456')).toEqual(['REPORT']);
   });
 
-  it("«Бухгалтер ишлари» faylidan yuklangan mijoz Hisobot topshirishda ko'rinmaydi, hisobot chiqmaydi, INPS doimiy ish", async () => {
+  it("«Бухгалтер ишлари» faylidan yuklangan yangi mijoz ikkala bo'limda: hisobot ham, oylik ish ham; INPS bitta vazifa", async () => {
     await importWorksFile(worksFile(worksRow('310309859', '"ALICOM" MCHJ')));
-    expect(await flags('310309859')).toEqual({ in_reports: false, in_works: true });
-    expect(await worksNames()).toContain('"ALICOM" MCHJ');
-    expect(await gridNames()).not.toContain('"ALICOM" MCHJ');
-    expect(await openKinds('310309859')).toEqual(['ROUTINE']);
-    const inps = await one(
-      pool,
-      `SELECT count(*)::int AS n FROM task t JOIN client c ON c.id = t.client_id JOIN routine_work_type w ON w.id = t.routine_type_id
-       WHERE c.stir = '310309859' AND w.report_type_id IS NOT NULL AND t.status <> 'CANCELLED'`,
-    );
-    expect(inps.n).toBe(1);
-  });
-
-  it('bir xil STIR ikkinchi bo\'lim faylida kelsa — bitta mijoz, ikkala bo\'limda, ma\'lumot bog\'liq', async () => {
-    await importWorksFile(worksFile(worksRow('305123456', 'SHERPROM STROY')));
-    expect(await flags('305123456')).toEqual({ in_reports: true, in_works: true });
-    expect(await worksNames()).toContain('SHERPROM STROY');
-    expect(await openKinds('305123456')).toEqual(['REPORT', 'ROUTINE']);
-
-    await tx((db) => importTable(db, [HEADER, reportRow('1', '310309859', '"ALICOM" MCHJ')], { actorId: leader, dryRun: false }));
     expect(await flags('310309859')).toEqual({ in_reports: true, in_works: true });
+    expect(await worksNames()).toContain('"ALICOM" MCHJ');
     expect(await gridNames()).toContain('"ALICOM" MCHJ');
-    // INPS endi hisobot vazifasi: ikki marta yaratilmaydi
+    expect(await openKinds('310309859')).toEqual(['REPORT', 'ROUTINE']);
+    // INPS — hisobot vazifasi (Hisobot topshirishdagi katak), doimiy ish sifatida takrorlanmaydi
     const inps = await q(
       pool,
       `SELECT t.kind FROM task t JOIN client c ON c.id = t.client_id
@@ -489,7 +472,23 @@ describe("Bo'limlar alohida yuklanadi (V25)", () => {
          AND t.status <> 'CANCELLED' AND (rt.code = 'INPS' OR w.report_type_id IS NOT NULL)`,
     );
     expect(inps).toHaveLength(1);
+  });
+
+  it("hisobot jadvalidagi mijoz «Бухгалтер ишлари» faylida kelsa — bitta mijoz, ikkala bo'limda, ma'lumot bog'liq", async () => {
+    await importWorksFile(worksFile(worksRow('305123456', 'SHERPROM STROY')));
+    expect(await flags('305123456')).toEqual({ in_reports: true, in_works: true });
+    expect(await worksNames()).toContain('SHERPROM STROY');
+    expect(await openKinds('305123456')).toEqual(['REPORT', 'ROUTINE']);
     expect((await one(pool, 'SELECT count(*)::int AS n FROM client')).n).toBe(2);
+  });
+
+  it("shartnomasi tugagan mijoz «Бухгалтер ишлари» faylida kelsa ikkala bo'limga qaytadi (Buxgalter ishlarida bo'lsa — hisobotda ham)", async () => {
+    const { id } = await one(pool, `SELECT id FROM client WHERE stir = '310309859'`);
+    expect((await L.post(`/api/clients/${id}/end-contract`)).status).toBe(200);
+    expect(await flags('310309859')).toEqual({ in_reports: false, in_works: false });
+    await importWorksFile(worksFile(worksRow('310309859', '"ALICOM" MCHJ')));
+    expect(await flags('310309859')).toEqual({ in_reports: true, in_works: true });
+    expect(await openKinds('310309859')).toEqual(['REPORT', 'ROUTINE']);
   });
 });
 

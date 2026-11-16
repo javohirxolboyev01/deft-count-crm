@@ -26,8 +26,8 @@ npm run dev                     # API: http://localhost:8080/api, Web: http://lo
 ```
 
 Demo ma'lumot yo'q: bo'sh bazada birinchi ishga tushishda `.env` dagi `BOOTSTRAP_LEADER_*` bilan rahbar yaratiladi.
-Keyin Xodimlar bo'limida buxgalterlarni qo'shing va fayllarni o'z sahifasidan yuklang ("Excel yuklash" tugmasi):
-«Бухгалтер ишлари» fayli — Buxgalter ishlari, hisobot jadvali — Hisobot topshirish, operator bazasi — Yangi mijozlar.
+Keyin Xodimlar bo'limida buxgalterlarni qo'shing va fayllarni «Mijozlar» bo'limidan yuklang ("Excel yuklash" tugmasi,
+fayl turi sarlavhadan aniqlanadi): hisobot jadvali va «Бухгалтер ишлари» fayli. Operator bazasi — Yangi mijozlar.
 
 ## Buyruqlar
 
@@ -91,8 +91,8 @@ scripts/backup.sh            kunlik zaxira
   (faolsizlantirilgan xodim darhol uziladi).
 - **Audit faqat qo'shiladi:** DB triggeri `UPDATE/DELETE/TRUNCATE` ni taqiqlaydi. Generator oyiga bitta umumiy yozuv
   qoldiradi (har vazifa uchun emas), qolgan barcha yozish amallari alohida yoziladi.
-- **Excel import:** har sahifa o'z faylini qabul qiladi (`/api/sheets/import?kind=REPORTS|WORKS`); fayl turi sarlavhadan
-  aniqlanadi va sahifaga mos kelmasa rad etiladi. Avval dry-run (ROLLBACK bilan haqiqiy mantiq), bir xil fayl (SHA-256)
+- **Excel import:** «Mijozlar» bo'limida bitta tugma (`/api/sheets/import`), fayl turi sarlavhadan aniqlanadi
+  (V51: hamma mijoz Hisobot topshirishda, «Бухгалтер ишлари» fayli — Buxgalter ishlarida ham). Avval dry-run (ROLLBACK bilan haqiqiy mantiq), bir xil fayl (SHA-256)
   qayta yozilmaydi. Avtomatik ajratib bo'lmagan qatorlar "Qo'lda tekshirish" ro'yxatiga tushadi.
   Google Sheets sinxron V19 da olib tashlangan (ishlatilmagan).
 
@@ -131,7 +131,7 @@ scripts/backup.sh            kunlik zaxira
 | 6.2–6.3 | ✅ | Seed AYNAN jadvaldan; testlar matritsani tekshiradi |
 | 6.4–6.7 | ✅ | Taymer, ranglar, undo, eslatma (muddat o'tsa bir marta) |
 | 6.8–6.11 | ✅ | |
-| 7. Sheets | ✅ (o'zgartirilgan) | Google sinxron olib tashlandi (rahbar qarori): faqat Excel import, har sahifada o'z fayli |
+| 7. Sheets | ✅ (o'zgartirilgan) | Google sinxron olib tashlandi (rahbar qarori): faqat Excel import, «Mijozlar» bo'limida (V51) |
 | 8. Yo'q narsalar | ✅ | Mijozga xabar yuborilmaydi; `.xlsx` yuklash faqat bir martalik import uchun |
 | 9. Zaxira/xavfsizlik | ✅ | HTTPS — nginx darajasida |
 

@@ -27,32 +27,27 @@ async function reportsFile() {
   return { name: 'hisobot oktyabr.xlsx', mimeType: XLSX, buffer: Buffer.from(await wb.xlsx.writeBuffer()) };
 }
 
-test('Excel import har sahifaning o\'zida; Google Sheets sahifasi yo\'q', async ({ page }) => {
+test("Excel import «Mijozlar» bo'limida (fayl turi o'zi aniqlanadi); Google Sheets sahifasi yo'q", async ({ page }) => {
   await login(page, 'rahbar');
   await expect(page.getByRole('link', { name: 'Google Sheets' })).toHaveCount(0);
   const file = await reportsFile();
 
-  // Buxgalter ishlari sahifasi hisobot jadvalini qabul qilmaydi
+  // «Mijozlar»: bitta "Excel yuklash" — hisobot jadvali ham, «Бухгалтер ишлари» fayli ham. Tekshirish -> yuklash
   await page.goto('/clients');
   await page.getByRole('button', { name: 'Excel yuklash' }).click();
-  let dlg = page.getByRole('dialog');
-  await expect(dlg.getByRole('heading', { name: /«Бухгалтер ишлари» faylini yuklash/ })).toBeVisible();
-  await dlg.locator('input[type=file]').setInputFiles(file);
-  await dlg.getByRole('button', { name: /Tekshirish/ }).click();
-  await expect(page.getByText("Bu hisobot topshirish jadvali. Uni «Hisobot topshirish» sahifasidan yuklang.")).toBeVisible();
-  await page.keyboard.press('Escape');
-
-  // Hisobot topshirish: tekshirish -> yuklash
-  await page.goto('/monthly');
-  await page.getByRole('button', { name: 'Excel yuklash' }).click();
-  dlg = page.getByRole('dialog');
+  const dlg = page.getByRole('dialog');
+  await expect(dlg.getByRole('heading', { name: 'Excel faylni yuklash' })).toBeVisible();
   await dlg.locator('input[type=file]').setInputFiles(file);
   await dlg.getByRole('button', { name: /Tekshirish/ }).click();
   await expect(dlg.getByText(/Ko'rib chiqish natijasi/)).toBeVisible();
-  if (SHOTS) await page.screenshot({ path: `${SHOTS}/6-monthly-import.png` });
+  if (SHOTS) await page.screenshot({ path: `${SHOTS}/6-clients-import.png` });
   await dlg.getByRole('button', { name: "CRM'ga yuklash" }).first().click();
   await expect(dlg.getByText(/CRM'ga yozildi/)).toBeVisible();
   await page.keyboard.press('Escape');
+  // Bazada yo'q korxonalar yangi mijoz bo'lib qo'shildi (Hisobot topshirishda)
+  await page.getByLabel('Qidiruv').fill('6010000');
+  await expect(page.getByRole('button', { name: 'E2E IMPORT MChJ — Korxona nomi' })).toBeVisible();
+  await page.goto('/monthly');
 
   // Soliq turi tanilmagan korxona ham jadvalda (boricha), nomi yonida ⚠ kamchilik belgisi.
   // Alohida "Qo'lda tekshirish" ro'yxati yo'q (V27, rahbar qarori) — hammasi shu belgida

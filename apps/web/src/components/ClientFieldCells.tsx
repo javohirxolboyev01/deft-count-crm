@@ -3,13 +3,15 @@ import { Copy, Eye, EyeOff } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
+import { Button } from '@/components/ui/button';
 import { DatePicker } from '@/components/ui/date-picker';
+import { Dialog } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Select, type SelectOption } from '@/components/ui/select';
 import { api } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { errorText } from '@/lib/errors';
-import type { TaxType } from '@/lib/types';
+import { type TaxType, taxTypeLabel } from '@/lib/types';
 
 /**
  * "Buxgalter ishlari" jadvalidagi mijoz maydonlari Excel'dagidek katak ichida tahrirlanadi.
@@ -28,6 +30,8 @@ export type ClientPatch = Partial<{
   bankKey: boolean | null;
   employeeCount: number | null;
   mehnatCheckedAt: string | null;
+  /** Buxgalter ishlarida ham (faqat rahbar, «Mijozlar» bo'limi) */
+  inWorks: boolean;
   mehnatLogin: string | null;
   mehnatPassword: string;
 }>;
@@ -137,6 +141,11 @@ export const parseIntCell = (max: number) => (raw: string) => {
   return n <= max ? n : undefined;
 };
 export const parseTextCell = (raw: string) => raw.trim() || null;
+/** STIR: 9 raqam (yoki YaTT JShShIR 14 raqam) — server qoidasi bilan bir xil; noto'g'ri bo'lsa saqlanmaydi */
+export const parseStir = (raw: string) => {
+  const d = raw.replace(/\D/g, '');
+  return d.length === 9 || d.length === 14 ? d : undefined;
+};
 /** Faqat raqamlar, mingliklar vergul bilan (jadvaldagi fmtMoney bilan bir xil: 1,500,000) */
 export const formatIntCell = (raw: string) => {
   const d = raw.replace(/\D/g, '').replace(/^0+(?=\d)/, '');
@@ -244,5 +253,29 @@ export function PasswordCell({ clientId, label, hasPassword, onSave }: { clientI
           </>
         ))}
     </div>
+  );
+}
+
+/**
+ * Soliq turini jadval katagidan o'zgartirish tasdig'i: joriy oy ochiq vazifalari shunga moslanadi.
+ * Birinchi marta tanlash (tur aniqlanmagan) tasdiqsiz — chaqiruvchi to'g'ridan-to'g'ri saqlaydi.
+ */
+export function TaxConfirm({ clientId, from, to, onClose }: { clientId: number; from: string; to: TaxType; onClose: () => void }) {
+  const { t } = useTranslation();
+  const save = useClientPatch(clientId);
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      title={t('clients.confirmTaxTitle')}
+      footer={
+        <>
+          <Button variant="outline" onClick={onClose}>{t('common.cancel')}</Button>
+          <Button loading={save.isPending} onClick={() => save.mutate({ taxType: to }, { onSuccess: onClose })}>{t('common.confirm')}</Button>
+        </>
+      }
+    >
+      <p className="text-sm">{t('clients.confirmTaxBody', { from: taxTypeLabel(from), to: taxTypeLabel(to), date: t('clients.thisMonth') })}</p>
+    </Dialog>
   );
 }

@@ -335,7 +335,8 @@ leadsRouter.post('/:id/convert', requireLeader, async (req, res) => {
   const clientId = await tx(async (db) => {
     const lead = await loadLead(db, id, u, true);
     if (lead.status === 'CONVERTED') throw new AppError(409, 'LEAD_CONVERTED', 'Firma allaqachon mijozga aylantirilgan');
-    const cid = await createClient(db, input, u.id);
+    // Bo'limlar «Mijozlar»dagi kabi (V51): Hisobot topshirishda har doim, Buxgalter ishlarida — rahbar tanlasa
+    const cid = await createClient(db, { ...input, inReports: true, inWorks: input.inWorks ?? false }, u.id);
     await db.query(
       `UPDATE lead SET status = 'CONVERTED', next_call_date = NULL, converted_client_id = $2,
          transferred_at = coalesce(transferred_at, now()) WHERE id = $1`,

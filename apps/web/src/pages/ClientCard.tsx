@@ -12,7 +12,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardHeader, PageHeader } from '@/components/ui/card';
 import { Dialog } from '@/components/ui/dialog';
 import { DatePicker } from '@/components/ui/date-picker';
-import { Field, Input, NumberInput, PhoneListInput, Textarea } from '@/components/ui/input';
+import { Field, Input, NameListInput, NumberInput, PhoneListInput, Textarea } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Empty, QueryState } from '@/components/ui/states';
 import { FormSkeleton, ListSkeleton } from '@/components/ui/skeleton';
@@ -158,7 +158,7 @@ export default function ClientCard() {
             <Input id="stir" required={!!q.data?.stir} inputMode="numeric" value={form.stir} disabled={ro} onChange={(e) => set({ stir: e.target.value })} />
           </Field>
           <Field label={t('clients.name')} htmlFor="name"><Input id="name" required value={form.name} disabled={ro} onChange={(e) => set({ name: e.target.value })} /></Field>
-          <Field label={t('clients.contact')} htmlFor="contact"><Input id="contact" value={form.contactPerson} onChange={(e) => set({ contactPerson: e.target.value })} /></Field>
+          <Field label={t('clients.contact')} htmlFor="contact"><NameListInput id="contact" value={form.contactPerson} onChange={(v) => set({ contactPerson: v })} addLabel={t('clients.addContact')} removeLabel={t('clients.removeContact')} /></Field>
           <Field label={t('clients.phone')} htmlFor="phone" hint={t('clients.phoneHint')}><PhoneListInput id="phone" value={form.phone} onChange={(v) => set({ phone: v })} addLabel={t('clients.addPhone')} removeLabel={t('clients.removePhone')} /></Field>
           <Field
             label={t('clients.taxType')}
@@ -280,7 +280,8 @@ export default function ClientCard() {
 
   return (
     <div>
-      <PageHeader crumbs={[{ to: '/clients', label: t('nav.clients') }]} title={q.data?.name ?? '…'} />
+      {/* Orqaga: rahbar — «Mijozlar», buxgalter — o'z jadvali (Oylik ishlar) */}
+      <PageHeader crumbs={[isLeader ? { to: '/clients', label: t('nav.clients') } : { to: '/works', label: t('nav.works') }]} title={q.data?.name ?? '…'} />
       {isLeader && <ClientReviewBanner kind="WORKS" clientId={Number(id)} needs={q.data ? clientNeeds(q.data, t) : []} />}
       <QueryState
         q={q}

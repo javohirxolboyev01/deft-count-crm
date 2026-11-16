@@ -87,7 +87,7 @@ describe('auth', () => {
 
     // Buxgalter o'chirilsa mijozlari buxgalterisiz qoladi
     const acc = await createUser('acc-del', 'ACCOUNTANT');
-    const c = await L.post('/api/clients', { stir: '309111222', name: 'DEL TEST', taxType: 'AOS', accountantId: acc });
+    const c = await L.post('/api/clients', { stir: '309111222', name: 'DEL TEST', taxType: 'AOS', accountantId: acc, inWorks: true });
     expect(c.status).toBe(201);
     expect((await L.del(`/api/users/${acc}`)).status).toBe(200);
     expect((await one(pool, 'SELECT accountant_id FROM client WHERE id = $1', [c.body.id])).accountant_id).toBeNull();
@@ -100,10 +100,10 @@ describe('auth', () => {
 
 describe('mijozlar', () => {
   it('rahbar yaratadi, soliq turi tarixi saqlanadi; buxgalter yarata olmaydi', async () => {
-    const r = await L.post('/api/clients', { stir: '305123456', name: 'SHERPROM STROY', taxType: 'AOS', accountantId: team.acc1 });
+    const r = await L.post('/api/clients', { stir: '305123456', name: 'SHERPROM STROY', taxType: 'AOS', accountantId: team.acc1, inWorks: true });
     expect(r.status).toBe(201);
     aosClient = r.body.id;
-    const r2 = await L.post('/api/clients', { stir: '306234567', name: 'INSAR MIX TRADE', taxType: 'QQS', accountantId: team.acc2 });
+    const r2 = await L.post('/api/clients', { stir: '306234567', name: 'INSAR MIX TRADE', taxType: 'QQS', accountantId: team.acc2, inWorks: true });
     qqsClient = r2.body.id;
     expect((await A1.post('/api/clients', { stir: '307345678', name: 'X', taxType: 'AOS' })).status).toBe(403);
     expect((await L.post('/api/clients', { stir: '305123456', name: 'dup', taxType: 'AOS' })).status).toBe(409);
@@ -180,7 +180,7 @@ describe('mijozlar', () => {
   });
 
   it('buxgalter keyin tayinlansa biriktirilmagan vazifalar unga o\'tadi (buxgalter vazifasi bo\'lmagan hisobot bo\'sh qoladi)', async () => {
-    const c = await L.post('/api/clients', { stir: '309333444', name: 'ORPHAN TEST', taxType: 'AOS' });
+    const c = await L.post('/api/clients', { stir: '309333444', name: 'ORPHAN TEST', taxType: 'AOS', inWorks: true });
     expect(c.status).toBe(201);
     const count = (where: string) =>
       one(pool, `SELECT count(*)::int AS n FROM task t LEFT JOIN report_type rt ON rt.id = t.report_type_id WHERE t.client_id = $1 AND ${where}`, [c.body.id]);
@@ -504,33 +504,38 @@ describe('oylik jadval', () => {
   });
 });
 
-describe("yangi mijoz sahifaning o'z bo'limiga qo'shiladi", () => {
-  it("Hisobot topshirishdan — faqat hisobotda; shu STIR Buxgalter ishlaridan — o'sha mijoz, ikkala bo'limda", async () => {
+describe("«Mijozlar» bo'limi (V51): hamma mijoz Hisobot topshirishda, Buxgalter ishlari — rahbar tanlovi", () => {
+  const sections = (id: number) => one(pool, 'SELECT in_reports, in_works FROM client WHERE id = $1', [id]);
+  const openRoutine = async (id: number) =>
+    (await one(pool, `SELECT count(*)::int AS n FROM task WHERE client_id = $1 AND kind = 'ROUTINE' AND status IN ('TODO', 'IN_PROGRESS', 'WAITING_CLIENT')`, [id])).n;
+
+  it("yangi mijoz: Hisobot topshirishda har doim, Buxgalter ishlarida faqat tanlansa; takror STIR — 409", async () => {
     const body = { stir: '402000001', name: 'BOLIM MCHJ', taxType: 'AOS', status: 'ACTIVE' };
-    const r = await L.post('/api/clients', { ...body, section: 'REPORTS' });
+    const r = await L.post('/api/clients', body);
     expect(r.status).toBe(201);
-    expect(r.body.joined).toBe(false);
+    expect(r.body).toMatchObject({ inReports: true, inWorks: false });
     const id = r.body.id;
-    expect(await one(pool, 'SELECT in_reports, in_works FROM client WHERE id = $1', [id])).toEqual({ in_reports: true, in_works: false });
-    const grid = await L.get('/api/monthly-grid?search=402000001');
-    expect(grid.body.rows.map((x: any) => x.clientId)).toEqual([id]);
+    expect(await sections(id)).toEqual({ in_reports: true, in_works: false });
+    expect((await L.get('/api/monthly-grid?search=402000001')).body.rows.map((x: any) => x.clientId)).toEqual([id]);
     expect((await L.get('/api/works?search=402000001')).body.items).toHaveLength(0);
     // Doimiy ish chiqmaydi, hisobot chiqadi
-    expect((await one(pool, `SELECT count(*)::int AS n FROM task WHERE client_id = $1 AND kind = 'ROUTINE' AND status <> 'CANCELLED'`, [id])).n).toBe(0);
+    expect(await openRoutine(id)).toBe(0);
     expect((await one(pool, `SELECT count(*)::int AS n FROM task WHERE client_id = $1 AND kind = 'REPORT'`, [id])).n).toBeGreaterThan(0);
 
-    // Shu bo'limda takror — 409; boshqa bo'limdan — o'sha mijoz qo'shiladi
-    expect((await L.post('/api/clients', { ...body, section: 'REPORTS' })).status).toBe(409);
-    const joined = await L.post('/api/clients', { ...body, name: 'BOSHQA NOM', section: 'WORKS' });
-    expect(joined.status).toBe(200);
-    expect(joined.body).toMatchObject({ id, joined: true, name: 'BOLIM MCHJ' });
-    expect(await one(pool, 'SELECT in_reports, in_works FROM client WHERE id = $1', [id])).toEqual({ in_reports: true, in_works: true });
-    expect((await one(pool, `SELECT count(*)::int AS n FROM task WHERE client_id = $1 AND kind = 'ROUTINE'`, [id])).n).toBeGreaterThan(0);
-    expect((await A1.post('/api/clients', { ...body, stir: '402000002', section: 'WORKS' })).status).toBe(403);
+    const dup = await L.post('/api/clients', { ...body, name: 'BOSHQA NOM', inWorks: true });
+    expect(dup.status).toBe(409);
+    expect(dup.body.details).toEqual({ clientId: id, ended: false });
+
+    const both = await L.post('/api/clients', { ...body, stir: '402000005', name: 'IKKALA MCHJ', inWorks: true });
+    expect(both.body).toMatchObject({ inReports: true, inWorks: true });
+    expect(await openRoutine(both.body.id)).toBeGreaterThan(0);
+    expect((await L.get('/api/works?search=402000005')).body.items).toHaveLength(1);
+    // Faqat rahbar
+    expect((await A1.post('/api/clients', { ...body, stir: '402000002' })).status).toBe(403);
   });
 
   it("YaTT: faqat applies_to_yatt hisobotlari chiqadi (boshlang'ich: AOS), qolgani X", async () => {
-    const r = await L.post('/api/clients', { stir: '402000004', name: 'YATT TADBIRKOR', taxType: 'YATT', status: 'ACTIVE', section: 'REPORTS' });
+    const r = await L.post('/api/clients', { stir: '402000004', name: 'YATT TADBIRKOR', taxType: 'YATT', status: 'ACTIVE' });
     expect(r.status).toBe(201);
     expect(r.body.taxType).toBe('YATT');
     const g = await L.get('/api/monthly-grid?search=402000004&taxType=YATT');
@@ -540,29 +545,78 @@ describe("yangi mijoz sahifaning o'z bo'limiga qo'shiladi", () => {
     for (const code of ['QQS', 'JSHDS', 'TOLOV_MANBAI', 'INPS']) expect(cells[cols[code]].state).toBe('X');
   });
 
-  it("shartnoma tugadi: rahbar mijozni olib tashlaydi — Hisobot topshirish va Buxgalter ishlaridan, ochiq vazifalar bekor, bajarilgani qoladi", async () => {
-    const body = { stir: '402000003', name: 'KETADI MCHJ', taxType: 'AOS', status: 'ACTIVE' };
-    const id = (await L.post('/api/clients', { ...body, section: 'REPORTS' })).body.id;
-    await L.post('/api/clients', { ...body, section: 'WORKS' });
-    expect((await one(pool, `SELECT count(*)::int AS n FROM task WHERE client_id = $1 AND kind = 'ROUTINE'`, [id])).n).toBeGreaterThan(0);
+  it("Buxgalter ishlari belgisi: yoqilsa joriy oy ishlari chiqadi, o'chirilsa ochiq ishlar bekor; faqat rahbar", async () => {
+    const id = (await L.post('/api/clients', { stir: '402000006', name: 'TOGGLE MCHJ', taxType: 'QQS', status: 'ACTIVE' })).body.id;
+    // Buxgalter — o'z mijozida ham (rahbar maydoni) yo'q
+    await L.patch(`/api/clients/${id}`, { accountantId: team.acc1 });
+    expect((await A1.patch(`/api/clients/${id}`, { inWorks: true })).status).toBe(403);
+
+    const on = await L.patch(`/api/clients/${id}`, { inWorks: true });
+    expect(on.status).toBe(200);
+    expect(on.body.inWorks).toBe(true);
+    expect(await openRoutine(id)).toBeGreaterThan(0);
+    expect((await L.get('/api/works?search=402000006')).body.items).toHaveLength(1);
+
+    expect((await L.patch(`/api/clients/${id}`, { inWorks: false })).body.inWorks).toBe(false);
+    expect(await openRoutine(id)).toBe(0);
+    expect((await L.get('/api/works?search=402000006')).body.items).toHaveLength(0);
+    expect((await L.get('/api/monthly-grid?search=402000006')).body.rows).toHaveLength(1); // hisobotda qoladi
+    const log = await q(pool, `SELECT before, after FROM audit_log WHERE client_id = $1 AND entity = 'client' AND action = 'UPDATE' AND after ? 'inWorks' ORDER BY id`, [id]);
+    expect(log.map((x: any) => x.after.inWorks)).toEqual([true, false]);
+  });
+
+  it("ro'yxat: section filtri va yorliqlar soni; buxgalterga faqat o'z mijozlari", async () => {
+    const r = await L.get('/api/clients?section=ALL&search=4020000&pageSize=100');
+    expect(r.status).toBe(200);
+    expect(r.body.items.every((c: any) => c.inReports)).toBe(true);
+    const n = r.body.sections;
+    expect(n.ALL).toBe(r.body.total);
+    expect(n.WORKS + n.REPORTS_ONLY).toBe(n.ALL);
+    const works = await L.get('/api/clients?section=WORKS&search=4020000&pageSize=100');
+    expect(works.body.items.map((c: any) => c.stir)).toContain('402000005');
+    expect(works.body.items.every((c: any) => c.inWorks)).toBe(true);
+    expect(works.body.total).toBe(n.WORKS);
+    const mine = await A1.get('/api/clients?section=ALL&search=4020000&pageSize=100');
+    expect(mine.body.items.map((c: any) => c.stir)).toEqual(['402000006']);
+    expect(mine.body.items[0]).not.toHaveProperty('monthlyFee', expect.anything());
+    // section'siz eski chaqiruvlar (vazifa dialogi, audit) o'zgarmaydi
+    expect((await L.get('/api/clients?search=402000001')).body).not.toHaveProperty('sections', expect.anything());
+  });
+
+  it("shartnoma tugadi: ikkala jadvaldan chiqadi, ochiq vazifalar bekor, bajarilgani qoladi; qaytarilsa — faqat hisobotga", async () => {
+    const body = { stir: '402000003', name: 'KETADI MCHJ', taxType: 'AOS', status: 'ACTIVE', inWorks: true };
+    const id = (await L.post('/api/clients', body)).body.id;
+    expect(await openRoutine(id)).toBeGreaterThan(0);
     const [done] = await q(pool, `SELECT id FROM task WHERE client_id = $1 AND kind = 'REPORT' ORDER BY id LIMIT 1`, [id]);
     await pool.query(`UPDATE task SET status = 'DONE', done_at = now() WHERE id = $1`, [done.id]);
 
-    // Faqat rahbar
-    expect((await A1.del(`/api/monthly-grid/clients/${id}`)).status).toBe(403);
-    const del = await L.del(`/api/monthly-grid/clients/${id}`);
-    expect(del.status).toBe(200);
-    expect(del.body.cancelled).toBeGreaterThan(0);
+    expect((await A1.post(`/api/clients/${id}/end-contract`)).status).toBe(403);
+    const end = await L.post(`/api/clients/${id}/end-contract`);
+    expect(end.status).toBe(200);
+    expect(end.body.cancelled).toBeGreaterThan(0);
     expect((await L.get('/api/monthly-grid?search=402000003')).body.rows).toHaveLength(0);
     expect((await L.get('/api/works?search=402000003')).body.items).toHaveLength(0);
-    // Mijoz o'chirilmaydi; ochiq vazifa qolmaydi, bajarilgani DONE
-    expect(await one(pool, 'SELECT in_reports, in_works FROM client WHERE id = $1', [id])).toEqual({ in_reports: false, in_works: false });
+    expect(await sections(id)).toEqual({ in_reports: false, in_works: false });
     expect((await one(pool, `SELECT count(*)::int AS n FROM task WHERE client_id = $1 AND status IN ('TODO', 'IN_PROGRESS', 'WAITING_CLIENT')`, [id])).n).toBe(0);
     expect((await one(pool, 'SELECT status FROM task WHERE id = $1', [done.id])).status).toBe('DONE');
     expect((await one(pool, `SELECT count(*)::int AS n FROM audit_log WHERE client_id = $1 AND action = 'CONTRACT_ENDED'`, [id])).n).toBe(1);
-    // Takror — 404; "Yangi mijoz"da shu STIR qayta kelsa o'sha bo'limga qaytadi
-    expect((await L.del(`/api/monthly-grid/clients/${id}`)).status).toBe(404);
-    expect((await L.post('/api/clients', { ...body, section: 'REPORTS' })).body).toMatchObject({ id, joined: true });
+    expect((await L.post(`/api/clients/${id}/end-contract`)).status).toBe(404);
+
+    // «Shartnoma tugagan» yorlig'ida; yangi mijoz sifatida qayta yaratilmaydi; Buxgalter ishlariga to'g'ridan-to'g'ri qo'yib bo'lmaydi
+    expect((await L.get('/api/clients?section=ENDED&search=402000003')).body.items.map((c: any) => c.id)).toEqual([id]);
+    expect((await L.post('/api/clients', body)).body.details).toEqual({ clientId: id, ended: true });
+    expect((await L.patch(`/api/clients/${id}`, { inWorks: true })).status).toBe(409);
+
+    expect((await A1.post(`/api/clients/${id}/restore`)).status).toBe(403);
+    const back = await L.post(`/api/clients/${id}/restore`);
+    expect(back.body).toMatchObject({ inReports: true, inWorks: false });
+    expect((await L.get('/api/monthly-grid?search=402000003')).body.rows).toHaveLength(1);
+    expect((await one(pool, `SELECT count(*)::int AS n FROM task WHERE client_id = $1 AND kind = 'REPORT' AND status = 'TODO'`, [id])).n).toBeGreaterThan(0);
+    expect((await L.post(`/api/clients/${id}/restore`)).status).toBe(404);
+  });
+
+  it("bazadagi qoida: Buxgalter ishlaridagi mijoz hisobotdan chiqarib bo'lmaydi", async () => {
+    await expect(pool.query(`UPDATE client SET in_reports = false WHERE stir = '402000005'`)).rejects.toThrow(/ck_client_works_in_reports/);
   });
 });
 
@@ -650,7 +704,7 @@ describe('shoshilinch vazifa va dashboard', () => {
     const before = (await L.get('/api/dashboard/clients')).body;
     const accBefore = (await L.get('/api/dashboard/accountants')).body.accountants.find((x: any) => x.id === team.acc1);
     // Biriktirilmagan mijoz + unga muddati o'tgan shoshilinch vazifa (acc1 bajaruvchi)
-    const c = await L.post('/api/clients', { stir: '309900001', name: 'BIRIKTIRILMAGAN MCHJ', taxType: 'AOS' });
+    const c = await L.post('/api/clients', { stir: '309900001', name: 'BIRIKTIRILMAGAN MCHJ', taxType: 'AOS', inWorks: true });
     expect(c.body.accountantId).toBeNull();
     await L.post('/api/tasks/urgent', { clientId: c.body.id, text: 'Eski ish', assigneeId: team.acc1, dueAt: new Date(Date.now() - 3600_000).toISOString() });
 

@@ -43,8 +43,8 @@ beforeAll(async () => {
   team = await seedTeam();
   operator = await createUser('op1', 'OPERATOR', 'Operator');
   const L = api(await token('leader'));
-  const c1 = await L.post('/api/clients', { stir: '401000001', name: 'ALFA MCHJ', taxType: 'AOS', accountantId: team.acc1 });
-  const c2 = await L.post('/api/clients', { stir: '401000002', name: 'BETA MCHJ', taxType: 'AOS', accountantId: team.acc2 });
+  const c1 = await L.post('/api/clients', { stir: '401000001', name: 'ALFA MCHJ', taxType: 'AOS', accountantId: team.acc1, inWorks: true });
+  const c2 = await L.post('/api/clients', { stir: '401000002', name: 'BETA MCHJ', taxType: 'AOS', accountantId: team.acc2, inWorks: true });
   await L.post('/api/tasks/urgent', { clientId: c1.body.id, text: 'Alfa uchun akt sverka', assigneeId: team.acc1 });
   await L.post('/api/tasks/urgent', { clientId: c2.body.id, text: 'Beta bank ko\'chirmasi', assigneeId: team.acc2 });
   await link(team.leader, 1001);

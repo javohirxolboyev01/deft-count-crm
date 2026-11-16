@@ -228,8 +228,8 @@ describe("Excel kabi ish katagi: PUT /api/works/cell (V31)", () => {
     who.put('/api/works/cell', { clientId: c, routineTypeId: ids[work], month: m, value });
 
   beforeAll(async () => {
-    // Nol hisobot: qoida bo'yicha doimiy ish chiqmaydi; faqat Buxgalter ishlarida (INPS doimiy ish)
-    c = await tx((db) => createClient(db, { stir: '309333444', name: 'NOL ISH MCHJ', taxType: 'AOS', status: 'ZERO_REPORT', accountantId: team.acc1, inReports: false, inWorks: true }, team.leader));
+    // Nol hisobot: qoida bo'yicha doimiy ish chiqmaydi (V51: Buxgalter ishlaridagi mijoz Hisobot topshirishda ham)
+    c = await tx((db) => createClient(db, { stir: '309333444', name: 'NOL ISH MCHJ', taxType: 'AOS', status: 'ZERO_REPORT', accountantId: team.acc1, inReports: true, inWorks: true }, team.leader));
   });
 
   it("holat to'smaydi: Nol hisobot mijozga ish 0 qilinadi, keyin 1, 0, X", async () => {
