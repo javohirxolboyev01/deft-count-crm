@@ -515,9 +515,9 @@ export function TgConversation({
             setAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 120);
             checkSeen();
           }}
-          className="tg-scroll relative h-full overflow-y-auto overscroll-contain"
+          className="tg-scroll relative h-full overflow-y-auto overflow-x-hidden overscroll-contain"
         >
-          <div className="mx-auto flex min-h-full max-w-[728px] flex-col justify-end px-2 pb-2 pt-2 sm:px-4">
+          <div className="mx-auto flex min-h-full max-w-[728px] flex-col justify-end px-2 pb-2 pt-2 [container-type:inline-size] sm:px-4">
             {history.isFetchingNextPage && <Pill>{t('common.loading')}</Pill>}
             {history.isLoading && <Pill>{t('common.loading')}</Pill>}
             {history.error && <Pill>{errorText(history.error, t)}</Pill>}

@@ -77,7 +77,8 @@ function fit(w: number | null, h: number | null, maxW = 420, maxH = 420, minW = 
   const W = w || 320;
   const H = h || 240;
   const s = Math.min(1, maxW / W, maxH / H);
-  return { width: Math.max(minW, Math.round(W * s)), aspectRatio: `${W} / ${H}` };
+  // Tor ekranda (telefon) chat enidan oshmasin: aks holda xabarlar maydoni yonga surilib qoladi (cqw — xabarlar ustuni eni)
+  return { width: `min(${Math.max(minW, Math.round(W * s))}px, calc(100cqw - 72px))`, aspectRatio: `${W} / ${H}` };
 }
 
 export function isBubbleless(m: TgMessage) {
@@ -237,7 +238,7 @@ function albumRows(items: TgMessage[]): TgMessage[][] {
 /** Albom: rasm/video bitta to'r bo'lib; har katak bosilsa ko'ruvchi ochiladi (shu albom ichida ←/→) */
 export function AlbumGrid({ peerId, items, overlay, radiusClass }: { peerId: string; items: TgMessage[]; overlay?: ReactNode; radiusClass?: string }) {
   return (
-    <div className={cn('relative flex w-[min(420px,calc(100vw-96px))] max-w-full flex-col gap-[2px] overflow-hidden', radiusClass)}>
+    <div className={cn('relative flex w-[min(420px,calc(100cqw-72px))] max-w-full flex-col gap-[2px] overflow-hidden', radiusClass)}>
       {albumRows(items).map((row, ri) => {
         const ratios = row.map(ratioOf);
         const sum = ratios.reduce((a, b) => a + b, 0);
