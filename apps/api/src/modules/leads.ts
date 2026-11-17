@@ -238,7 +238,7 @@ leadsRouter.post('/import', requireLeader, upload.single('file'), async (req, re
   res.json({ dryRun: dryRun === 'true', ...(dryRun === 'true' ? await dryTx(run) : await tx(run)) });
 });
 
-// ---------- Qo'lda qo'shish (rahbar va operator): boshqa saytlardan topilgan yangi firma ----------
+// ---------- Qo'lda qo'shish (rahbar va operator): boshqa saytlardan topilgan yangi firma, STIR'siz (id bo'yicha) ----------
 leadsRouter.post('/', async (req, res) => {
   const u = me(req);
   const body = parse(
@@ -246,19 +246,12 @@ leadsRouter.post('/', async (req, res) => {
       name: z.string().trim().min(1, 'Korxona nomini kiriting').max(300),
       director: z.string().trim().max(200).nullable().optional(),
       phone: z.string().trim().min(1, 'Telefon raqamini kiriting').max(200),
-      stir: z.string().trim().max(20).nullable().optional(),
     }),
     req.body,
   );
-  const stir = body.stir ? normalizeStir(body.stir) : null;
-  if (stir && !/^(\d{9}|\d{14})$/.test(stir)) throw new AppError(400, 'BAD_STIR', 'STIR 9 yoki 14 xonali bo\'lishi kerak');
   const phones = [...new Set(body.phone.split(',').map((p) => normalizePhone(p)).filter((p): p is string => !!p))];
   if (!phones.length || phones.some((p) => p.replace(/\D/g, '').length < 9)) throw new AppError(400, 'BAD_PHONE', 'Telefon raqami to\'liq emas');
   const lead = await tx(async (db) => {
-    if (stir) {
-      if (await one(db, 'SELECT 1 FROM client WHERE stir = $1', [stir])) throw new AppError(409, 'EXISTING_CLIENT', 'Bu STIR bilan firma allaqachon mijozimiz');
-      if (await one(db, 'SELECT 1 FROM lead WHERE stir = $1', [stir])) throw new AppError(409, 'EXISTING_LEAD', 'Bu STIR bilan firma nomzodlar ro\'yxatida bor');
-    }
     // Shu raqam bilan nomzod yoki mijoz bor bo'lsa — takror kiritilmaydi (operator bir firmaga ikki marta qo'ng'iroq qilmasin)
     const keys = phones.join(', ');
     const client = await one<{ name: string }>(db, `SELECT name FROM client WHERE deleted_at IS NULL AND fn_phone_keys(phone) && fn_phone_keys($1) LIMIT 1`, [keys]);
@@ -267,11 +260,11 @@ leadsRouter.post('/', async (req, res) => {
     if (dup) throw new AppError(409, 'EXISTING_LEAD', `Bu raqam bilan nomzod bor: ${dup.name}`);
     const ins = await one<{ id: number }>(
       db,
-      `INSERT INTO lead (stir, name, name_normalized, director, phone, source, imported_by)
-       VALUES ($1, $2, $3, $4, $5, 'MANUAL', $6) RETURNING id`,
-      [stir, body.name, normalizeName(body.name), body.director || null, phones.join(', '), u.id],
+      `INSERT INTO lead (name, name_normalized, director, phone, source, imported_by)
+       VALUES ($1, $2, $3, $4, 'MANUAL', $5) RETURNING id`,
+      [body.name, normalizeName(body.name), body.director || null, phones.join(', '), u.id],
     );
-    await audit(db, { actorId: u.id, entity: 'lead', entityId: ins!.id, action: 'CREATE', after: { name: body.name, director: body.director || null, phone: phones.join(', '), stir } });
+    await audit(db, { actorId: u.id, entity: 'lead', entityId: ins!.id, action: 'CREATE', after: { name: body.name, director: body.director || null, phone: phones.join(', ') } });
     return loadLead(db, ins!.id, u);
   });
   res.status(201).json(lead);

@@ -261,7 +261,7 @@ function LeadDialog({ id, onClose, onConvert }: { id: number | null; onClose: ()
 }
 
 // ---------- Nomzodni qo'lda qo'shish (rahbar va operator): boshqa saytlardan topilgan yangi firma ----------
-const EMPTY_NEW = { name: '', director: '', phone: '', stir: '' };
+const EMPTY_NEW = { name: '', director: '', phone: '' };
 
 function NewLeadDialog({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated: (id: number) => void }) {
   const { t } = useTranslation();
@@ -275,7 +275,7 @@ function NewLeadDialog({ open, onClose, onCreated }: { open: boolean; onClose: (
   const valid = !!form.name.trim() && phoneDigits.length >= 9;
   const save = useMutation({
     mutationFn: () =>
-      api.post<Lead>('/leads', { name: form.name.trim(), director: form.director.trim() || null, phone: form.phone, stir: form.stir.trim() || null }),
+      api.post<Lead>('/leads', { name: form.name.trim(), director: form.director.trim() || null, phone: form.phone }),
     onSuccess: (l) => {
       toast.success(t('leads.add.done'));
       void qc.invalidateQueries({ queryKey: ['leads'] });
@@ -314,9 +314,6 @@ function NewLeadDialog({ open, onClose, onCreated }: { open: boolean; onClose: (
         </Field>
         <Field label={`${t('leads.phone')} *`} htmlFor="nl-phone">
           <PhoneInput id="nl-phone" value={form.phone} onChange={(v) => setForm({ ...form, phone: v })} />
-        </Field>
-        <Field label={t('leads.add.stir')} htmlFor="nl-stir" hint={t('leads.add.stirHint')}>
-          <Input id="nl-stir" inputMode="numeric" maxLength={14} value={form.stir} onChange={(e) => setForm({ ...form, stir: e.target.value.replace(/\D/g, '') })} />
         </Field>
       </form>
     </Dialog>
