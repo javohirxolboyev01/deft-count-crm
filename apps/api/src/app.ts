@@ -22,7 +22,7 @@ import { serverRouter } from './modules/railway';
 import { settingsRouter } from './modules/settings';
 import { sheetsRouter } from './modules/sheets/routes';
 import { tasksRouter } from './modules/tasks';
-import { tgRouter } from './modules/tgRoutes';
+import { tgRouter, tgStreamRouter } from './modules/tgRoutes';
 import { transfersRouter } from './modules/taskTransfer';
 import { usersRouter } from './modules/users';
 import { worksRouter } from './modules/works';
@@ -76,6 +76,8 @@ export function createApp() {
   app.use('/api/server', staff, serverRouter);
   // Firma Telegram akkaunti (V53): rahbar va buxgalterlar; ulash/uzish — faqat rahbar (router ichida)
   app.use('/api/tg', staff, tgRouter);
+  // Imzoli havola (video/ovoz oqimi): <video> Authorization yubora olmaydi — tekshiruv routerning o'zida
+  app.use('/api/tg-stream', tgStreamRouter);
   app.get('/api/events', sseHandler);
 
   app.use('/api', (_req, res) => {

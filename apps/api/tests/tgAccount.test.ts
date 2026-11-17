@@ -1,6 +1,8 @@
+import jwt from 'jsonwebtoken';
+import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { config } from '../src/config';
-import { api, createUser, pool, q, resetDb, seedTeam, token } from './helpers';
+import { api, app, createUser, pool, q, resetDb, seedTeam, token } from './helpers';
 
 // Firma Telegram akkaunti (V53): Telegram'ga haqiqiy ulanishsiz tekshiriladigan qismlar — ruxsatlar va holatlar
 let L: ReturnType<typeof api>;
@@ -61,6 +63,51 @@ describe('Telegram akkaunti', () => {
     expect(c.status).toBe(409);
     expect(c.body.code).toBe('TG_LOGIN_EXPIRED');
     expect((await L.post('/api/tg/login/password', { password: 'x' })).body.code).toBe('TG_LOGIN_EXPIRED');
+  });
+
+  it('xabar amallari va jildlar: tekshiruv, ulanmaganda tushunarli xato, operatorga yopiq', async () => {
+    Object.assign(config.tgAccount, { apiId: 12345, apiHash: 'test-hash' });
+    // Noto'g'ri so'rovlar Telegram'gacha yetmaydi
+    expect((await A.patch('/api/tg/dialogs/123/messages/5').send({ text: '  ' })).status).toBe(400);
+    expect((await A.patch('/api/tg/dialogs/123/messages/abc').send({ text: 'x' })).status).toBe(400);
+    expect((await A.post('/api/tg/dialogs/123/messages/delete', { ids: [] })).status).toBe(400);
+    expect((await A.post('/api/tg/dialogs/123/forward', { ids: [1], to: ['1', '2', '3', '4', '5', '6'] })).status).toBe(400);
+    expect((await A.post('/api/tg/dialogs/123/translate', { ids: [1], to: 'de' })).status).toBe(400);
+    // To'g'ri so'rov, lekin akkaunt ulanmagan
+    for (const r of [
+      await A.get('/api/tg/folders'),
+      await A.get('/api/tg/dialogs/123/pinned'),
+      await A.patch('/api/tg/dialogs/123/messages/5').send({ text: 'yangi' }),
+      await A.post('/api/tg/dialogs/123/messages/delete', { ids: [5, 6], revoke: true }),
+      await A.post('/api/tg/dialogs/123/messages/5/pin', {}),
+      await A.post('/api/tg/dialogs/123/forward', { ids: [5], to: ['456'] }),
+      await A.post('/api/tg/dialogs/123/translate', { ids: [5], to: 'uz' }),
+    ]) {
+      expect(r.status).toBe(503);
+      expect(r.body.code).toBe('TG_NOT_CONNECTED');
+    }
+    expect((await O.get('/api/tg/folders')).status).toBe(403);
+    expect((await O.post('/api/tg/dialogs/123/messages/delete', { ids: [1] })).status).toBe(403);
+  });
+
+  it('video/ovoz oqimi: imzoli havola faqat xodimga, boshqa maqsadli token o\'tmaydi', async () => {
+    Object.assign(config.tgAccount, { apiId: 12345, apiHash: 'test-hash' });
+    const r = await A.get('/api/tg/dialogs/123/media/5/link');
+    expect(r.status).toBe(200);
+    expect(r.body.url).toMatch(/^\/api\/tg-stream\/[\w-]+\.[\w-]+\.[\w-]+$/);
+    expect((await O.get('/api/tg/dialogs/123/media/5/link')).status).toBe(403);
+    // Ulanmagan — tushunarli xato (token to'g'ri)
+    const s = await request(app).get(r.body.url).set('Range', 'bytes=0-');
+    expect(s.status).toBe(503);
+    expect(s.body.code).toBe('TG_NOT_CONNECTED');
+    // Soxta va oddiy kirish tokeni (audience boshqa) — yo'q
+    expect((await request(app).get('/api/tg-stream/abc')).status).toBe(401);
+    const accessLike = jwt.sign({ sub: '1', p: '123', m: 5 }, config.jwtAccessSecret, { expiresIn: 60 });
+    expect((await request(app).get(`/api/tg-stream/${accessLike}`)).status).toBe(401);
+    // Operator nomidan imzolangan havola — 403
+    const [op] = await q<{ id: number }>(pool, `SELECT id FROM app_user WHERE role = 'OPERATOR' LIMIT 1`);
+    const opTok = jwt.sign({ sub: String(op.id), p: '123', m: 5 }, config.jwtAccessSecret, { expiresIn: 60, audience: 'tg-stream' });
+    expect((await request(app).get(`/api/tg-stream/${opTok}`)).status).toBe(403);
   });
 
   it('chat id va xabar tekshiruvi', async () => {

@@ -13,7 +13,7 @@ import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
 import { errorText } from '@/lib/errors';
 import { tgKeys } from '@/lib/tgCache';
-import type { TgDialog, TgStatus } from '@/lib/types';
+import type { TgDialog, TgFolder, TgStatus } from '@/lib/types';
 
 /**
  * «Telegram» bo'limi (V53): firma Telegram akkaunti CRM ichida, Telegram Web ko'rinishida.
@@ -446,6 +446,8 @@ function Messenger({ status }: { status: TgStatus }) {
     // SSE asosiy kanal; polling — zaxira (ro'yxat serverda xotirada, Telegram'ga so'rov ketmaydi)
     refetchInterval: 60_000,
   });
+  // Jildlar kamdan-kam o'zgaradi: SSE (`tg-folders`) yangilaydi
+  const folders = useQuery({ queryKey: tgKeys.folders, queryFn: () => api.get<TgFolder[]>('/tg/folders'), staleTime: 10 * 60_000 });
   const logout = useMutation({
     mutationFn: () => api.post('/tg/logout'),
     onSuccess: () => {
@@ -467,11 +469,12 @@ function Messenger({ status }: { status: TgStatus }) {
   return (
     <div className={FULL}>
       <aside
-        className={cn('h-full w-full shrink-0 md:w-[340px] lg:w-[400px]', active && 'max-md:hidden')}
+        className={cn('h-full w-full shrink-0 md:w-[340px] lg:w-auto', active && 'max-md:hidden')}
         style={{ borderRight: '1px solid var(--tg-border)' }}
       >
         <TgChatList
           dialogs={dialogs.data ?? []}
+          folders={folders.data ?? []}
           loading={dialogs.isLoading}
           error={dialogs.error ? errorText(dialogs.error, t) : null}
           active={active}
@@ -483,7 +486,7 @@ function Messenger({ status }: { status: TgStatus }) {
       </aside>
       <section className={cn('h-full min-w-0 grow', !active && 'max-md:hidden')}>
         {active ? (
-          <TgConversation key={active} peerId={active} dialog={dialog} onBack={() => open(null)} />
+          <TgConversation key={active} peerId={active} dialog={dialog} dialogs={dialogs.data ?? []} onBack={() => open(null)} onOpenChat={open} />
         ) : (
           <div className="tg-chat-bg relative flex h-full items-center justify-center">
             <span className="relative rounded-full px-3 py-1 text-[15px] font-medium text-on-brand backdrop-blur-sm" style={{ background: 'var(--tg-pill)' }}>

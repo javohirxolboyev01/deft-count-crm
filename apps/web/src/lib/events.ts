@@ -94,6 +94,13 @@ export function useServerEvents(
         if (connectedOnce) void qc.invalidateQueries({ queryKey: ['tg'] });
         connectedOnce = true;
       });
+      es.addEventListener('tg-folders', () => {
+        void qc.invalidateQueries({ queryKey: tgKeys.folders });
+      });
+      es.addEventListener('tg-pinned', (e) => {
+        const { peerId } = JSON.parse((e as MessageEvent).data) as { peerId: string };
+        void qc.invalidateQueries({ queryKey: tgKeys.pinned(peerId) });
+      });
       es.addEventListener('tg-status', () => {
         void qc.invalidateQueries({ queryKey: ['tg'] });
       });

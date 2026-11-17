@@ -1,15 +1,44 @@
-import { Archive, ArrowLeft, LogOut, Menu, Moon, Pin, Search, Sun, VolumeX, X } from 'lucide-react';
+import {
+  Archive,
+  ArrowLeft,
+  Bot,
+  Briefcase,
+  CheckCheck,
+  Folder,
+  Heart,
+  Home,
+  LogOut,
+  Megaphone,
+  Menu,
+  MessageCircle,
+  MessagesSquare,
+  Moon,
+  Pin,
+  Search,
+  Star,
+  Sun,
+  User,
+  Users,
+  VolumeX,
+  X,
+  type LucideIcon,
+} from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { cn } from '@/lib/cn';
 import { useTgTyping } from '@/lib/tgCache';
+import { folderBadge, folderDialogs } from '@/lib/tgFolders';
 import { useTheme } from '@/lib/theme';
-import type { TgDialog, TgStatus } from '@/lib/types';
+import type { TgDialog, TgFolder, TgStatus } from '@/lib/types';
 import { TgAvatar, TgTicks, TypingDots, isOnline, listTime, previewOf } from './tgUi';
 
-/** Telegram'ning chap ustuni: menyu, qidiruv, «Arxivlangan chatlar» qatori va chatlar ro'yxati */
+/**
+ * Telegram'ning chap ustuni: jildlar (katta ekranda chapda alohida ustun — Telegram Desktop kabi, kichik ekranda
+ * qidiruv ostida yorliqlar — Telegram Web/telefon kabi), menyu, qidiruv, «Arxiv» qatori va chatlar ro'yxati
+ */
 export function TgChatList({
   dialogs,
+  folders,
   loading,
   error,
   active,
@@ -19,6 +48,7 @@ export function TgChatList({
   onDisconnect,
 }: {
   dialogs: TgDialog[];
+  folders: TgFolder[];
   loading: boolean;
   error: string | null;
   active: string | null;
@@ -31,12 +61,22 @@ export function TgChatList({
   const [search, setSearch] = useState('');
   const [archive, setArchive] = useState(false);
   const [menu, setMenu] = useState(false);
+  // null — «Barcha chatlar»
+  const [folderId, setFolderId] = useState<number | null>(null);
   const isTyping = useTgTyping();
 
+  // Jild telefondan o'chirilgan bo'lsa — «Barcha chatlar»
+  const folder = folders.find((f) => f.id === folderId) ?? null;
+  const curId = folder?.id ?? null;
   const archived = useMemo(() => dialogs.filter((d) => d.archived), [dialogs]);
+  const main = useMemo(() => dialogs.filter((d) => !d.archived), [dialogs]);
+  const byFolder = useMemo(() => new Map(folders.map((f) => [f.id, folderDialogs(dialogs, f, active)])), [dialogs, folders, active]);
   const list = useMemo(() => {
     const s = search.trim().toLowerCase();
-    if (!s) return dialogs.filter((d) => d.archived === archive);
+    if (!s) {
+      if (archive) return archived;
+      return folder ? (byFolder.get(folder.id) ?? []) : main;
+    }
     const digits = s.replace(/\D/g, '');
     return dialogs.filter(
       (d) =>
@@ -44,12 +84,56 @@ export function TgChatList({
         (!!d.username && d.username.toLowerCase().includes(s.replace(/^@/, ''))) ||
         (digits.length >= 3 && !!d.phone && d.phone.replace(/\D/g, '').includes(digits)),
     );
-  }, [dialogs, search, archive]);
+  }, [dialogs, search, archive, archived, main, folder, byFolder]);
   const archivedUnread = archived.reduce((n, d) => n + d.unread, 0);
   const searching = !!search.trim();
 
+  const tabs = useMemo(
+    () => [
+      { id: null as number | null, title: t('tg.allChats'), icon: MessagesSquare, badge: folderBadge(main) },
+      ...folders.map((f) => ({ id: f.id as number | null, title: f.title, icon: folderIcon(f), badge: folderBadge(byFolder.get(f.id) ?? []) })),
+    ],
+    [folders, byFolder, main, t],
+  );
+  const pickFolder = (id: number | null) => {
+    setFolderId(id);
+    setArchive(false);
+    setSearch('');
+  };
+  const hasFolders = folders.length > 0;
+
   return (
-    <div className="flex h-full flex-col" style={{ background: 'var(--tg-bg)' }}>
+    <div className="flex h-full">
+      {/* Katta ekran: jildlar chapda alohida ustun (Telegram Desktop) */}
+      {hasFolders && (
+        <nav className="tg-scroll hidden w-[84px] shrink-0 flex-col items-stretch gap-1 overflow-y-auto py-2 lg:flex" style={{ background: 'var(--tg-rail)', borderRight: '1px solid var(--tg-border)' }} aria-label={t('tg.folders')}>
+          {tabs.map((f) => {
+            const on = !archive && f.id === curId;
+            return (
+              <button
+                key={f.id ?? 'all'}
+                type="button"
+                onClick={() => pickFolder(f.id)}
+                title={f.title}
+                aria-current={on ? 'true' : undefined}
+                className={cn('flex cursor-pointer flex-col items-center gap-1 px-1 py-2 transition-colors hover:bg-[var(--tg-hover)]', on ? 'text-[var(--tg-primary)]' : 'text-[var(--tg-secondary)]')}
+              >
+                <span className="relative">
+                  <f.icon className="h-8 w-8" strokeWidth={on ? 2.2 : 1.8} />
+                  {f.badge.n > 0 && (
+                    <span className="absolute -right-3 -top-2">
+                      <Badge n={f.badge.n} muted={f.badge.muted} ring />
+                    </span>
+                  )}
+                </span>
+                <span className={cn('line-clamp-2 w-full break-words text-center text-[13px] leading-tight', on ? 'font-semibold' : 'font-medium text-[var(--tg-text)]')}>{f.title}</span>
+              </button>
+            );
+          })}
+        </nav>
+      )}
+
+      <div className="flex h-full min-w-0 grow flex-col lg:w-[400px] lg:grow-0" style={{ background: 'var(--tg-bg)' }}>
       <div className="flex h-14 shrink-0 items-center gap-2 px-3">
         {archive && !searching ? (
           <>
@@ -98,12 +182,35 @@ export function TgChatList({
         )}
       </div>
 
+      {/* Kichik/o'rta ekran: jildlar yorliq ko'rinishida (Telegram Web) */}
+      {hasFolders && !archive && !searching && (
+        <div className="tg-scroll flex shrink-0 gap-1 overflow-x-auto px-2 lg:hidden" style={{ boxShadow: 'inset 0 -1px 0 var(--tg-border)' }} role="tablist" aria-label={t('tg.folders')}>
+          {tabs.map((f) => {
+            const on = f.id === curId;
+            return (
+              <button
+                key={f.id ?? 'all'}
+                type="button"
+                role="tab"
+                aria-selected={on}
+                onClick={() => pickFolder(f.id)}
+                className={cn('relative flex shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-t-lg px-3 pb-2.5 pt-2 text-[15px] font-medium transition-colors hover:bg-[var(--tg-hover)]', on ? 'text-[var(--tg-primary)]' : 'text-[var(--tg-secondary)]')}
+              >
+                {f.title}
+                {f.badge.n > 0 && <Badge n={f.badge.n} muted={!on || f.badge.muted} small />}
+                {on && <span className="absolute inset-x-2 bottom-0 h-[3px] rounded-t-full bg-[var(--tg-primary)]" />}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       <div className="tg-scroll min-h-0 grow overflow-y-auto overscroll-contain px-2 pb-2">
         {loading && <div className="py-10 text-center text-sm text-[var(--tg-secondary)]">{t('common.loading')}</div>}
         {error && <div className="px-4 py-6 text-center text-sm text-[var(--tg-danger)]">{error}</div>}
 
         {/* Telegram kabi: arxiv — ro'yxat tepasidagi alohida qator */}
-        {!archive && !searching && archived.length > 0 && (
+        {!archive && !searching && !folder && archived.length > 0 && (
           <button
             type="button"
             onClick={() => setArchive(true)}
@@ -119,14 +226,26 @@ export function TgChatList({
         )}
 
         {!loading && !error && !list.length && (
-          <div className="py-10 text-center text-[15px] text-[var(--tg-secondary)]">{t(searching ? 'tg.notFound' : 'tg.empty')}</div>
+          <div className="py-10 text-center text-[15px] text-[var(--tg-secondary)]">{t(searching ? 'tg.notFound' : folder ? 'tg.folderEmpty' : 'tg.empty')}</div>
         )}
         {list.map((d) => (
           <ChatRow key={d.peerId} d={d} active={d.peerId === active} typing={isTyping(d.peerId)} onPick={() => onPick(d.peerId)} />
         ))}
       </div>
+      </div>
     </div>
   );
+}
+
+/** Telegram jild belgisi (emoji) → ikonka; belgi tanlanmagan bo'lsa — jild turidan (Telegram kabi) */
+const EMOTICON_ICONS: Record<string, LucideIcon> = {
+  '💬': MessageCircle, '✅': CheckCheck, '👤': User, '👥': Users, '📢': Megaphone, '🤖': Bot, '⭐': Star, '⭐️': Star,
+  '🏠': Home, '💼': Briefcase, '❤': Heart, '❤️': Heart,
+};
+
+function folderIcon(f: TgFolder): LucideIcon {
+  if (f.emoticon && EMOTICON_ICONS[f.emoticon]) return EMOTICON_ICONS[f.emoticon];
+  return Folder;
 }
 
 function ChatRow({ d, active, typing, onPick }: { d: TgDialog; active: boolean; typing: boolean; onPick: () => void }) {
@@ -162,7 +281,7 @@ function ChatRow({ d, active, typing, onPick }: { d: TgDialog; active: boolean; 
               </span>
             ) : (
               <>
-                {last?.out && !last.service && <span className={active ? 'text-on-brand' : 'text-[var(--tg-text)]'}>{t('tg.you')}: </span>}
+                {last?.out && !last.service && d.kind !== 'CHANNEL' && <span className={active ? 'text-on-brand' : 'text-[var(--tg-text)]'}>{t('tg.you')}: </span>}
                 {pv.prefix}
                 {pv.text}
               </>
@@ -179,15 +298,19 @@ function ChatRow({ d, active, typing, onPick }: { d: TgDialog; active: boolean; 
   );
 }
 
-function Badge({ n, muted, inverted }: { n: number; muted?: boolean; inverted?: boolean }) {
+function Badge({ n, muted, inverted, ring, small }: { n: number; muted?: boolean; inverted?: boolean; ring?: boolean; small?: boolean }) {
   return (
     <span
-      className="min-w-[22px] shrink-0 rounded-full px-[7px] text-center text-[13px] font-medium leading-[22px]"
-      style={
-        inverted
+      className={cn(
+        'block shrink-0 rounded-full text-center font-medium',
+        small ? 'min-w-[20px] px-[6px] text-xs leading-[20px]' : 'min-w-[22px] px-[7px] text-[13px] leading-[22px]',
+      )}
+      style={{
+        ...(inverted
           ? { background: '#fff', color: 'var(--tg-primary)' }
-          : { background: muted ? 'var(--tg-badge-muted)' : 'var(--tg-badge)', color: '#fff' }
-      }
+          : { background: muted ? 'var(--tg-badge-muted)' : 'var(--tg-badge)', color: '#fff' }),
+        ...(ring ? { boxShadow: '0 0 0 2px var(--tg-rail)' } : {}),
+      }}
     >
       {n > 9999 ? `${Math.floor(n / 1000)}K` : n}
     </span>

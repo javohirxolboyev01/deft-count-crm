@@ -447,6 +447,7 @@
   --tg-hover: rgb(var(--c-gray-100));
   --tg-border: rgb(var(--c-gray-200));
   --tg-search: rgb(var(--c-page));
+  --tg-rail: rgb(var(--c-page)); /* jildlar ustuni (Telegram Desktop'dagi chap panel) */
   --tg-in: #ffffff;
   --tg-out: #37a0ad;
   --tg-out-text: #ffffff;

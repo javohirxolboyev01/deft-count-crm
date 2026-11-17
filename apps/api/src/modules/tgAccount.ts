@@ -93,9 +93,15 @@ function tgError(e: any): AppError {
     USER_IS_BLOCKED: [403, 'TG_WRITE_FORBIDDEN'],
     YOU_BLOCKED_USER: [403, 'TG_WRITE_FORBIDDEN'],
     CHAT_ADMIN_REQUIRED: [403, 'TG_WRITE_FORBIDDEN'],
+    MESSAGE_ID_INVALID: [404, 'NOT_FOUND'],
+    MESSAGE_AUTHOR_REQUIRED: [403, 'TG_EDIT_FORBIDDEN'],
+    MESSAGE_EDIT_TIME_EXPIRED: [403, 'TG_EDIT_FORBIDDEN'],
+    MESSAGE_DELETE_FORBIDDEN: [403, 'TG_DELETE_FORBIDDEN'],
+    CHAT_FORWARDS_RESTRICTED: [403, 'TG_FORWARD_FORBIDDEN'],
   };
   const k = known[m];
   if (k) return new AppError(k[0], k[1], m);
+  if (/^(TRANSLATE|TO_LANG|PREMIUM)/.test(m)) return new AppError(400, 'TG_TRANSLATE_FAILED', m);
   console.error('Telegram xatosi:', m || e);
   return new AppError(502, 'TG_ERROR', 'Telegram bilan bog\'lanishda xato', { error: m || null });
 }
@@ -287,6 +293,7 @@ async function activate(c: TelegramClient, info: NonNullable<typeof account>) {
   c.addEventHandler(onNewMessage, new NewMessage({}));
   c.addEventHandler(onRawUpdate, new Raw({}));
   await reloadDialogs().catch((e) => console.error('Telegram chatlari yuklanmadi:', e?.errorMessage ?? e));
+  await reloadFolders().catch((e) => console.error('Telegram jildlari yuklanmadi:', e?.errorMessage ?? e));
   // Xavfsizlik to'ri: hodisa o'tkazib yuborilsa ham ro'yxat 10 daqiqada bir to'liq yangilanadi
   fullReloadTimer = setInterval(() => scheduleReload(0), 10 * 60_000);
   broadcast('tg-status', {});
@@ -295,7 +302,8 @@ async function activate(c: TelegramClient, info: NonNullable<typeof account>) {
 async function deactivate() {
   if (fullReloadTimer) clearInterval(fullReloadTimer);
   if (reloadTimer) clearTimeout(reloadTimer);
-  fullReloadTimer = reloadTimer = null;
+  if (foldersTimer) clearTimeout(foldersTimer);
+  fullReloadTimer = reloadTimer = foldersTimer = null;
   client?.removeEventHandler(onNewMessage, new NewMessage({}));
   client?.removeEventHandler(onRawUpdate, new Raw({}));
   client = null;
@@ -303,6 +311,8 @@ async function deactivate() {
   dialogs.clear();
   pageCache.clear();
   photoCache.clear();
+  pinnedCache.clear();
+  folders = null;
 }
 
 /** Ilova ishga tushayotganda so'rov kelsa — ulanish tugashini kutadi */
@@ -357,7 +367,11 @@ export type MediaKind = 'PHOTO' | 'VIDEO' | 'VIDEO_NOTE' | 'VOICE' | 'AUDIO' | '
 export interface DialogDto {
   peerId: string;
   title: string;
-  kind: 'USER' | 'BOT' | 'GROUP';
+  kind: 'USER' | 'BOT' | 'GROUP' | 'CHANNEL';
+  /** Telegram kontaktlarida bor (jildlar: «Kontaktlar» / «Kontakt emaslar») */
+  contact: boolean;
+  /** Xabar yozish mumkin (kanalda — faqat egasi/admin) */
+  canWrite: boolean;
   phone: string | null;
   username: string | null;
   unread: number;
@@ -411,12 +425,26 @@ function entityTitle(e: any): string {
   return e.title ?? '';
 }
 
+/** Yozish huquqi: kanalga faqat egasi/admin; guruhda taqiq bo'lsa yo'q (Telegram baribir tekshiradi — bu faqat UI uchun) */
+function canWriteTo(e: any, broadcastChannel: boolean): boolean {
+  if (!e) return false;
+  if (e instanceof Api.User) return !e.deleted;
+  if (e instanceof Api.Chat) return !e.left && !e.deactivated && !e.defaultBannedRights?.sendMessages;
+  if (e instanceof Api.Channel) {
+    if (e.creator) return true;
+    if (broadcastChannel) return !!e.adminRights?.postMessages;
+    return !e.left && (!!e.adminRights || !(e.bannedRights?.sendMessages || e.defaultBannedRights?.sendMessages));
+  }
+  return false;
+}
+
 function toDialog(d: any): CachedDialog | null {
-  // Kanallar (faqat o'qiladigan) chiqmaydi — mijozlar bilan yozishma shaxsiy chat va guruhlarda
-  if (d.isChannel && !d.isGroup) return null;
+  // Qaror (2026-11-17, rahbar talabi «Telegram'dagi hamma narsa»): kanallar ham chiqadi — Telegram jildlari
+  // («Kanallar») to'liq ishlashi uchun. Kanalga yozish faqat egasi/adminga (canWrite)
   if (!d.id || !d.inputEntity) return null;
   const e = d.entity;
   const isUser = e instanceof Api.User;
+  const isBroadcast = !!d.isChannel && !d.isGroup;
   const mute = d.dialog?.notifySettings?.muteUntil ?? 0;
   return {
     input: d.inputEntity,
@@ -424,7 +452,9 @@ function toDialog(d: any): CachedDialog | null {
     dto: {
       peerId: d.id.toString(),
       title: entityTitle(e) || d.title || d.name || '',
-      kind: isUser ? (e.bot ? 'BOT' : 'USER') : 'GROUP',
+      kind: isUser ? (e.bot ? 'BOT' : 'USER') : isBroadcast ? 'CHANNEL' : 'GROUP',
+      contact: isUser && (!!e.contact || !!e.self),
+      canWrite: canWriteTo(e, isBroadcast),
       phone: isUser && e.phone ? `+${e.phone}` : null,
       username: e?.username ?? null,
       unread: d.unreadCount ?? 0,
@@ -665,6 +695,13 @@ function toMessage(m: any, isGroup: boolean, sentBy: string | null = null): Mess
   };
 }
 
+/** Guruhda har xabarda yozgan odam ko'rsatiladi; shaxsiy chat va kanalda — yo'q */
+function isGroupPeer(peerId: string, peer?: Api.TypeInputPeer) {
+  const kind = dialogs.get(peerId)?.dto.kind;
+  if (kind) return kind === 'GROUP';
+  return !!peer && !(peer instanceof Api.InputPeerUser || peer instanceof Api.InputPeerSelf);
+}
+
 async function sentByMap(peerId: string, ids: number[]) {
   if (!ids.length) return new Map<number, string>();
   const rows = await q<{ message_id: number; full_name: string }>(
@@ -692,7 +729,7 @@ export async function listMessages(peerId: string, before: number | undefined, l
   if (hit && Date.now() - hit.at < PAGE_TTL_MS) return hit.data;
   const peer = await inputPeer(peerId);
   const msgs = await tgCall(() => c.getMessages(peer, { limit, offsetId: before ?? 0 }));
-  const isGroup = dialogs.get(peerId)?.dto.kind === 'GROUP' || !(peer instanceof Api.InputPeerUser || peer instanceof Api.InputPeerSelf);
+  const isGroup = isGroupPeer(peerId, peer);
   const by = await sentByMap(peerId, msgs.map((m) => m.id));
   const items = msgs.map((m) => toMessage(m, isGroup, by.get(m.id) ?? null)).reverse();
   const data = { items, hasMore: msgs.length === limit };
@@ -748,6 +785,244 @@ export async function downloadMedia(peerId: string, msgId: number, maxBytes: num
   const buf = await tgCall(() => c.downloadMedia(m, {}));
   if (!buf || typeof buf === 'string') return null;
   return { buf: buf as Buffer, info };
+}
+
+// ---------------- Video/ovoz oqimi (Range): Telegram kabi darhol o'ynaydi, oldinga-orqaga sakrash mumkin ----------------
+// Qaror: butun fayl yuklanmaydi — brauzer so'ragan bo'lakni Telegram'dan 512 KB'lik qismlarda olib to'g'ridan-to'g'ri beradi.
+// Serverda hech narsa saqlanmaydi; bitta video uchun brauzer ko'p so'rov yuboradi, shuning uchun xabar ma'lumoti qisqa keshlanadi.
+
+const STREAM_CHUNK = 512 * 1024;
+const mediaMsgCache = new Map<string, { at: number; m: any; peer: Api.TypeInputPeer }>();
+
+async function mediaMessage(peerId: string, msgId: number) {
+  const key = `${peerId}:${msgId}`;
+  const hit = mediaMsgCache.get(key);
+  if (hit && Date.now() - hit.at < 10 * 60_000) return hit;
+  const c = requireConnected();
+  const peer = await inputPeer(peerId);
+  const [m] = await tgCall(() => c.getMessages(peer, { ids: msgId }));
+  const doc: any = (m?.media as any)?.document;
+  if (!m || !(doc instanceof Api.Document)) throw new AppError(404, 'NOT_FOUND', 'Fayl topilmadi');
+  const v = { at: Date.now(), m, peer };
+  mediaMsgCache.set(key, v);
+  if (mediaMsgCache.size > 300) mediaMsgCache.delete(mediaMsgCache.keys().next().value!);
+  return v;
+}
+
+export async function streamInfo(peerId: string, msgId: number) {
+  const { m } = await mediaMessage(peerId, msgId);
+  const doc = (m.media as any).document as Api.Document;
+  const info = mediaDto(m);
+  return { size: Number(doc.size), mime: doc.mimeType || 'application/octet-stream', fileName: info?.fileName ?? null };
+}
+
+/** [start, end] oralig'i (ikkalasi ham kiradi) */
+export async function* streamRange(peerId: string, msgId: number, start: number, end: number): AsyncGenerator<Buffer> {
+  const c = requireConnected();
+  const { m, peer } = await mediaMessage(peerId, msgId);
+  const aligned = Math.floor(start / STREAM_CHUNK) * STREAM_CHUNK;
+  let pos = aligned;
+  const iter = c.iterDownload({
+    file: m.media,
+    offset: bigInt(aligned),
+    requestSize: STREAM_CHUNK,
+    limit: Math.ceil((end + 1 - aligned) / STREAM_CHUNK),
+    // Fayl havolasi eskirsa (FILE_REFERENCE_EXPIRED) GramJS xabarni qayta olib davom etadi
+    msgData: [peer, msgId],
+  });
+  for await (const chunk of iter as AsyncIterable<Buffer>) {
+    const from = Math.max(0, start - pos);
+    const to = Math.min(chunk.length, end + 1 - pos);
+    if (to > from) yield chunk.subarray(from, to);
+    pos += chunk.length;
+    if (pos > end) break;
+  }
+}
+
+// ---------------- Xabar amallari: tahrirlash, o'chirish, qadash, uzatish, tarjima ----------------
+// Hammasi Telegram'ning o'zida bajariladi (CRM'da saqlanmaydi). O'chirish va tahrirlash audit'ga yoziladi —
+// bitta akkauntdan bir nechta xodim ishlaydi, kim nima qilgani ko'rinsin (matnning o'zi yozilmaydi).
+
+export async function editText(peerId: string, msgId: number, text: string, userId: number) {
+  const c = requireConnected();
+  const peer = await inputPeer(peerId);
+  let m: any;
+  try {
+    m = await c.editMessage(peer, { message: msgId, text, parseMode: false as any, linkPreview: true });
+  } catch (e: any) {
+    // Matn o'zgarmagan — xato emas, joriy xabar qaytadi
+    if (e?.errorMessage !== 'MESSAGE_NOT_MODIFIED') throw tgError(e);
+    [m] = await tgCall(() => c.getMessages(peer, { ids: msgId }));
+    if (!m) throw new AppError(404, 'NOT_FOUND', 'Xabar topilmadi');
+  }
+  const by = await sentByMap(peerId, [m.id]);
+  const dto = toMessage(m, isGroupPeer(peerId, peer), by.get(m.id) ?? null);
+  const d = dialogs.get(peerId);
+  if (d && d.dto.lastMessage?.id === m.id) d.dto.lastMessage = lastOf(m);
+  dropPageCache(peerId);
+  pinnedCache.delete(peerId);
+  await audit(pool, { actorId: userId, entity: 'tg_message', entityId: `${peerId}:${msgId}`, action: 'TG_EDIT' });
+  broadcast('tg-edit', { peerId, message: dto });
+  signalDialogs(peerId);
+  return dto;
+}
+
+/** revoke — suhbatdoshda ham o'chadi (kanal/superguruhda har doim hammada) */
+export async function deleteMsgs(peerId: string, ids: number[], revoke: boolean, userId: number) {
+  const c = requireConnected();
+  const peer = await inputPeer(peerId);
+  await tgCall(() => c.deleteMessages(peer, ids, { revoke }));
+  dropPageCache(peerId);
+  pinnedCache.delete(peerId);
+  await audit(pool, { actorId: userId, entity: 'tg_message', entityId: peerId, action: 'TG_DELETE', after: { ids, revoke } });
+  // O'zimiz o'chirganda Telegram bu ulanishga hodisa yubormaydi: xodimlarga o'zimiz xabar beramiz
+  broadcast('tg-delete', { peerId, ids });
+  const d = dialogs.get(peerId);
+  if (d?.dto.lastMessage && ids.includes(d.dto.lastMessage.id)) scheduleReload(500);
+  return { ok: true };
+}
+
+// Qadalgan xabarlar: chat ochilganda bitta so'rov, qisqa kesh (bir nechta xodim bir chatni ochsa Telegram'ga bitta so'rov)
+const pinnedCache = new Map<string, { at: number; items: MessageDto[] }>();
+const PINNED_TTL_MS = 60_000;
+
+/** Eng yangisi birinchi */
+export async function listPinned(peerId: string) {
+  const c = requireConnected();
+  const hit = pinnedCache.get(peerId);
+  if (hit && Date.now() - hit.at < PINNED_TTL_MS) return hit.items;
+  const peer = await inputPeer(peerId);
+  const msgs = await tgCall(() => c.getMessages(peer, { filter: new Api.InputMessagesFilterPinned(), limit: 50 }));
+  const by = await sentByMap(peerId, msgs.map((m) => m.id));
+  const group = isGroupPeer(peerId, peer);
+  const items = msgs.filter((m) => m instanceof Api.Message).map((m) => toMessage(m, group, by.get(m.id) ?? null));
+  pinnedCache.set(peerId, { at: Date.now(), items });
+  return items;
+}
+
+export async function setPinned(peerId: string, msgId: number, unpin: boolean, userId: number) {
+  const c = requireConnected();
+  const peer = await inputPeer(peerId);
+  // Qadash ovozsiz (Telegram'dagi «xabar berilmasin»): mijozga keraksiz bildirishnoma bormasin
+  if (unpin) await tgCall(() => c.unpinMessage(peer, msgId));
+  else await tgCall(() => c.pinMessage(peer, msgId, { notify: false }));
+  pinnedCache.delete(peerId);
+  dropPageCache(peerId);
+  await audit(pool, { actorId: userId, entity: 'tg_message', entityId: `${peerId}:${msgId}`, action: unpin ? 'TG_UNPIN' : 'TG_PIN' });
+  broadcast('tg-pinned', { peerId });
+  return { ok: true };
+}
+
+/** Uzatish: bir nechta xabar, ko'pi bilan bir necha chatga (ommaviy yuborish emas — route cheklaydi) */
+export async function forward(fromPeerId: string, ids: number[], toPeerIds: string[], userId: number) {
+  const c = requireConnected();
+  const from = await inputPeer(fromPeerId);
+  const name = (await one<{ full_name: string }>(pool, 'SELECT full_name FROM app_user WHERE id = $1', [userId]))?.full_name ?? null;
+  for (const to of toPeerIds) {
+    const peer = await inputPeer(to);
+    const sent = (await tgCall(() => c.forwardMessages(peer, { messages: ids, fromPeer: from }))).filter(Boolean);
+    if (sent.length) {
+      await pool.query(
+        `INSERT INTO tg_sent_message (peer_id, message_id, user_id) SELECT $1, unnest($2::bigint[]), $3 ON CONFLICT DO NOTHING`,
+        [to, sent.map((m) => m.id), userId],
+      );
+      dropPageCache(to);
+      touchDialog(to, sent.at(-1));
+      const group = isGroupPeer(to, peer);
+      for (const m of sent) broadcast('tg-message', { peerId: to, message: toMessage(m, group, name) });
+      signalDialogs(to);
+    }
+  }
+  return { ok: true };
+}
+
+/** Telegram'ning o'z tarjimoni (Telegram ilovasidagi «Tarjima qilish» bilan bir xil) */
+export async function translate(peerId: string, ids: number[], toLang: string) {
+  const c = requireConnected();
+  const peer = await inputPeer(peerId);
+  const r = await tgCall(() => c.invoke(new Api.messages.TranslateText({ peer, id: ids, toLang })));
+  return r.result.map((x) => ({ text: x.text, entities: entitiesOf(x) }));
+}
+
+// ---------------- Jildlar (Telegram papkalari) ----------------
+
+export interface FolderDto {
+  id: number;
+  title: string;
+  emoticon: string | null;
+  contacts: boolean;
+  nonContacts: boolean;
+  groups: boolean;
+  broadcasts: boolean;
+  bots: boolean;
+  excludeMuted: boolean;
+  excludeRead: boolean;
+  excludeArchived: boolean;
+  /** Har doim kiradigan / hech qachon kirmaydigan / jild ichida qadalgan chatlar (tartib bilan) */
+  include: string[];
+  exclude: string[];
+  pinned: string[];
+}
+
+// Jildlar xotirada: ulanganda bir marta, keyin Telegram hodisasi kelganda (jild telefondan o'zgartirilsa) qayta olinadi.
+// Qaror: qaysi chat qaysi jildga kirishi brauzerda hisoblanadi — o'qilmaganlar/ovoz o'zgarganda ro'yxat qayta yuborilmaydi
+let folders: FolderDto[] | null = null;
+
+function peerIdsOf(list: Api.TypeInputPeer[]): string[] {
+  const out: string[] = [];
+  for (const p of list ?? []) {
+    try {
+      if (p instanceof Api.InputPeerSelf) {
+        if (account?.tgUserId) out.push(account.tgUserId);
+      } else out.push(utils.getPeerId(p));
+    } catch {
+      /* noma'lum peer — o'tkaziladi */
+    }
+  }
+  return out;
+}
+
+async function reloadFolders() {
+  const c = requireConnected();
+  const r: any = await c.invoke(new Api.messages.GetDialogFilters());
+  const list: any[] = Array.isArray(r) ? r : (r?.filters ?? []);
+  folders = list
+    .filter((f) => f instanceof Api.DialogFilter || f instanceof Api.DialogFilterChatlist)
+    .map((f) => {
+      const full = f instanceof Api.DialogFilter;
+      return {
+        id: f.id,
+        title: typeof f.title === 'string' ? f.title : (f.title?.text ?? ''),
+        emoticon: f.emoticon ?? null,
+        contacts: full && !!f.contacts,
+        nonContacts: full && !!f.nonContacts,
+        groups: full && !!f.groups,
+        broadcasts: full && !!f.broadcasts,
+        bots: full && !!f.bots,
+        excludeMuted: full && !!f.excludeMuted,
+        excludeRead: full && !!f.excludeRead,
+        excludeArchived: full && !!f.excludeArchived,
+        include: peerIdsOf(f.includePeers),
+        exclude: full ? peerIdsOf(f.excludePeers) : [],
+        pinned: peerIdsOf(f.pinnedPeers),
+      };
+    });
+  broadcast('tg-folders', {});
+}
+
+let foldersTimer: NodeJS.Timeout | null = null;
+function scheduleFolders() {
+  if (!client || foldersTimer) return;
+  foldersTimer = setTimeout(() => {
+    foldersTimer = null;
+    reloadFolders().catch((e) => console.error('Telegram jildlari yangilanmadi:', e?.errorMessage ?? e));
+  }, 1000);
+}
+
+export async function listFolders() {
+  requireConnected();
+  if (!folders) await tgCall(() => reloadFolders());
+  return folders ?? [];
 }
 
 // ---------------- Profil rasmlari ----------------
@@ -844,6 +1119,14 @@ async function onRawUpdate(u: Api.TypeUpdate) {
     d.dto.unread = u.stillUnreadCount ?? 0;
     d.dto.readInboxMaxId = u.maxId;
     signalDialogs(peerId!);
+  } else if (u instanceof Api.UpdatePinnedMessages || u instanceof Api.UpdatePinnedChannelMessages) {
+    // Telefondan yoki boshqa qurilmadan qadaldi/olindi
+    const peerId = peerOf(u);
+    if (!peerId) return;
+    pinnedCache.delete(peerId);
+    broadcast('tg-pinned', { peerId });
+  } else if (u instanceof Api.UpdateDialogFilter || u instanceof Api.UpdateDialogFilters || u instanceof Api.UpdateDialogFilterOrder) {
+    scheduleFolders();
   } else if (u instanceof Api.UpdateDialogPinned || u instanceof Api.UpdatePinnedDialogs || u instanceof Api.UpdateFolderPeers || u instanceof Api.UpdateNotifySettings) {
     scheduleReload();
   } else if (u instanceof Api.UpdateUserStatus) {

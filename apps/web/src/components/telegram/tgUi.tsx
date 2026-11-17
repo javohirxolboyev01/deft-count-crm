@@ -203,6 +203,7 @@ export function isOnline(s: TgUserStatus | null | undefined) {
 export function statusText(d: TgDialog, t: T) {
   if (d.kind === 'BOT') return t('tg.bot');
   if (d.kind === 'GROUP') return d.members ? t('tg.members', { count: d.members }) : t('tg.group');
+  if (d.kind === 'CHANNEL') return d.members ? t('tg.subscribers', { count: d.members }) : t('tg.channel');
   const s = d.status;
   if (!s) return t('tg.lastSeenLongAgo');
   if (isOnline(s)) return t('tg.online');

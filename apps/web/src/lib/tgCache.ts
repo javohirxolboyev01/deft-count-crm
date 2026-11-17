@@ -18,7 +18,9 @@ export const tgKeys = {
   status: ['tg', 'status'] as const,
   dialogs: ['tg', 'dialogs'] as const,
   unread: ['tg', 'unread'] as const,
+  folders: ['tg', 'folders'] as const,
   messages: (peerId: string) => ['tg', 'messages', peerId] as const,
+  pinned: (peerId: string) => ['tg', 'pinned', peerId] as const,
 };
 
 /** pages[0] — eng yangi sahifa, keyingilari eskiroq. Har sahifa ichida eskidan yangiga */

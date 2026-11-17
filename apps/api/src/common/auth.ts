@@ -34,11 +34,15 @@ export async function userFromToken(token: string | undefined): Promise<AuthUser
   } catch {
     throw new AppError(401, 'TOKEN_INVALID', 'Token yaroqsiz yoki muddati tugagan');
   }
-  // Har so'rovda bazadan: faolsizlantirilgan xodim darhol uziladi, rol o'zgarishi darhol kuchga kiradi
+  return activeUser(Number(payload.sub));
+}
+
+/** Har so'rovda bazadan: faolsizlantirilgan xodim darhol uziladi, rol o'zgarishi darhol kuchga kiradi */
+export async function activeUser(id: number): Promise<AuthUser> {
   const u = await one<AuthUser & { active: boolean }>(
     pool,
     `SELECT id, role, full_name AS "fullName", language, active FROM app_user WHERE id = $1`,
-    [Number(payload.sub)],
+    [id],
   );
   if (!u || !u.active) throw new AppError(401, 'TOKEN_INVALID', 'Foydalanuvchi faol emas');
   return { id: u.id, role: u.role, fullName: u.fullName, language: u.language };

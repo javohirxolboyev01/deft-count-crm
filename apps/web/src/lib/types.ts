@@ -658,7 +658,11 @@ export interface TgStatus {
 export interface TgDialog {
   peerId: string;
   title: string;
-  kind: 'USER' | 'BOT' | 'GROUP';
+  kind: 'USER' | 'BOT' | 'GROUP' | 'CHANNEL';
+  /** Telegram kontaktlarida bor */
+  contact: boolean;
+  /** Xabar yozish mumkin (kanalda — faqat egasi/admin) */
+  canWrite: boolean;
   phone: string | null;
   username: string | null;
   unread: number;
@@ -674,6 +678,24 @@ export interface TgDialog {
   status: TgUserStatus | null;
   members: number | null;
   lastMessage: { id: number; out: boolean; text: string; mediaKind: TgMediaKind | null; date: number; service: boolean } | null;
+}
+
+/** Telegram jildi (papka): qaysi chat kirishi brauzerda hisoblanadi (lib/tgFolders.ts) */
+export interface TgFolder {
+  id: number;
+  title: string;
+  emoticon: string | null;
+  contacts: boolean;
+  nonContacts: boolean;
+  groups: boolean;
+  broadcasts: boolean;
+  bots: boolean;
+  excludeMuted: boolean;
+  excludeRead: boolean;
+  excludeArchived: boolean;
+  include: string[];
+  exclude: string[];
+  pinned: string[];
 }
 
 export interface TgUserStatus {
