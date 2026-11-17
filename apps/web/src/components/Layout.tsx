@@ -178,12 +178,12 @@ export function Layout() {
     { to: '/monthly', label: t('nav.monthly'), icon: Sheet, staff: true },
     { to: '/client-issues', label: t('nav.issues'), icon: AlertTriangle, leader: true },
     ...(isLeader || isOperator ? [{ to: '/leads', label: t('nav.leads'), icon: PhoneCall }] : []),
-    { to: '/telegram', label: t('nav.telegram'), icon: Send, staff: true, badge: tgUnread },
     { to: '/calls', label: t('nav.calls'), icon: Phone },
     { to: '/audit', label: t('nav.audit'), icon: History, leader: true },
     { to: '/users', label: t('nav.users'), icon: Users, leader: true },
     { to: '/server', label: t('nav.server'), icon: Server, leader: true },
     { to: '/settings', label: t('nav.settings'), icon: Settings, leader: true },
+    { to: '/telegram', label: t('nav.telegram'), icon: Send, staff: true, badge: tgUnread },
   ].filter((n) => (!n.leader || isLeader) && (!n.staff || !isOperator)) as { to: string; label: string; icon: typeof Send; badge?: number }[];
 
   const toggleSidebar = () =>
