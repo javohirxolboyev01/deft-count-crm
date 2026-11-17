@@ -195,6 +195,18 @@ describe('nomzodni qo\'lda qo\'shish', () => {
     expect((await O.post('/api/leads', { name: '', phone: '901112299' })).status).toBe(400);
     expect((await A1.post('/api/leads', { name: 'X', phone: '901112299' })).status).toBe(403);
   });
+  it('rahbar nomzodni o\'chiradi (qo\'ng\'iroqlari bilan); operator va buxgalter o\'chira olmaydi', async () => {
+    const r = await O.post('/api/leads', { name: 'O\'CHIRILADIGAN', phone: '90 555 44 33' });
+    await O.post(`/api/leads/${r.body.id}/calls`, { result: 'NO_ANSWER', nextCallDate: tomorrow() });
+    expect((await O.del(`/api/leads/${r.body.id}`)).status).toBe(403);
+    expect((await A1.del(`/api/leads/${r.body.id}`)).status).toBe(403);
+    expect((await L.del(`/api/leads/${r.body.id}`)).status).toBe(204);
+    expect((await L.get(`/api/leads/${r.body.id}`)).status).toBe(404);
+    expect(await one(pool, 'SELECT 1 FROM lead_call WHERE lead_id = $1', [r.body.id])).toBeFalsy();
+    expect((await L.del(`/api/leads/${r.body.id}`)).status).toBe(404);
+    // O'chirilgach shu raqam bilan qayta qo'shsa bo'ladi
+    expect((await O.post('/api/leads', { name: 'QAYTA', phone: '905554433' })).status).toBe(201);
+  });
 });
 
 describe('normalizePhone', () => {

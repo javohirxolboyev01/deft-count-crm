@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CalendarClock, Handshake, Phone, PhoneCall, PhoneForwarded, Plus, Search, Upload } from 'lucide-react';
+import { CalendarClock, Handshake, Phone, PhoneCall, PhoneForwarded, Plus, Search, Trash2, Upload } from 'lucide-react';
 import { DateTime } from 'luxon';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -11,7 +11,7 @@ import { NewClientDialog } from '@/components/NewClientDialog';
 import { Button } from '@/components/ui/button';
 import { Badge, Card, CardHeader, PageHeader, Stat } from '@/components/ui/card';
 import { DatePicker } from '@/components/ui/date-picker';
-import { Dialog } from '@/components/ui/dialog';
+import { ConfirmDialog, Dialog } from '@/components/ui/dialog';
 import { Field, Input, PhoneInput, Textarea } from '@/components/ui/input';
 import { Pagination } from '@/components/ui/pagination';
 import { Empty, QueryState } from '@/components/ui/states';
@@ -424,6 +424,17 @@ export default function Leads() {
   const [importOpen, setImportOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [converting, setConverting] = useState<Lead | null>(null);
+  const [removing, setRemoving] = useState<Lead | null>(null);
+  const qc = useQueryClient();
+  const remove = useMutation({
+    mutationFn: (l: Lead) => api.del(`/leads/${l.id}`),
+    onSuccess: () => {
+      toast.success(t('leads.remove.done'));
+      setRemoving(null);
+      void qc.invalidateQueries({ queryKey: ['leads'] });
+    },
+    onError: (e) => toast.error(errorText(e, t)),
+  });
   // Bildirishnomadan (?lead=ID) to'g'ridan-to'g'ri firma oynasi ochiladi
   const openId = params.get('lead') ? Number(params.get('lead')) : null;
   const openLead = (id: number | null) => setParams(id ? { lead: String(id) } : {}, { replace: true });
@@ -503,7 +514,7 @@ export default function Leads() {
       </div>
 
       <Card>
-        <QueryState q={q} skeleton={<TableSkeleton rows={10} cols={8} />}>
+        <QueryState q={q} skeleton={<TableSkeleton rows={10} cols={isLeader ? 9 : 8} />}>
           {!q.data?.items.length ? <Empty /> : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -517,6 +528,7 @@ export default function Leads() {
                     <th className="px-3 py-2.5">{t('leads.col.next')}</th>
                     <th className="px-3 py-2.5">{t('leads.col.comment')}</th>
                     <th className="px-3 py-2.5 text-right">{t('leads.col.calls')}</th>
+                    {isLeader && <th className="px-3 py-2.5 text-right">{t('leads.col.actions')}</th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -533,6 +545,25 @@ export default function Leads() {
                       <td className="px-3 py-2.5"><NextCall date={l.nextCallDate} /></td>
                       <td className="max-w-[260px] px-3 py-2.5 text-xs text-gray-600"><span className="line-clamp-2">{l.lastComment || '—'}</span></td>
                       <td className="px-3 py-2.5 text-right tabular-nums">{l.callCount}</td>
+                      {isLeader && (
+                        <td className="px-3 py-1.5 text-right">
+                          {l.status !== 'CONVERTED' && (
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-8 w-8 rounded-lg border border-gray-200 bg-white shadow-card hover:bg-red-50 dark:hover:bg-white/5"
+                              aria-label={t('common.delete')}
+                              title={t('common.delete')}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setRemoving(l);
+                              }}
+                            >
+                              <Trash2 className="h-4 w-4 text-red-600" />
+                            </Button>
+                          )}
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>
@@ -555,6 +586,14 @@ export default function Leads() {
       />
       <ImportDialog open={importOpen} onClose={() => setImportOpen(false)} />
       <NewLeadDialog open={addOpen} onClose={() => setAddOpen(false)} onCreated={openLead} />
+      <ConfirmDialog
+        open={!!removing}
+        onClose={() => setRemoving(null)}
+        onConfirm={() => removing && remove.mutate(removing)}
+        loading={remove.isPending}
+        title={t('leads.remove.title', { name: removing?.name ?? '' })}
+        text={t('leads.remove.text')}
+      />
       <NewClientDialog open={!!converting} lead={converting} onClose={() => setConverting(null)} />
     </div>
   );

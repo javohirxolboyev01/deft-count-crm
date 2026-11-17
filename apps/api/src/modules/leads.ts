@@ -317,6 +317,25 @@ leadsRouter.patch('/:id', async (req, res) => {
   res.json(lead);
 });
 
+/** Rahbar: nomzodni butunlay o'chiradi (qo'ng'iroq natijalari CASCADE bilan). Mijozga aylantirilgani o'chirilmaydi — mijoz tarixi */
+leadsRouter.delete('/:id', requireLeader, async (req, res) => {
+  const u = me(req);
+  const id = parse(z.coerce.number().int(), req.params.id);
+  await tx(async (db) => {
+    const lead = await loadLead(db, id, u, true);
+    if (lead.status === 'CONVERTED') throw new AppError(409, 'LEAD_CONVERTED', 'Firma allaqachon mijozga aylantirilgan');
+    await db.query('DELETE FROM lead WHERE id = $1', [id]);
+    await audit(db, {
+      actorId: u.id,
+      entity: 'lead',
+      entityId: id,
+      action: 'DELETE',
+      before: { name: lead.name, stir: lead.stir, director: lead.director, phone: lead.phone, status: lead.status, callCount: lead.callCount },
+    });
+  });
+  res.status(204).end();
+});
+
 /** Qo'ng'iroq natijasi: lead holati shu natijaga o'tadi. "Mijoz bo'ldi" (WON) — rahbarlarga xabar, operatordan yopiladi */
 leadsRouter.post('/:id/calls', async (req, res) => {
   const u = me(req);
