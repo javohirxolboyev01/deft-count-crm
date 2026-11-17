@@ -8,6 +8,7 @@ import { audit } from '../common/audit';
 import { AppError } from '../common/errors';
 import { decryptSecret, encryptSecret } from '../common/secretBox';
 import { config } from '../config';
+import type { PoolClient } from 'pg';
 import { one, pool, q } from '../db';
 import { emitToUsers } from './events';
 
@@ -73,6 +74,9 @@ function newClient(session = '') {
 
 // ---------------- Xatolar ----------------
 
+/** Sessiya Telegram'da yaroqsiz: qayta ulash kerak (AUTH_KEY_DUPLICATED — bir sessiya ikki joydan bir vaqtda ishlatilgan) */
+const REVOKED_RE = /AUTH_KEY_UNREGISTERED|AUTH_KEY_DUPLICATED|SESSION_REVOKED|USER_DEACTIVATED/;
+
 /** Telegram xatosini tushunarli AppError'ga. FLOOD_WAIT — necha soniya kutish kerakligi bilan */
 function tgError(e: any): AppError {
   if (e instanceof AppError) return e;
@@ -99,6 +103,10 @@ function tgError(e: any): AppError {
     MESSAGE_DELETE_FORBIDDEN: [403, 'TG_DELETE_FORBIDDEN'],
     CHAT_FORWARDS_RESTRICTED: [403, 'TG_FORWARD_FORBIDDEN'],
   };
+  if (REVOKED_RE.test(m)) {
+    void onSessionRevoked(m);
+    return new AppError(503, 'TG_NOT_CONNECTED', 'Telegram sessiyasi bekor qilindi — akkauntni qayta ulang', { error: m });
+  }
   const k = known[m];
   if (k) return new AppError(k[0], k[1], m);
   if (/^(TRANSLATE|TO_LANG|PREMIUM)/.test(m)) return new AppError(400, 'TG_TRANSLATE_FAILED', m);
@@ -228,6 +236,7 @@ async function finishLogin(userId: number) {
     [encryptSecret(session), info.phone, info.tgUserId, info.name, userId],
   );
   await audit(pool, { actorId: userId, entity: 'tg_account', entityId: 1, action: 'TG_CONNECT', after: { phone: info.phone, name: info.name } });
+  await acquireTgLock();
   await activate(c, info);
 }
 
@@ -257,13 +266,15 @@ export function startTgAccount() {
       'SELECT session_enc, phone, display_name, tg_user_id::text FROM tg_account WHERE id = 1',
     );
     if (!row) return;
+    // Deploy paytida eski server hali ulangan bo'lishi mumkin: u to'xtab, qulfni bo'shatguncha kutiladi
+    if (!(await acquireTgLock())) return;
     const c = newClient(decryptSecret(row.session_enc));
     try {
       await withTimeout(c.connect().then(() => c.getMe()), 60_000);
     } catch (e: any) {
       await c.destroy().catch(() => undefined);
       // Sessiya Telegram'da o'chirilgan (telefondan «qurilmani chiqarish»): qayta ulash kerak
-      if (/AUTH_KEY_UNREGISTERED|SESSION_REVOKED|USER_DEACTIVATED|AUTH_KEY_DUPLICATED/.test(e?.errorMessage ?? '')) {
+      if (REVOKED_RE.test(e?.errorMessage ?? '')) {
         await pool.query('DELETE FROM tg_account');
         await audit(pool, { actorId: null, entity: 'tg_account', entityId: 1, action: 'TG_SESSION_REVOKED', before: { phone: row.phone } });
         console.warn('Telegram sessiyasi bekor qilingan — rahbar qayta ulashi kerak');
@@ -278,10 +289,77 @@ export function startTgAccount() {
 }
 
 export async function stopTgAccount() {
+  stopping = true;
   clearPending();
   const c = client;
   await deactivate();
   await c?.disconnect().catch(() => undefined);
+  await c?.destroy().catch(() => undefined);
+  releaseTgLock();
+}
+
+// ---------------- Bitta server — bitta ulanish ----------------
+// Muammo (2026-11-17): Railway deploy paytida yangi server eski server to'xtamasdan Telegram'ga ulanardi — bitta sessiya
+// ikki joydan bir vaqtda ishlatilgani uchun Telegram uni AUTH_KEY_DUPLICATED bilan bekor qildi (rahbar qayta ulashi kerak bo'ldi).
+// Qaror: Postgres advisory lock. Telegram'ga faqat qulfni ushlagan server ulanadi; eski server to'xtaganda (yoki o'lganda —
+// ulanish yopiladi) qulf bo'shaydi va yangisi ulanadi.
+const TG_LOCK_KEY = 72_530_053;
+let lockClient: PoolClient | null = null;
+let stopping = false;
+
+async function acquireTgLock(): Promise<boolean> {
+  if (lockClient) return true;
+  let waited = false;
+  while (!stopping) {
+    const cl = await pool.connect();
+    const ok = await cl
+      .query<{ ok: boolean }>('SELECT pg_try_advisory_lock($1) AS ok', [TG_LOCK_KEY])
+      .then((r) => r.rows[0]?.ok === true)
+      .catch(() => false);
+    if (ok) {
+      // Baza ulanishi uzilsa qulf ham yo'qoladi: qayta olinmaguncha xato yozib qo'yiladi
+      cl.on('error', (e) => console.error('Telegram qulfi ulanishi uzildi:', e.message));
+      lockClient = cl;
+      if (waited) console.log('Telegram qulfi olindi — ulanmoqda');
+      return true;
+    }
+    cl.release();
+    if (!waited) console.log('Telegram boshqa serverda ulangan (deploy) — u to\'xtashini kutyapman');
+    waited = true;
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+  return false;
+}
+
+function releaseTgLock() {
+  const cl = lockClient;
+  lockClient = null;
+  if (!cl) return;
+  void cl
+    .query('SELECT pg_advisory_unlock($1)', [TG_LOCK_KEY])
+    .catch(() => undefined)
+    .finally(() => cl.release());
+}
+
+/** Ishlab turganda sessiya bekor qilindi: uziladi, bazadan o'chiriladi — CRM «qayta ulang» oynasini ko'rsatadi (502 qaytarib turmaydi) */
+let revoking = false;
+async function onSessionRevoked(reason: string) {
+  if (revoking || !client) return;
+  revoking = true;
+  try {
+    const c = client;
+    const before = account;
+    await deactivate();
+    await c.destroy().catch(() => undefined);
+    await pool.query('DELETE FROM tg_account');
+    await audit(pool, { actorId: null, entity: 'tg_account', entityId: 1, action: 'TG_SESSION_REVOKED', before: before ? { phone: before.phone, name: before.name, reason } : { reason } });
+    console.warn(`Telegram sessiyasi bekor qilindi (${reason}) — rahbar qayta ulashi kerak`);
+    broadcast('tg-status', {});
+  } catch (e: any) {
+    console.error('Bekor qilingan sessiyani tozalashda xato:', e?.message ?? e);
+  } finally {
+    revoking = false;
+  }
 }
 
 let reloadTimer: NodeJS.Timeout | null = null;
@@ -321,7 +399,8 @@ async function deactivate() {
 
 /** Ilova ishga tushayotganda so'rov kelsa — ulanish tugashini kutadi */
 export async function ready() {
-  if (starting) await starting;
+  // Deploy paytida qulf kutilayotgan bo'lishi mumkin: so'rov uzoq osilib qolmasin
+  if (starting) await Promise.race([starting, new Promise((r) => setTimeout(r, 15_000))]);
 }
 
 // ---------------- Real vaqt: faqat rahbar va buxgalterlarga ----------------
@@ -529,7 +608,8 @@ async function pollReadOutbox() {
       signalDialogs(peerId);
     }
   } catch (e: any) {
-    console.error("Telegram «o'qildi» holati tekshirilmadi:", e?.errorMessage ?? e);
+    if (REVOKED_RE.test(e?.errorMessage ?? '')) void onSessionRevoked(e.errorMessage);
+    else console.error("Telegram «o'qildi» holati tekshirilmadi:", e?.errorMessage ?? e);
   } finally {
     readPolling = false;
   }
