@@ -12,6 +12,7 @@ import { ApiError, api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
 import { errorText } from '@/lib/errors';
+import { useIsMobile, useVisualViewport } from '@/lib/useMobileViewport';
 import { tgKeys } from '@/lib/tgCache';
 import type { TgDialog, TgFolder, TgStatus } from '@/lib/types';
 
@@ -465,6 +466,19 @@ function Messenger({ status }: { status: TgStatus }) {
       return n;
     });
   const dialog = dialogs.data?.find((d) => d.peerId === active) ?? null;
+  // Telefonda ochiq chat — to'liq ekran (CRM header ustida), balandligi ko'rinadigan maydonga teng: klaviatura chiqsa yozish maydoni uning ustida turadi
+  const mobileChat = useIsMobile() && !!active;
+  const vv = useVisualViewport(mobileChat);
+  useEffect(() => {
+    if (!mobileChat) return;
+    const html = document.documentElement;
+    html.style.overflow = 'hidden';
+    document.body.style.overflow = 'hidden';
+    return () => {
+      html.style.overflow = '';
+      document.body.style.overflow = '';
+    };
+  }, [mobileChat]);
 
   return (
     <div className={FULL}>
@@ -484,7 +498,10 @@ function Messenger({ status }: { status: TgStatus }) {
           onDisconnect={() => setConfirmLogout(true)}
         />
       </aside>
-      <section className={cn('h-full min-w-0 grow', !active && 'max-md:hidden')}>
+      <section
+        className={cn('h-full min-w-0 grow', !active && 'max-md:hidden', mobileChat && 'tg fixed inset-x-0 top-0 z-[57] h-[100dvh] overscroll-none')}
+        style={mobileChat && vv ? { top: vv.top, height: vv.height } : undefined}
+      >
         {active ? (
           <TgConversation key={active} peerId={active} dialog={dialog} dialogs={dialogs.data ?? []} onBack={() => open(null)} onOpenChat={open} />
         ) : (

@@ -314,7 +314,7 @@ function Check({ checked, onChange, children }: { checked: boolean; onChange: (v
 
 // ---------------- 📎 menyusi ----------------
 
-export function AttachButton({ onFiles }: { onFiles: (files: File[], compress: boolean) => void }) {
+export function AttachButton({ onFiles, className, menuLeft }: { onFiles: (files: File[], compress: boolean) => void; className?: string; menuLeft?: boolean }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
@@ -338,12 +338,12 @@ export function AttachButton({ onFiles }: { onFiles: (files: File[], compress: b
   };
   const item = 'flex w-full cursor-pointer items-center gap-4 px-4 py-2 text-left text-[15px] transition-colors hover:bg-black/5 dark:hover:bg-on-brand/10';
   return (
-    <div ref={box} className="relative mb-[7px] mr-1">
+    <div ref={box} className={cn('relative mb-[7px] mr-1', className)}>
       <IconButton label={t('tg.attach')} onClick={() => setOpen((v) => !v)} active={open}>
         <Paperclip className="h-6 w-6 -rotate-45" />
       </IconButton>
       {open && (
-        <div role="menu" className="absolute bottom-full right-0 z-[3] mb-2 w-[230px] animate-pop-in rounded-2xl py-1.5 shadow-[0_6px_24px_rgba(0,0,0,0.25)] backdrop-blur-xl" style={{ background: 'var(--tg-menu)' }}>
+        <div role="menu" className={cn('absolute bottom-full z-[3]', menuLeft ? 'left-0' : 'right-0', ' mb-2 w-[230px] animate-pop-in rounded-2xl py-1.5 shadow-[0_6px_24px_rgba(0,0,0,0.25)] backdrop-blur-xl')} style={{ background: 'var(--tg-menu)' }}>
           <button type="button" role="menuitem" className={item} onClick={() => (setOpen(false), media.current?.click())}>
             <ImageIcon className="h-[22px] w-[22px] opacity-80" strokeWidth={1.8} />
             {t('tg.photoOrVideo')}

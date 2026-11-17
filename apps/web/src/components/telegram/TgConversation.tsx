@@ -1,7 +1,7 @@
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertCircle,
-  ArrowLeft,
+  ChevronLeft,
   Check,
   CheckCircle2,
   ChevronDown,
@@ -80,6 +80,13 @@ export function TgConversation({
   const keepFromBottom = useRef<number | null>(null);
   const lastIdRef = useRef<number | null>(null);
   const [atBottom, setAtBottom] = useState(true);
+  const atBottomRef = useRef(true);
+  atBottomRef.current = atBottom;
+  // Telefonda sarlavha va yozish maydoni xabarlar ustida suzadi: xabarlar ro'yxati ularning balandligicha chekinadi
+  const topRef = useRef<HTMLDivElement>(null);
+  const botRef = useRef<HTMLDivElement>(null);
+  const topH = useElHeight(topRef);
+  const botH = useElHeight(botRef);
   const [replyTo, setReplyTo] = useState<TgMessage | null>(null);
   const [menu, setMenu] = useState<{ m: TgMessage; x: number; y: number } | null>(null);
   const [pending, setPending] = useState<Pending[]>([]);
@@ -197,6 +204,17 @@ export function TgConversation({
       seenTimer.current = null;
     };
   }, [checkSeen]);
+
+  // Ro'yxat balandligi o'zgarsa (klaviatura ochildi, yozish maydoni o'sdi) va pastda turgan bo'lsa — pastda qolsin
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => {
+      if (atBottomRef.current) el.scrollTop = el.scrollHeight;
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   const scrollToBottom = (smooth = false) => {
     const el = scrollRef.current;
@@ -443,12 +461,15 @@ export function TgConversation({
   return (
     <div
       className="tg-chat-bg relative flex h-full min-w-0 flex-col"
+      style={{ '--tg-top': `${topH}px`, '--tg-bot': `${botH}px` } as React.CSSProperties}
       onDragEnter={(e) => {
         // Faqat fayl sudralganda (matn/havola emas) va yozish mumkin bo'lsa
         if (canWrite && !editing && e.dataTransfer.types.includes('Files')) setDragging(true);
       }}
     >
       {dragging && <DropOverlay onFiles={openFiles} onDone={() => setDragging(false)} />}
+      {/* Tepa: sarlavha, pleer, qadalgan xabar (telefonda — xabarlar ustida suzadi, Telegram iOS kabi) */}
+      <div ref={topRef} className="relative z-[2] shrink-0 max-md:absolute max-md:inset-x-0 max-md:top-0">
       {/* Sarlavha */}
       {selected ? (
         <div className="relative z-[2] flex h-14 shrink-0 items-center gap-1 px-2 shadow-[0_1px_0_var(--tg-border)] sm:gap-2 sm:px-4" style={{ background: 'var(--tg-bg)' }}>
@@ -464,10 +485,22 @@ export function TgConversation({
           {selCanDelete && <SelBtn icon={Trash2} label={t('common.delete')} count={selIds.length} danger onClick={() => setDeleting(selIds)} />}
         </div>
       ) : (
-      <div className="relative z-[2] flex h-14 shrink-0 items-center gap-3 px-2 shadow-[0_1px_0_var(--tg-border)] sm:px-4" style={{ background: 'var(--tg-bg)' }}>
-        <IconButton label={t('common.back')} onClick={onBack} className="md:hidden">
-          <ArrowLeft className="h-6 w-6" />
-        </IconButton>
+      <>
+      <MobileHeader
+        peerId={peerId}
+        title={title}
+        photoId={dialog?.photoId ?? null}
+        sub={typing ? (
+          <span className="inline-flex items-center gap-1 text-[var(--tg-link)]">
+            {t('tg.typing')}
+            <TypingDots />
+          </span>
+        ) : status}
+        subActive={typing || (!!dialog && isOnline(dialog.status))}
+        unreadElsewhere={dialogs.reduce((n, d) => (d.peerId !== peerId && !d.muted && !d.archived ? n + d.unread : n), 0)}
+        onBack={onBack}
+      />
+      <div className="relative z-[2] flex h-14 shrink-0 items-center gap-3 px-2 shadow-[0_1px_0_var(--tg-border)] max-md:hidden sm:px-4" style={{ background: 'var(--tg-bg)' }}>
         <TgAvatar peerId={peerId} name={title || '?'} photoId={dialog?.photoId ?? null} size={40} />
         <div className="min-w-0 grow">
           <div className="truncate text-base font-medium leading-tight">{title}</div>
@@ -486,6 +519,7 @@ export function TgConversation({
           </div>
         </div>
       </div>
+      </>
       )}
 
       {/* Ovozli/dumaloq xabar yoki audio o'ynayotganda — Telegram kabi tepada pleer paneli */}
@@ -504,6 +538,7 @@ export function TgConversation({
           onUnpin={canWrite || dialog?.kind === 'USER' || dialog?.kind === 'BOT' ? () => void togglePin(curPin) : undefined}
         />
       )}
+      </div>
 
       {/* Xabarlar */}
       <div className="relative min-h-0 grow">
@@ -517,7 +552,7 @@ export function TgConversation({
           }}
           className="tg-scroll relative h-full overflow-y-auto overflow-x-hidden overscroll-contain"
         >
-          <div className="mx-auto flex min-h-full max-w-[728px] flex-col justify-end px-2 pb-2 pt-2 [container-type:inline-size] sm:px-4">
+          <div className="mx-auto flex min-h-full max-w-[728px] flex-col justify-end px-2 pb-2 pt-2 [container-type:inline-size] max-md:pb-[calc(var(--tg-bot)+4px)] max-md:pt-[calc(var(--tg-top)+4px)] sm:px-4">
             {history.isFetchingNextPage && <Pill>{t('common.loading')}</Pill>}
             {history.isLoading && <Pill>{t('common.loading')}</Pill>}
             {history.error && <Pill>{errorText(history.error, t)}</Pill>}
@@ -595,8 +630,7 @@ export function TgConversation({
             type="button"
             onClick={() => scrollToBottom(true)}
             aria-label={t('tg.scrollDown')}
-            className="absolute bottom-3 right-3 z-[2] flex h-[54px] w-[54px] cursor-pointer items-center justify-center rounded-full text-[var(--tg-secondary)] shadow-[0_1px_3px_rgba(0,0,0,0.2)] transition-transform active:scale-95 sm:right-5"
-            style={{ background: 'var(--tg-bg)' }}
+            className="tg-glass absolute bottom-3 right-3 z-[3] flex bg-[var(--tg-bg)] h-[54px] w-[54px] cursor-pointer items-center justify-center rounded-full text-[var(--tg-secondary)] shadow-[0_1px_3px_rgba(0,0,0,0.2)] transition-transform active:scale-95 max-md:bottom-[calc(var(--tg-bot)+10px)] max-md:h-11 max-md:w-11 sm:right-5"
           >
             <ChevronDown className="h-7 w-7" />
             {unread > 0 && (
@@ -608,6 +642,8 @@ export function TgConversation({
         )}
       </div>
 
+      {/* Pastki qism: yozish maydoni (telefonda — xabarlar ustida suzadi) */}
+      <div ref={botRef} className="relative z-[2] shrink-0 max-md:absolute max-md:inset-x-0 max-md:bottom-0">
       {canWrite ? (
         <Composer
           peerId={peerId}
@@ -628,13 +664,14 @@ export function TgConversation({
         />
       ) : (
         <div className="relative shrink-0">
-          <div className="relative mx-auto flex max-w-[728px] justify-center px-2 pb-2 sm:px-4 sm:pb-4">
-            <div className="w-full rounded-[15px] py-4 text-center text-[15px] font-medium text-[var(--tg-secondary)] shadow-[var(--tg-shadow)]" style={{ background: 'var(--tg-bg)' }}>
+          <div className="relative mx-auto flex max-w-[728px] justify-center px-2 pb-2 max-md:pb-[max(8px,env(safe-area-inset-bottom))] sm:px-4 sm:pb-4">
+            <div className="tg-glass w-full rounded-[15px] bg-[var(--tg-bg)] py-4 text-center text-[15px] font-medium text-[var(--tg-secondary)] shadow-[var(--tg-shadow)] max-md:rounded-full max-md:py-3">
               {t(dialog?.kind === 'CHANNEL' ? 'tg.channelReadOnly' : 'tg.cannotWrite')}
             </div>
           </div>
         </div>
       )}
+      </div>
 
       {menu && <ContextMenu x={menu.x} y={menu.y} onClose={() => setMenu(null)} items={menuItems(menu.m)} />}
       {deleting && (
@@ -724,7 +761,7 @@ function PinnedBar({ m, index, total, onOpen, onUnpin }: { m: TgMessage; index: 
   const active = total <= 4 ? total - 1 - index : Math.max(0, 3 - Math.min(index, 3));
   const preview = m.text || (m.media ? `${KIND_EMOJI[m.media.kind]} ${t(`tg.kind.${m.media.kind}`)}` : '');
   return (
-    <div className="relative z-[1] flex h-12 shrink-0 items-center gap-2 px-2 shadow-[0_1px_0_var(--tg-border)] sm:px-4" style={{ background: 'var(--tg-bg)' }}>
+    <div className="tg-glass relative z-[1] flex h-12 shrink-0 items-center gap-2 bg-[var(--tg-bg)] px-2 shadow-[0_1px_0_var(--tg-border)] max-md:mx-2 max-md:mt-1.5 max-md:h-[52px] max-md:rounded-full max-md:pl-3 sm:px-4">
       <button type="button" onClick={onOpen} className="flex min-w-0 grow cursor-pointer items-center gap-2.5 rounded-lg py-1 pl-1 pr-2 text-left transition-colors hover:bg-[var(--tg-hover)]">
         <span className="flex h-9 w-[3px] shrink-0 flex-col gap-[2px]">
           {Array.from({ length: segs }, (_, i) => (
@@ -1161,9 +1198,13 @@ function Composer({
   const can = !!text.trim();
   return (
     <div className="relative shrink-0">
-      <div className="relative mx-auto flex max-w-[728px] items-end gap-2 px-2 pb-2 sm:px-4 sm:pb-4">
-        <div ref={boxRef} className="relative min-w-0 grow shadow-[var(--tg-shadow)]" style={{ background: 'var(--tg-bg)', borderRadius: '15px 15px 0 15px' }}>
-          <Tail out />
+      <div className="relative mx-auto flex max-w-[728px] items-end gap-2 px-2 pb-2 max-md:gap-1.5 max-md:pb-[max(8px,env(safe-area-inset-bottom))] sm:px-4 sm:pb-4">
+        {/* Telefonda 📎 — maydon chapida alohida dumaloq tugma (Telegram iOS kabi) */}
+        {!editing && <AttachButton onFiles={onFiles} menuLeft className="tg-glass mb-0 mr-0 shrink-0 rounded-full md:hidden [&>button]:h-11 [&>button]:w-11" />}
+        <div ref={boxRef} className="tg-glass relative min-w-0 grow rounded-[15px] rounded-br-none bg-[var(--tg-bg)] shadow-[var(--tg-shadow)] max-md:rounded-[22px]">
+          <span className="max-md:hidden">
+            <Tail out />
+          </span>
           {editing ? (
             <div className="flex items-center gap-3 px-3 pt-2">
               <Pencil className="h-5 w-5 shrink-0 text-[var(--tg-primary)]" />
@@ -1188,7 +1229,7 @@ function Composer({
             </div>
           )}
           <div className="flex items-end">
-            <IconButton label={t('tg.emoji')} onClick={() => setEmoji((v) => !v)} active={emoji} className="mb-[7px] ml-1">
+            <IconButton label={t('tg.emoji')} onClick={() => setEmoji((v) => !v)} active={emoji} className="mb-[7px] ml-1 max-md:order-last max-md:mb-0.5 max-md:ml-0 max-md:mr-0.5">
               <Smile className="h-6 w-6" />
             </IconButton>
             <textarea
@@ -1216,10 +1257,10 @@ function Composer({
               }}
               placeholder={t('tg.placeholder')}
               aria-label={t('tg.placeholder')}
-              className="tg-scroll max-h-[260px] min-h-[54px] grow resize-none bg-transparent px-2 py-[15px] text-base leading-[1.3125] outline-none placeholder:text-[var(--tg-secondary)] focus-visible:ring-0 focus-visible:ring-offset-0"
+              className="tg-scroll max-h-[260px] min-h-[54px] grow resize-none bg-transparent px-2 py-[15px] text-base leading-[1.3125] outline-none max-md:min-h-[44px] max-md:py-[11px] max-md:pl-4 placeholder:text-[var(--tg-secondary)] focus-visible:ring-0 focus-visible:ring-offset-0"
             />
             {/* 📎 — Telegram kabi maydonning o'ng chetida (tahrirlashda yo'q) */}
-            {!editing && <AttachButton onFiles={onFiles} />}
+            {!editing && <AttachButton onFiles={onFiles} className="max-md:hidden" />}
           </div>
           {emoji && (
             <div
@@ -1240,8 +1281,10 @@ function Composer({
           disabled={!can}
           aria-label={editing ? t('common.save') : t('tg.send')}
           title={editing ? t('common.save') : t('tg.send')}
-          className="flex h-[54px] w-[54px] shrink-0 cursor-pointer items-center justify-center rounded-full shadow-[var(--tg-shadow)] transition-[transform,opacity] active:scale-95 disabled:cursor-default"
-          style={{ background: can ? 'var(--tg-primary)' : 'var(--tg-bg)', color: can ? '#fff' : 'var(--tg-secondary)' }}
+          className={cn(
+            'flex h-[54px] w-[54px] shrink-0 cursor-pointer items-center justify-center rounded-full shadow-[var(--tg-shadow)] transition-[transform,opacity] active:scale-95 disabled:cursor-default max-md:h-11 max-md:w-11',
+            can ? 'bg-[var(--tg-primary)] text-white' : 'tg-glass bg-[var(--tg-bg)] text-[var(--tg-secondary)]',
+          )}
         >
           {editing ? <Check className="h-6 w-6" strokeWidth={2.5} /> : <SendHorizontal className="h-6 w-6" />}
         </button>
@@ -1321,5 +1364,66 @@ function ContextMenu({ x, y, items, onClose }: { x: number; y: number; items: Me
       )}
     </div>,
     document.body,
+  );
+}
+
+/** Element balandligi (ResizeObserver) */
+function useElHeight(ref: React.RefObject<HTMLElement | null>) {
+  const [h, setH] = useState(0);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => setH(el.offsetHeight));
+    ro.observe(el);
+    setH(el.offsetHeight);
+    return () => ro.disconnect();
+  }, [ref]);
+  return h;
+}
+
+/** Telefon sarlavhasi (Telegram iOS kabi): ← va boshqa chatlardagi o'qilmaganlar, o'rtada nom/holat, o'ngda avatar — hammasi suzuvchi «pill» */
+function MobileHeader({
+  peerId,
+  title,
+  photoId,
+  sub,
+  subActive,
+  unreadElsewhere,
+  onBack,
+}: {
+  peerId: string;
+  title: string;
+  photoId: string | null;
+  sub: React.ReactNode;
+  subActive: boolean;
+  unreadElsewhere: number;
+  onBack: () => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div className="flex items-center gap-2 px-2 pt-2 md:hidden">
+      <button
+        type="button"
+        onClick={onBack}
+        aria-label={t('common.back')}
+        className="tg-glass flex h-11 shrink-0 cursor-pointer items-center gap-0.5 rounded-full pl-2 pr-2.5 text-[var(--tg-text)] active:scale-95"
+      >
+        <ChevronLeft className="h-7 w-7" strokeWidth={2.2} />
+        {unreadElsewhere > 0 && (
+          <span className="min-w-[24px] rounded-full bg-[var(--tg-text)] px-1.5 text-center text-[13px] font-semibold leading-6 text-[var(--tg-bg)]">
+            {unreadElsewhere > 999 ? '999+' : unreadElsewhere}
+          </span>
+        )}
+      </button>
+      <div className="flex min-w-0 grow justify-center">
+        <div className="tg-glass flex h-11 min-w-0 max-w-full flex-col items-center justify-center rounded-full px-5 text-center">
+          <div className="max-w-full truncate text-[15px] font-semibold leading-tight">{title || '—'}</div>
+          <div className={cn('max-w-full truncate text-xs leading-tight', subActive ? 'text-[var(--tg-link)]' : 'text-[var(--tg-secondary)]')}>{sub}</div>
+        </div>
+      </div>
+      <span className="tg-glass shrink-0 rounded-full p-0.5">
+        <TgAvatar peerId={peerId} name={title || '?'} photoId={photoId} size={40} />
+      </span>
+    </div>
   );
 }
