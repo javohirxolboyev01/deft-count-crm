@@ -1421,7 +1421,7 @@ function MobileHeader({
           <div className={cn('max-w-full truncate text-xs leading-tight', subActive ? 'text-[var(--tg-link)]' : 'text-[var(--tg-secondary)]')}>{sub}</div>
         </div>
       </div>
-      <span className="tg-glass shrink-0 rounded-full p-0.5">
+      <span className="tg-glass flex h-11 w-11 shrink-0 items-center justify-center rounded-full">
         <TgAvatar peerId={peerId} name={title || '?'} photoId={photoId} size={40} />
       </span>
     </div>
