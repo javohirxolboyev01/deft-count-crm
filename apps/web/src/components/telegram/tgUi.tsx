@@ -156,7 +156,7 @@ export function Tail({ out }: { out: boolean }) {
 export function TgTicks({ read, className }: { read: boolean; className?: string }) {
   return read ? (
     <svg viewBox="0 0 19 12" width="19" height="12" aria-hidden className={className}>
-      <path d="M1.5 6.6 4.9 10 12.2 2.2M7.6 9.9l.6.4 7.6-8.1" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M1.2 6.4 4.6 10 12.2 2M7.4 8.4 9.2 10 16.8 2" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   ) : (
     <svg viewBox="0 0 19 12" width="19" height="12" aria-hidden className={className}>
