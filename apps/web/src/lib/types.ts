@@ -502,7 +502,9 @@ export type LeadView = 'today' | 'open' | 'closed' | 'won' | 'converted' | 'all'
 
 export interface Lead {
   id: number;
-  stir: string;
+  /** Qo'lda qo'shilgan nomzodda bo'lmasligi mumkin */
+  stir: string | null;
+  source: 'IMPORT' | 'MANUAL';
   name: string;
   director: string | null;
   phone: string | null;

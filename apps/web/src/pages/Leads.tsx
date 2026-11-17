@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CalendarClock, Handshake, Phone, PhoneCall, PhoneForwarded, Search, Upload } from 'lucide-react';
+import { CalendarClock, Handshake, Phone, PhoneCall, PhoneForwarded, Plus, Search, Upload } from 'lucide-react';
 import { DateTime } from 'luxon';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -170,7 +170,7 @@ function LeadDialog({ id, onClose, onConvert }: { id: number | null; onClose: ()
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="text-sm">
                 <div className="text-xs text-gray-500">{t('leads.stir')}</div>
-                <div className="font-mono">{lead.stir}</div>
+                <div className="font-mono">{lead.stir || '—'}</div>
               </div>
               <div className="text-sm">
                 <div className="text-xs text-gray-500">{t('leads.registered')}</div>
@@ -256,6 +256,69 @@ function LeadDialog({ id, onClose, onConvert }: { id: number | null; onClose: ()
           </div>
         )}
       </QueryState>
+    </Dialog>
+  );
+}
+
+// ---------- Nomzodni qo'lda qo'shish (rahbar va operator): boshqa saytlardan topilgan yangi firma ----------
+const EMPTY_NEW = { name: '', director: '', phone: '', stir: '' };
+
+function NewLeadDialog({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated: (id: number) => void }) {
+  const { t } = useTranslation();
+  const qc = useQueryClient();
+  const [form, setForm] = useState(EMPTY_NEW);
+  useEffect(() => {
+    if (open) setForm(EMPTY_NEW);
+  }, [open]);
+
+  const phoneDigits = form.phone.replace(/\D/g, '');
+  const valid = !!form.name.trim() && phoneDigits.length >= 9;
+  const save = useMutation({
+    mutationFn: () =>
+      api.post<Lead>('/leads', { name: form.name.trim(), director: form.director.trim() || null, phone: form.phone, stir: form.stir.trim() || null }),
+    onSuccess: (l) => {
+      toast.success(t('leads.add.done'));
+      void qc.invalidateQueries({ queryKey: ['leads'] });
+      onClose();
+      onCreated(l.id);
+    },
+    onError: (e) => toast.error(errorText(e, t)),
+  });
+
+  return (
+    <Dialog
+      open={open}
+      onClose={onClose}
+      title={t('leads.add.title')}
+      className="max-w-lg"
+      footer={
+        <>
+          <Button variant="outline" onClick={onClose}>{t('common.cancel')}</Button>
+          <Button type="submit" form="new-lead" disabled={!valid} loading={save.isPending}>{t('leads.add.save')}</Button>
+        </>
+      }
+    >
+      <form
+        id="new-lead"
+        className="space-y-3"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (valid && !save.isPending) save.mutate();
+        }}
+      >
+        <Field label={`${t('leads.add.name')} *`} htmlFor="nl-name">
+          <Input id="nl-name" autoFocus value={form.name} placeholder={t('leads.add.namePlaceholder')} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+        </Field>
+        <Field label={t('leads.add.director')} htmlFor="nl-director">
+          <Input id="nl-director" value={form.director} placeholder={t('leads.add.directorPlaceholder')} onChange={(e) => setForm({ ...form, director: e.target.value })} />
+        </Field>
+        <Field label={`${t('leads.phone')} *`} htmlFor="nl-phone">
+          <PhoneInput id="nl-phone" value={form.phone} onChange={(v) => setForm({ ...form, phone: v })} />
+        </Field>
+        <Field label={t('leads.add.stir')} htmlFor="nl-stir" hint={t('leads.add.stirHint')}>
+          <Input id="nl-stir" inputMode="numeric" maxLength={14} value={form.stir} onChange={(e) => setForm({ ...form, stir: e.target.value.replace(/\D/g, '') })} />
+        </Field>
+      </form>
     </Dialog>
   );
 }
@@ -359,6 +422,7 @@ export default function Leads() {
   const [f, setF] = useState<{ view: LeadView; search: string; page: number; pageSize: number }>({ view: 'today', search: '', page: 1, pageSize: 50 });
   const set = (patch: Partial<typeof f>) => setF({ ...f, page: 1, ...patch });
   const [importOpen, setImportOpen] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
   const [converting, setConverting] = useState<Lead | null>(null);
   // Bildirishnomadan (?lead=ID) to'g'ridan-to'g'ri firma oynasi ochiladi
   const openId = params.get('lead') ? Number(params.get('lead')) : null;
@@ -389,7 +453,12 @@ export default function Leads() {
       <PageHeader
         title={t('leads.title')}
         breadcrumb={isLeader}
-        actions={isLeader && <Button onClick={() => setImportOpen(true)}><Upload className="h-4 w-4" /> {t('leads.importBtn')}</Button>}
+        actions={
+          <div className="flex flex-wrap gap-2">
+            <Button variant={isLeader ? 'outline' : 'default'} onClick={() => setAddOpen(true)}><Plus className="h-4 w-4" /> {t('leads.add.btn')}</Button>
+            {isLeader && <Button onClick={() => setImportOpen(true)}><Upload className="h-4 w-4" /> {t('leads.importBtn')}</Button>}
+          </div>
+        }
       />
 
       {stats.isLoading ? <KpiSkeleton count={5} /> : st && (
@@ -456,7 +525,7 @@ export default function Leads() {
                       <td className="px-3 py-2.5 text-xs text-gray-500">{(f.page - 1) * f.pageSize + i + 1}</td>
                       <td className="px-3 py-2.5">
                         <div className="font-medium text-foreground">{l.name}</div>
-                        <div className="font-mono text-xs text-gray-500">{l.stir}</div>
+                        {l.stir && <div className="font-mono text-xs text-gray-500">{l.stir}</div>}
                       </td>
                       <td className="px-3 py-2.5 text-xs">{l.director || '—'}</td>
                       <td className="px-3 py-2.5"><Phones phone={l.phone} /></td>
@@ -485,6 +554,7 @@ export default function Leads() {
         }}
       />
       <ImportDialog open={importOpen} onClose={() => setImportOpen(false)} />
+      <NewLeadDialog open={addOpen} onClose={() => setAddOpen(false)} onCreated={openLead} />
       <NewClientDialog open={!!converting} lead={converting} onClose={() => setConverting(null)} />
     </div>
   );

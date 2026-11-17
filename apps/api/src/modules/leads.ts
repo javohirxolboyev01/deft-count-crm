@@ -25,7 +25,7 @@ const list = (xs: readonly string[]) => xs.map((x) => `'${x}'`).join(', ');
 
 const LEAD = `l.id, l.stir, l.name, l.director, l.phone, l.address, l.registered_at AS "registeredAt", l.status,
   l.next_call_date AS "nextCallDate", l.last_call_at AS "lastCallAt", l.transferred_at AS "transferredAt",
-  l.converted_client_id AS "convertedClientId", l.created_at AS "createdAt",
+  l.converted_client_id AS "convertedClientId", l.created_at AS "createdAt", l.source,
   (SELECT count(*) FROM lead_call c WHERE c.lead_id = l.id)::int AS "callCount",
   (SELECT c.comment FROM lead_call c WHERE c.lead_id = l.id ORDER BY c.created_at DESC, c.id DESC LIMIT 1) AS "lastComment"`;
 
@@ -80,7 +80,8 @@ leadsRouter.get('/', async (req, res) => {
   // Kuni o'tganlar birinchi, keyin bugungilar, keyin hali gaplashilmagan yangilar
   const order =
     f.view === 'today' || f.view === 'open'
-      ? 'l.next_call_date ASC NULLS LAST, l.registered_at DESC NULLS LAST, l.id'
+      ? // Qo'lda qo'shilgan nomzodda ro'yxatdan o'tgan sana yo'q: qo'shilgan kuni bo'yicha (oxirida qolib ketmasin)
+        'l.next_call_date ASC NULLS LAST, coalesce(l.registered_at, l.created_at::date) DESC, l.id'
       : 'coalesce(l.last_call_at, l.created_at) DESC, l.id DESC';
   const items = await q(pool, `SELECT ${LEAD} FROM lead l ${w} ORDER BY ${order} LIMIT ${p(f.pageSize)} OFFSET ${p((f.page - 1) * f.pageSize)}`, params);
   res.json({ items, total, page: f.page, pageSize: f.pageSize });
@@ -235,6 +236,45 @@ leadsRouter.post('/import', requireLeader, upload.single('file'), async (req, re
   const rows = await xlsxToRows(req.file.buffer);
   const run = (db: Db) => importLeads(db, rows, u.id);
   res.json({ dryRun: dryRun === 'true', ...(dryRun === 'true' ? await dryTx(run) : await tx(run)) });
+});
+
+// ---------- Qo'lda qo'shish (rahbar va operator): boshqa saytlardan topilgan yangi firma ----------
+leadsRouter.post('/', async (req, res) => {
+  const u = me(req);
+  const body = parse(
+    z.object({
+      name: z.string().trim().min(1, 'Korxona nomini kiriting').max(300),
+      director: z.string().trim().max(200).nullable().optional(),
+      phone: z.string().trim().min(1, 'Telefon raqamini kiriting').max(200),
+      stir: z.string().trim().max(20).nullable().optional(),
+    }),
+    req.body,
+  );
+  const stir = body.stir ? normalizeStir(body.stir) : null;
+  if (stir && !/^(\d{9}|\d{14})$/.test(stir)) throw new AppError(400, 'BAD_STIR', 'STIR 9 yoki 14 xonali bo\'lishi kerak');
+  const phones = [...new Set(body.phone.split(',').map((p) => normalizePhone(p)).filter((p): p is string => !!p))];
+  if (!phones.length || phones.some((p) => p.replace(/\D/g, '').length < 9)) throw new AppError(400, 'BAD_PHONE', 'Telefon raqami to\'liq emas');
+  const lead = await tx(async (db) => {
+    if (stir) {
+      if (await one(db, 'SELECT 1 FROM client WHERE stir = $1', [stir])) throw new AppError(409, 'EXISTING_CLIENT', 'Bu STIR bilan firma allaqachon mijozimiz');
+      if (await one(db, 'SELECT 1 FROM lead WHERE stir = $1', [stir])) throw new AppError(409, 'EXISTING_LEAD', 'Bu STIR bilan firma nomzodlar ro\'yxatida bor');
+    }
+    // Shu raqam bilan nomzod yoki mijoz bor bo'lsa — takror kiritilmaydi (operator bir firmaga ikki marta qo'ng'iroq qilmasin)
+    const keys = phones.join(', ');
+    const client = await one<{ name: string }>(db, `SELECT name FROM client WHERE deleted_at IS NULL AND fn_phone_keys(phone) && fn_phone_keys($1) LIMIT 1`, [keys]);
+    if (client) throw new AppError(409, 'EXISTING_CLIENT', `Bu raqam mijozimizga tegishli: ${client.name}`);
+    const dup = await one<{ name: string }>(db, `SELECT name FROM lead WHERE fn_phone_keys(phone) && fn_phone_keys($1) LIMIT 1`, [keys]);
+    if (dup) throw new AppError(409, 'EXISTING_LEAD', `Bu raqam bilan nomzod bor: ${dup.name}`);
+    const ins = await one<{ id: number }>(
+      db,
+      `INSERT INTO lead (stir, name, name_normalized, director, phone, source, imported_by)
+       VALUES ($1, $2, $3, $4, $5, 'MANUAL', $6) RETURNING id`,
+      [stir, body.name, normalizeName(body.name), body.director || null, phones.join(', '), u.id],
+    );
+    await audit(db, { actorId: u.id, entity: 'lead', entityId: ins!.id, action: 'CREATE', after: { name: body.name, director: body.director || null, phone: phones.join(', '), stir } });
+    return loadLead(db, ins!.id, u);
+  });
+  res.status(201).json(lead);
 });
 
 // ---------- Bitta firma ----------

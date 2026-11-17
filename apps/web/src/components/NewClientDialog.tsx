@@ -48,7 +48,7 @@ export function NewClientDialog({
 
   useEffect(() => {
     if (!open) return;
-    setForm(lead ? { ...empty, stir: lead.stir.replace(/\D/g, ''), name: lead.name, contactPerson: lead.director ?? '', phone: lead.phone ?? '' } : empty);
+    setForm(lead ? { ...empty, stir: (lead.stir ?? '').replace(/\D/g, ''), name: lead.name, contactPerson: lead.director ?? '', phone: lead.phone ?? '' } : empty);
     setStirTouched(false);
   }, [open, lead]);
 

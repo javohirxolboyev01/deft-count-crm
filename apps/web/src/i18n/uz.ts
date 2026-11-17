@@ -359,6 +359,11 @@ const uz = {
   },
   leads: {
     title: 'Yangi mijozlar', importBtn: 'Excel yuklash', search: 'Nomi, STIR yoki telefon…',
+    add: {
+      btn: "Nomzod qo'shish", title: "Yangi nomzod", save: "Qo'shish", done: "Nomzod ro'yxatga qo'shildi",
+      name: 'Korxona nomi', namePlaceholder: '"MISOL" MCHJ', director: 'Korxona egasi (direktor)', directorPlaceholder: 'F.I.Sh.',
+      stir: 'STIR', stirHint: "Ixtiyoriy: bilsangiz kiriting — takror firmalar aniqlanadi",
+    },
     view: { today: "Bugun qo'ng'iroq", open: 'Ochiq', closed: 'Yopilgan', won: "Mijoz bo'ldi", converted: 'Aylantirilgan', all: 'Hammasi' },
     status: {
       NEW: 'Yangi', NO_ANSWER: 'Javob bermadi', CALL_LATER: 'Keyinroq qiling', MEETING: 'Uchrashuv belgilandi',

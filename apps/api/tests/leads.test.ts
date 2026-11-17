@@ -180,6 +180,23 @@ describe('mijoz bo\'ldi -> rahbar', () => {
   });
 });
 
+describe('nomzodni qo\'lda qo\'shish', () => {
+  it('operator STIRsiz qo\'shadi: «bugun» ro\'yxatida ko\'rinadi, takror raqam/STIR 409', async () => {
+    const r = await O.post('/api/leads', { name: '"YANGI FIRMA" MCHJ', director: 'Aliyev Vali', phone: '90 777 66 55' });
+    expect(r.status).toBe(201);
+    expect(r.body).toMatchObject({ name: '"YANGI FIRMA" MCHJ', director: 'Aliyev Vali', phone: '+998907776655', stir: null, status: 'NEW', source: 'MANUAL' });
+    expect((await O.get('/api/leads?view=today&pageSize=200')).body.items.map((l: any) => l.id)).toContain(r.body.id);
+    expect((await L.get('/api/leads?search=yangi firma')).body.items.map((l: any) => l.id)).toEqual([r.body.id]);
+    // Shu raqam (boshqa yozilishda) — takror
+    expect((await O.post('/api/leads', { name: 'BOSHQA', phone: '+998 (90) 777-66-55' })).body.code).toBe('EXISTING_LEAD');
+    // STIR bilan: mijozimiz bo'lsa — rad etiladi
+    expect((await O.post('/api/leads', { name: 'ESKI', phone: '901112299', stir: '300000001' })).body.code).toBe('EXISTING_CLIENT');
+    expect((await O.post('/api/leads', { name: 'X', phone: '12345' })).body.code).toBe('BAD_PHONE');
+    expect((await O.post('/api/leads', { name: '', phone: '901112299' })).status).toBe(400);
+    expect((await A1.post('/api/leads', { name: 'X', phone: '901112299' })).status).toBe(403);
+  });
+});
+
 describe('normalizePhone', () => {
   it('998..., 9 xonali va bo\'sh', () => {
     expect(normalizePhone('998901855999')).toBe('+998901855999');
