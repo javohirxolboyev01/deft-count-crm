@@ -1,7 +1,7 @@
 import ExcelJS from 'exceljs';
 import { Router } from 'express';
 import { z } from 'zod';
-import { type AuthUser, me, requireAuth, requireLeader } from '../common/auth';
+import { type AuthUser, isLeader, me, requireAuth, requireLeader } from '../common/auth';
 import { audit } from '../common/audit';
 import { AppError, notFound, parse } from '../common/errors';
 import { normalizeName } from '../common/normalize';
@@ -121,6 +121,9 @@ export async function loadGrid(
   return { period: period.slice(0, 7), eventMonth: eventEditable ? eventMonth : null, columns, rows: [...rows.values()] };
 }
 
+/** Buxgalterga faqat o'z korxonalari: so'rovdagi accountantId e'tiborga olinmaydi */
+const ownScope = (u: AuthUser, accountantId?: number) => (isLeader(u) ? accountantId : u.id);
+
 export const gridRouter = Router();
 gridRouter.use(requireAuth);
 
@@ -135,9 +138,9 @@ gridRouter.get('/', async (req, res) => {
     }),
     req.query,
   );
-  // Hisobot topshirish buxgalterga biriktirilmaydi (rahbar qarori): hamma korxona hammaga ko'rinadi,
-  // buxgalter faqat ko'radi — o'zgartirish yo'llari serverda yopiq (cell/done requireLeader)
-  res.json(await loadGrid(pool, periodFromMonth(f.month), f));
+  // Buxgalter faqat o'ziga biriktirilgan korxonalarni ko'radi (rahbar qarori 2026-11-17), rahbar — hammasini.
+  // Buxgalter faqat ko'radi — o'zgartirish yo'llari serverda yopiq (cell/done requireLeader)
+  res.json(await loadGrid(pool, periodFromMonth(f.month), { ...f, accountantId: ownScope(me(req), f.accountantId) }));
 });
 
 // Ekrandagi sarlavhalar bilan bir xil qisqa nomlar va muddat sanasi ko'rsatilmaydigan ustunlar (Monthly.tsx)
@@ -153,12 +156,12 @@ const HEAD = {
 };
 const FILL = { done: 'FFDCFCE7', overdue: 'FFFEE2E2', na: 'FFF3F4F6', head: 'FF37A0AD' };
 
-// Excel: butun jadval (filtrsiz), buxgalterga ham hammasi. Katak qiymati import formatidagidek 1/0/X;
+// Excel: butun jadval (filtrsiz); buxgalterga — faqat o'z korxonalari (ekrandagidek). Katak qiymati import formatidagidek 1/0/X;
 // muddati o'tgan katak "0" bo'lib qoladi, faqat qizil fon bilan ajraladi (rahbar qarori).
 gridRouter.get('/export.xlsx', async (req, res) => {
   const u = me(req);
   const { month } = parse(z.object({ month: z.string().optional() }), req.query);
-  const g = await loadGrid(pool, periodFromMonth(month), {});
+  const g = await loadGrid(pool, periodFromMonth(month), { accountantId: ownScope(u) });
   const lang = u.language === 'ru' ? 'ru' : 'uz';
   const h = HEAD[lang];
 

@@ -369,11 +369,16 @@ describe('eslatma: muddat o\'tdi', () => {
 });
 
 describe('oylik jadval', () => {
-  it('buxgalter hamma korxonani ko\'radi (biriktirilmaydi), katakni bosa olmaydi; rahbar bosishi DONE qiladi', async () => {
+  it('buxgalter faqat o\'z korxonalarini ko\'radi, katakni bosa olmaydi; rahbar bosishi DONE qiladi', async () => {
     const g = await A1.get('/api/monthly-grid');
-    const all = (await L.get('/api/monthly-grid')).body.rows.map((r: any) => r.clientId);
-    expect(g.body.rows.map((r: any) => r.clientId)).toEqual(all);
-    expect(all.length).toBeGreaterThan(1);
+    const all = (await L.get('/api/monthly-grid')).body.rows;
+    const own = all.filter((r: any) => r.accountantId === team.acc1).map((r: any) => r.clientId);
+    expect(g.body.rows.map((r: any) => r.clientId)).toEqual(own);
+    expect(own).toContain(aosClient);
+    expect(own).not.toContain(qqsClient);
+    expect(all.length).toBeGreaterThan(own.length);
+    // Boshqa buxgalterni so'rab bo'lmaydi: server baribir o'zinikini beradi
+    expect((await A1.get(`/api/monthly-grid?accountantId=${team.acc2}`)).body.rows.map((r: any) => r.clientId)).toEqual(own);
     const cols = Object.fromEntries(g.body.columns.map((c: any) => [c.code, c.reportTypeId]));
     const row = g.body.rows.find((r: any) => r.clientId === aosClient);
     expect(row.cells[cols.QQS].state).toBe('X');
@@ -408,8 +413,8 @@ describe('oylik jadval', () => {
     expect(r.status).toBe(200);
     expect(r.headers['content-type']).toContain('spreadsheetml');
     const { head, rows: allRows } = await read(r);
-    // Buxgalterga ham butun jadval (hisobot topshirish biriktirilmaydi)
-    expect(allRows.length).toBeGreaterThan(1);
+    // Buxgalterga faqat o'z korxonalari
+    expect(allRows.some((x) => x[1] === '306234567')).toBe(false);
     const rows = allRows.filter((x) => x[1] === '305123456');
     expect(rows).toHaveLength(1);
     const col = (prefix: string) => head.findIndex((x) => x.toUpperCase().startsWith(prefix));
@@ -419,12 +424,12 @@ describe('oylik jadval', () => {
     // Holat ustuni ekranda "0", Excel'da esa import formatidagidek X (holat yo'q)
     expect(rows[0][col('DIVIDEND')]).toBe('X');
     const all = await read(await bin(L.get('/api/monthly-grid/export.xlsx')));
-    expect(all.rows.length).toBeGreaterThan(1);
+    expect(all.rows.length).toBeGreaterThan(allRows.length);
   });
   it('Dividend: holat belgilanmagan katak "0" (qat\'iy "—" emas), bosilsa belgilanadi va vazifa chiqadi; bekor qilsa qaytadi', async () => {
-    const g = await A1.get('/api/monthly-grid');
+    const g = await L.get('/api/monthly-grid');
     const cols = Object.fromEntries(g.body.columns.map((c: any) => [c.code, c.reportTypeId]));
-    const cell = () => A1.get('/api/monthly-grid').then((r) => r.body.rows.find((r: any) => r.clientId === qqsClient).cells[cols.DIVIDEND]);
+    const cell = () => A2.get('/api/monthly-grid').then((r) => r.body.rows.find((r: any) => r.clientId === qqsClient).cells[cols.DIVIDEND]);
     expect(g.body.rows.find((r: any) => r.clientId === qqsClient).cells[cols.DIVIDEND]).toMatchObject({ state: '0', taskId: null, noEvent: true, markable: true });
     // AOS mijozga Dividend va Norezident foyda soliq turi bo'yicha topshirilmaydi (V38): qat'iy "—", bosib bo'lmaydi
     expect(g.body.rows.find((r: any) => r.clientId === aosClient).cells[cols.DIVIDEND]).toMatchObject({ state: 'X' });
@@ -446,7 +451,7 @@ describe('oylik jadval', () => {
     // Ikki oy keyingi jadvalda belgilab bo'lmaydi (server faqat joriy va o'tgan holat oyini qabul qiladi)
     const [y, m] = g.body.period.split('-').map(Number);
     const later = new Date(Date.UTC(y, m + 1, 1)).toISOString().slice(0, 7);
-    const g3 = await A1.get(`/api/monthly-grid?month=${later}`);
+    const g3 = await A2.get(`/api/monthly-grid?month=${later}`);
     expect(g3.body.eventMonth).toBeNull();
     expect(g3.body.rows.find((r: any) => r.clientId === qqsClient).cells[cols.DIVIDEND]).toMatchObject({ state: '0', noEvent: true });
     expect(g3.body.rows.find((r: any) => r.clientId === qqsClient).cells[cols.DIVIDEND].markable).toBeUndefined();

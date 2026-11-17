@@ -40,7 +40,7 @@ Bu fayl loyiha ildizida `CLAUDE.md` nomi bilan turadi. Har bosqichda shu konteks
 ## 4. Rollar va ruxsatlar
 
 - **Rahbar (3):** hamma mijoz, hamma vazifa, dashboard, sozlamalar, buxgalter tayinlash, shoshilinch vazifa.
-- **Buxgalter (7):** faqat o'ziga biriktirilgan mijozlar va ularning vazifalari. Istisno: "Hisobot topshirish" jadvali buxgalterga biriktirilmaydi — barcha korxonalarni ko'radi, lekin faqat ko'radi (katak, holat belgisi, izoh o'zgarmaydi, mijoz kartasiga o'tmaydi).
+- **Buxgalter (7):** faqat o'ziga biriktirilgan mijozlar va ularning vazifalari. "Hisobot topshirish" jadvalida ham faqat o'ziga biriktirilgan korxonalarni ko'radi (2026-11-17 rahbar qarori; ekran va Excel serverda cheklangan), lekin faqat ko'radi (katak, holat belgisi, izoh o'zgarmaydi, mijoz kartasiga o'tmaydi).
 - **Sotuv operatori (1):** faqat "Yangi mijozlar" (`lead`) bo'limi. Mavjud mijozlar bilan gaplashmaydi, buxgalteriya API'lari unga yopiq (`requireStaff`).
 - Ruxsat tekshiruvi **serverda** (frontend yashirishi yetarli emas).
 
