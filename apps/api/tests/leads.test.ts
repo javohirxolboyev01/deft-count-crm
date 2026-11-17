@@ -189,6 +189,8 @@ describe('nomzodni qo\'lda qo\'shish', () => {
     expect((await L.get('/api/leads?search=yangi firma')).body.items.map((l: any) => l.id)).toEqual([r.body.id]);
     // Shu raqam (boshqa yozilishda) — takror
     expect((await O.post('/api/leads', { name: 'BOSHQA', phone: '+998 (90) 777-66-55' })).body.code).toBe('EXISTING_LEAD');
+    // STIR bilan: mijozimiz bo'lsa — rad etiladi
+    expect((await O.post('/api/leads', { name: 'ESKI', phone: '901112299', stir: '300000001' })).body.code).toBe('EXISTING_CLIENT');
     expect((await O.post('/api/leads', { name: 'X', phone: '12345' })).body.code).toBe('BAD_PHONE');
     expect((await O.post('/api/leads', { name: '', phone: '901112299' })).status).toBe(400);
     expect((await A1.post('/api/leads', { name: 'X', phone: '901112299' })).status).toBe(403);
