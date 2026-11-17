@@ -286,6 +286,7 @@ export async function stopTgAccount() {
 
 let reloadTimer: NodeJS.Timeout | null = null;
 let fullReloadTimer: NodeJS.Timeout | null = null;
+let readPollTimer: NodeJS.Timeout | null = null;
 
 async function activate(c: TelegramClient, info: NonNullable<typeof account>) {
   client = c;
@@ -296,11 +297,14 @@ async function activate(c: TelegramClient, info: NonNullable<typeof account>) {
   await reloadFolders().catch((e) => console.error('Telegram jildlari yuklanmadi:', e?.errorMessage ?? e));
   // Xavfsizlik to'ri: hodisa o'tkazib yuborilsa ham ro'yxat 10 daqiqada bir to'liq yangilanadi
   fullReloadTimer = setInterval(() => scheduleReload(0), 10 * 60_000);
+  readPollTimer = setInterval(() => void pollReadOutbox(), READ_POLL_MS);
   broadcast('tg-status', {});
 }
 
 async function deactivate() {
   if (fullReloadTimer) clearInterval(fullReloadTimer);
+  if (readPollTimer) clearInterval(readPollTimer);
+  readPollTimer = null;
   if (reloadTimer) clearTimeout(reloadTimer);
   if (foldersTimer) clearTimeout(foldersTimer);
   fullReloadTimer = reloadTimer = foldersTimer = null;
@@ -488,6 +492,47 @@ async function reloadDialogs() {
   dialogs.clear();
   for (const [k, v] of fresh) dialogs.set(k, v);
   signalDialogs();
+}
+
+// «O'qildi» (✓✓) uchun xavfsizlik to'ri. Muammo: mijoz xabarni o'qiganda Telegram'ning UpdateReadHistoryOutbox hodisasi
+// sessiyaga ba'zan kelmaydi — ✓✓ faqat mijoz javob yozib, chat qayta o'qilganda chiqardi.
+// Qaror: oxirgi xabari bizniki va hali o'qilmagan (yaqinda yozilgan) chatlar bir necha soniyada bir marta
+// bitta GetPeerDialogs so'rovi bilan tekshiriladi. Bunday chat bo'lmasa Telegram'ga so'rov ketmaydi.
+const READ_POLL_MS = 8_000;
+const READ_POLL_WINDOW_S = 3 * 24 * 3600;
+const READ_POLL_MAX = 50;
+let readPolling = false;
+
+async function pollReadOutbox() {
+  const c = client;
+  if (!c || readPolling) return;
+  const now = Date.now() / 1000;
+  const waiting = [...dialogs.values()]
+    .filter((d) => {
+      const lm = d.dto.lastMessage;
+      return (d.dto.kind === 'USER' || d.dto.kind === 'GROUP') && !!lm && lm.out && !lm.service && lm.id > d.dto.readOutboxMaxId && now - lm.date < READ_POLL_WINDOW_S;
+    })
+    .sort((a, b) => b.dto.date - a.dto.date)
+    .slice(0, READ_POLL_MAX);
+  if (!waiting.length) return;
+  readPolling = true;
+  try {
+    const r: any = await c.invoke(new Api.messages.GetPeerDialogs({ peers: waiting.map((d) => new Api.InputDialogPeer({ peer: d.input })) }));
+    for (const dl of r?.dialogs ?? []) {
+      if (!dl?.peer) continue;
+      const peerId = utils.getPeerId(dl.peer);
+      const d = dialogs.get(peerId);
+      const max = dl.readOutboxMaxId ?? 0;
+      if (!d || max <= d.dto.readOutboxMaxId) continue;
+      d.dto.readOutboxMaxId = max;
+      broadcast('tg-read', { peerId, outboxMaxId: max });
+      signalDialogs(peerId);
+    }
+  } catch (e: any) {
+    console.error("Telegram «o'qildi» holati tekshirilmadi:", e?.errorMessage ?? e);
+  } finally {
+    readPolling = false;
+  }
 }
 
 /** Ko'p hodisa ketma-ket kelsa ham Telegram'ga bitta so'rov (debounce) */
