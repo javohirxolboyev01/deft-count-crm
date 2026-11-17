@@ -27,15 +27,17 @@ import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, use
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
-import { api, qs } from '@/lib/api';
+import { ApiError, api, qs } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { errorText } from '@/lib/errors';
 import { removeTgMessages, tgKeys, upsertTgMessage, useTgTyping, type TgPage } from '@/lib/tgCache';
 import type { TgDialog, TgMessage } from '@/lib/types';
-import { TgMediaView, isBubbleless, isVisual } from './TgMedia';
+import { AlbumGrid, TgMediaView, isBubbleless, isVisual } from './TgMedia';
 import { FormattedText, KIND_EMOJI, Tail, TgAvatar, TgTicks, TypingDots, dayLabel, dtOf, isOnline, statusText } from './tgUi';
 import { IconButton } from './TgChatList';
 import { DeleteConfirm, ForwardPicker, TranslateView } from './TgDialogs';
+import { AttachButton, DropOverlay, PendingMedia, SendMediaDialog, type MediaJob } from './TgSend';
+import { releaseItem, startUpload, type UploadTask } from '@/lib/tgSend';
 import { TgViewer } from './TgViewer';
 import { closeTrack, cycleRate, useTgPlayer } from '@/lib/tgPlayer';
 
@@ -89,6 +91,10 @@ export function TgConversation({
   const [forwarding, setForwarding] = useState<number[] | null>(null);
   const [translating, setTranslating] = useState<TgMessage | null>(null);
   const [pinIdx, setPinIdx] = useState(0);
+  // Rasm/fayl yuborish: tanlangan fayllar oynasi, chatdagi yuklanayotgan xabarlar, sudrab tashlash
+  const [sendDraft, setSendDraft] = useState<{ files: File[]; compress: boolean } | null>(null);
+  const [jobs, setJobs] = useState<MediaJob[]>([]);
+  const [dragging, setDragging] = useState(false);
   // Kanalga faqat egasi/admin yozadi; dialog hali kelmagan bo'lsa — yozish mumkin deb turiladi
   const canWrite = dialog?.canWrite ?? true;
   // Kanal va superguruh ("-100…"): o'chirish har doim hammada
@@ -108,6 +114,27 @@ export function TgConversation({
   });
   const messages = useMemo(() => (history.data?.pages ?? []).slice().reverse().flatMap((p) => p.items), [history.data]);
   const byId = useMemo(() => new Map(messages.map((m) => [m.id, m])), [messages]);
+
+  // Albom (Telegram groupedId): ketma-ket kelgan bir guruh xabar — bitta pufakcha. `m` — izohli xabar (amallar shunga),
+  // vaqt — oxirgisidan, javob/uzatilgan — birinchisidan (Telegram kabi)
+  const units = useMemo(() => {
+    const out: { m: TgMessage; album: TgMessage[] | null }[] = [];
+    for (let i = 0; i < messages.length; i++) {
+      const x = messages[i];
+      if (x.groupedId && x.media && !x.service) {
+        const g = [x];
+        while (i + 1 < messages.length && messages[i + 1].groupedId === x.groupedId) g.push(messages[++i]);
+        if (g.length > 1) {
+          const cap = g.find((y) => y.text) ?? g[0];
+          const replyToId = g.find((y) => y.replyToId)?.replyToId ?? null;
+          out.push({ album: g, m: { ...cap, replyToId, forwardedFrom: g[0].forwardedFrom, date: g[g.length - 1].date } });
+          continue;
+        }
+      }
+      out.push({ m: x, album: null });
+    }
+    return out;
+  }, [messages]);
   const readOutbox = dialog?.readOutboxMaxId ?? 0;
   const title = dialog?.title ?? '';
   const authorOf = (r: TgMessage) => (r.out ? t('tg.you') : r.senderName ?? title);
@@ -165,6 +192,63 @@ export function TgConversation({
     requestAnimationFrame(() => scrollToBottom());
   };
 
+  const openFiles = (files: File[], compress: boolean) => setSendDraft({ files, compress });
+
+  const patchJob = (key: number, p: Partial<MediaJob>) => setJobs((l) => l.map((j) => (j.key === key ? { ...j, ...p } : j)));
+  const finishJob = (job: MediaJob) => {
+    setJobs((l) => l.filter((j) => j.key !== job.key));
+    job.groups.flat().forEach((x) => releaseItem(x.item));
+  };
+
+  /** Guruhlar navbat bilan: yuklanishi tugashini kutadi → bitta xabar/albom bo'lib yuboriladi */
+  const runJob = async (job: MediaJob) => {
+    let sent = job.sent;
+    try {
+      for (let i = sent; i < job.groups.length; i++) {
+        const ids = await Promise.all(job.groups[i].map((x) => x.promise));
+        patchJob(job.key, { status: 'sending' });
+        const msgs = await api.post<TgMessage[]>(`/tg/dialogs/${peerId}/send-media`, {
+          uploads: ids,
+          caption: i === 0 ? job.caption : '',
+          replyTo: i === 0 && job.replyToId ? job.replyToId : undefined,
+        });
+        for (const m of msgs) upsertTgMessage(qc, peerId, m);
+        sent = i + 1;
+        patchJob(job.key, { sent, status: 'uploading' });
+      }
+      finishJob(job);
+      void qc.invalidateQueries({ queryKey: tgKeys.dialogs });
+      requestAnimationFrame(() => scrollToBottom());
+    } catch (e) {
+      // Xodim o'zi bekor qildi
+      if (e instanceof ApiError && e.code === 'ABORTED') return;
+      toast.error(errorText(e, t));
+      patchJob(job.key, { status: 'failed', error: e, sent });
+    }
+  };
+
+  const addJob = (groups: UploadTask[][], caption: string) => {
+    const job: MediaJob = { key: Date.now(), groups, sent: 0, caption, replyToId: replyTo?.id ?? null, status: 'uploading', error: null };
+    setReplyTo(null);
+    setJobs((l) => [...l, job]);
+    void runJob(job);
+    requestAnimationFrame(() => scrollToBottom());
+  };
+
+  const cancelJob = (job: MediaJob) => {
+    job.groups.slice(job.sent).flat().forEach((x) => x.abort());
+    finishJob(job);
+  };
+
+  const retryJob = (job: MediaJob) => {
+    // Serverdagi yuklama eskirgan bo'lsa — hammasi qaytadan, aks holda faqat xato bo'lganlari
+    const all = job.error instanceof ApiError && job.error.code === 'TG_UPLOAD_EXPIRED';
+    const groups = job.groups.map((g, gi) => (gi < job.sent ? g : g.map((x) => (all || x.status === 'error' ? startUpload(x.item, x.kind !== 'FILE') : x))));
+    const next: MediaJob = { ...job, groups, status: 'uploading', error: null };
+    setJobs((l) => l.map((j) => (j.key === job.key ? next : j)));
+    void runJob(next);
+  };
+
   const saveEdit = async (m: TgMessage, text: string) => {
     setEditing(null);
     if (text === m.text) return;
@@ -205,11 +289,15 @@ export function TgConversation({
 
   const copyText = (text: string) => void navigator.clipboard.writeText(text).then(() => toast.success(t('tg.copied')));
 
-  const toggleSelect = (id: number) =>
+  // Albom bitta pufakcha: belgilash/olib tashlash hammasiga birdan
+  const toggleMany = (ids: number[]) =>
     setSelected((cur) => {
       const next = new Set(cur ?? []);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      const all = ids.every((id) => next.has(id));
+      for (const id of ids) {
+        if (all) next.delete(id);
+        else next.add(id);
+      }
       return next.size ? next : null;
     });
 
@@ -319,7 +407,14 @@ export function TgConversation({
   const status = dialog ? statusText(dialog, t) : '';
 
   return (
-    <div className="relative flex h-full min-w-0 flex-col">
+    <div
+      className="relative flex h-full min-w-0 flex-col"
+      onDragEnter={(e) => {
+        // Faqat fayl sudralganda (matn/havola emas) va yozish mumkin bo'lsa
+        if (canWrite && !editing && e.dataTransfer.types.includes('Files')) setDragging(true);
+      }}
+    >
+      {dragging && <DropOverlay onFiles={openFiles} onDone={() => setDragging(false)} />}
       {/* Sarlavha */}
       {selected ? (
         <div className="relative z-[2] flex h-14 shrink-0 items-center gap-1 px-2 shadow-[0_1px_0_var(--tg-border)] sm:gap-2 sm:px-4" style={{ background: 'var(--tg-bg)' }}>
@@ -392,15 +487,22 @@ export function TgConversation({
             {history.isLoading && <Pill>{t('common.loading')}</Pill>}
             {history.error && <Pill>{errorText(history.error, t)}</Pill>}
             {history.isSuccess && !messages.length && !pending.length && <Pill>{t('tg.noMessages')}</Pill>}
-            {messages.map((m, i) => {
-              const prev = messages[i - 1];
-              const next = messages[i + 1];
+            {units.map((u, i) => {
+              const m = u.m;
+              const firstId = u.album ? u.album[0].id : m.id;
+              const lastId = u.album ? u.album[u.album.length - 1].id : m.id;
+              const prevU = units[i - 1];
+              const prev = prevU?.m;
+              const prevLastId = prevU ? (prevU.album ? prevU.album[prevU.album.length - 1].id : prevU.m.id) : 0;
+              const next = units[i + 1]?.m;
               const day = (x: TgMessage) => dtOf(x.date).toISODate();
               const newDay = !prev || day(prev) !== day(m);
-              const showUnread = unreadFrom.current !== null && !m.out && m.id > unreadFrom.current && !(prev && !prev.out && prev.id > unreadFrom.current);
+              const unreadAfter = unreadFrom.current;
+              const showUnread = unreadAfter !== null && !m.out && lastId > unreadAfter && !(prev && !prev.out && prevLastId > unreadAfter);
               const same = (x?: TgMessage) => !!x && !x.service && !m.service && x.out === m.out && x.senderId === m.senderId && day(x) === day(m);
+              const ids = u.album ? u.album.map((a) => a.id) : [m.id];
               return (
-                <Fragment key={m.id}>
+                <Fragment key={firstId}>
                   {newDay && <DateSep sec={m.date} />}
                   {showUnread && (
                     <div data-unread-sep className="-mx-4 my-2 py-1 text-center text-sm font-medium text-[var(--tg-secondary)]" style={{ background: 'var(--tg-bg)', opacity: 0.94 }}>
@@ -413,24 +515,29 @@ export function TgConversation({
                     <Bubble
                       peerId={peerId}
                       m={m}
+                      album={u.album}
                       first={!same(prev) || showUnread}
                       last={!same(next)}
                       readOutbox={readOutbox}
                       group={dialog?.kind === 'GROUP'}
                       reply={m.replyToId ? (byId.get(m.replyToId) ?? null) : null}
                       replyName={authorOf}
-                      highlighted={highlight === m.id}
+                      highlighted={highlight !== null && ids.includes(highlight)}
                       onJump={(id) => void jumpToAny(id)}
-                      onMenu={(x, y) => setMenu({ m, x, y })}
-                      onReply={() => canWrite && setReplyTo(m)}
+                      // Albomda o'ng tugma qaysi katakda bosilgan bo'lsa — o'sha xabar uchun menyu
+                      onMenu={(x, y, id) => setMenu({ m: byId.get(id ?? m.id) ?? m, x, y })}
+                      onReply={() => canWrite && setReplyTo(byId.get(m.id) ?? m)}
                       selecting={!!selected}
-                      selected={!!selected?.has(m.id)}
-                      onToggle={() => toggleSelect(m.id)}
+                      selected={!!selected && ids.every((id) => selected.has(id))}
+                      onToggle={() => toggleMany(ids)}
                     />
                   )}
                 </Fragment>
               );
             })}
+            {jobs.map((j) => (
+              <PendingMedia key={j.key} job={j} onCancel={() => cancelJob(j)} onRetry={() => retryJob(j)} />
+            ))}
             {pending.map((p, i) => (
               <PendingBubble
                 key={p.key}
@@ -476,6 +583,7 @@ export function TgConversation({
           editing={editing}
           onCancelEdit={() => setEditing(null)}
           onSaveEdit={(text) => editing && void saveEdit(editing, text)}
+          onFiles={openFiles}
           onEditLast={() => {
             // Telegram kabi: bo'sh maydonda ↑ — oxirgi o'z xabarini tahrirlash
             const last = [...messages].reverse().find(canEdit);
@@ -509,6 +617,7 @@ export function TgConversation({
           onClose={() => setForwarding(null)}
         />
       )}
+      {sendDraft && <SendMediaDialog files={sendDraft.files} compress={sendDraft.compress} onClose={() => setSendDraft(null)} onSend={addJob} />}
       {translating && <TranslateView peerId={peerId} m={translating} onClose={() => setTranslating(null)} />}
       <TgViewer peerId={peerId} messages={messages} authorOf={authorOf} onForward={(id) => setForwarding([id])} />
     </div>
@@ -636,6 +745,7 @@ function corners(out: boolean, first: boolean, last: boolean) {
 function Bubble({
   peerId,
   m,
+  album,
   first,
   last,
   readOutbox,
@@ -652,6 +762,7 @@ function Bubble({
 }: {
   peerId: string;
   m: TgMessage;
+  album: TgMessage[] | null;
   first: boolean;
   last: boolean;
   readOutbox: number;
@@ -660,7 +771,7 @@ function Bubble({
   replyName: (r: TgMessage) => string;
   highlighted: boolean;
   onJump: (id: number) => void;
-  onMenu: (x: number, y: number) => void;
+  onMenu: (x: number, y: number, msgId?: number) => void;
   onReply: () => void;
   selecting: boolean;
   selected: boolean;
@@ -674,8 +785,15 @@ function Bubble({
     press.current = null;
   };
   const media = m.media;
-  const bubbleless = isBubbleless(m);
-  const visual = !!media && isVisual(m);
+  const visualAlbum = !!album && album.every(isVisual);
+  const bubbleless = !album && isBubbleless(m);
+  const visual = album ? visualAlbum : !!media && isVisual(m);
+  const maxId = album ? album[album.length - 1].id : m.id;
+  // Albom katagi ustida bosilgan bo'lsa — o'sha xabar
+  const tileId = (el: EventTarget | null) => {
+    const tile = (el as HTMLElement | null)?.closest?.('[data-tile]') as HTMLElement | null;
+    return tile ? Number(tile.dataset.tile) : undefined;
+  };
   const visualOnly = visual && !m.text;
   const hasHeader = (group && !m.out && first && !!m.senderName) || !!m.forwardedFrom || !!m.replyToId;
   const meta = m.out ? 'var(--tg-out-meta)' : 'var(--tg-in-meta)';
@@ -687,7 +805,7 @@ function Bubble({
       {m.sentBy && <span className="mr-1 max-w-[110px] truncate">{m.sentBy}</span>}
       {m.edited && <span className="mr-1">{t('tg.edited')}</span>}
       <span>{dtOf(m.date).toFormat('HH:mm')}</span>
-      {m.out && <TgTicks read={m.id <= readOutbox} className="-mr-0.5 ml-0.5" />}
+      {m.out && <TgTicks read={maxId <= readOutbox} className="-mr-0.5 ml-0.5" />}
     </>
   );
   // Rasm/stiker ustida — qorong'i yarim shaffof "tabletka"
@@ -723,18 +841,19 @@ function Bubble({
       onContextMenu={(e) => {
         e.preventDefault();
         cancelPress();
-        onMenu(e.clientX, e.clientY);
+        onMenu(e.clientX, e.clientY, tileId(e.target));
       }}
       onTouchStart={(e) => {
         if (selecting) return;
         const p = e.touches[0];
         const x = p.clientX;
         const y = p.clientY;
+        const id = tileId(e.target);
         cancelPress();
         press.current = setTimeout(() => {
           press.current = null;
           navigator.vibrate?.(10);
-          onMenu(x, y);
+          onMenu(x, y, id);
         }, 450);
       }}
       onTouchMove={cancelPress}
@@ -789,7 +908,27 @@ function Bubble({
             )}
           </div>
         )}
-        {media && (
+        {album ? (
+          visualAlbum ? (
+            <div className={cn(hasHeader && 'pt-0.5')}>
+              <AlbumGrid
+                peerId={peerId}
+                items={album}
+                overlay={visualOnly ? overlayTime : undefined}
+                radiusClass={cn(!hasHeader && 'rounded-t-[15px]', visualOnly && 'rounded-b-[15px]', visualOnly && last && (m.out ? 'rounded-br-none' : 'rounded-bl-none'))}
+              />
+            </div>
+          ) : (
+            // Fayllar albomi: bitta pufakchada ketma-ket (Telegram kabi)
+            <div className={cn('flex flex-col gap-1.5 px-2.5 pt-1.5', !m.text && 'pb-1.5')}>
+              {album.map((a) => (
+                <div key={a.id} data-tile={a.id}>
+                  <TgMediaView peerId={peerId} m={a} author={replyName(a)} />
+                </div>
+              ))}
+            </div>
+          )
+        ) : media && (
           <div className={cn(!visual && !bubbleless && 'px-2.5 pt-1.5', !visual && !m.text && !bubbleless && 'pb-1.5', visual && hasHeader && 'pt-0.5')}>
             <TgMediaView
               peerId={peerId}
@@ -876,6 +1015,7 @@ function Composer({
   onCancelEdit,
   onSaveEdit,
   onEditLast,
+  onFiles,
 }: {
   peerId: string;
   replyTo: TgMessage | null;
@@ -887,6 +1027,7 @@ function Composer({
   onSaveEdit: (text: string) => void;
   /** true — tahrirlanadigan xabar topildi */
   onEditLast: () => boolean;
+  onFiles: (files: File[], compress: boolean) => void;
 }) {
   const { t } = useTranslation();
   const [text, setText] = useState('');
@@ -1020,6 +1161,14 @@ function Composer({
               value={text}
               maxLength={4096}
               onChange={(e) => setText(e.target.value)}
+              onPaste={(e) => {
+                // Ctrl+V bilan rasm/fayl (skrinshot) — yuborish oynasi ochiladi
+                const fs = [...e.clipboardData.files];
+                if (fs.length && !editing) {
+                  e.preventDefault();
+                  onFiles(fs, true);
+                }
+              }}
               onKeyDown={(e) => {
                 // Enter — yuborish, Shift+Enter — yangi qator (Telegram kabi)
                 if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -1033,6 +1182,8 @@ function Composer({
               aria-label={t('tg.placeholder')}
               className="tg-scroll max-h-[260px] min-h-[54px] grow resize-none bg-transparent px-2 py-[15px] text-base leading-[1.3125] outline-none placeholder:text-[var(--tg-secondary)] focus-visible:ring-0 focus-visible:ring-offset-0"
             />
+            {/* 📎 — Telegram kabi maydonning o'ng chetida (tahrirlashda yo'q) */}
+            {!editing && <AttachButton onFiles={onFiles} />}
           </div>
           {emoji && (
             <div

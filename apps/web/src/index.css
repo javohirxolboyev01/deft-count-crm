@@ -447,7 +447,13 @@
   --tg-hover: rgb(var(--c-gray-100));
   --tg-border: rgb(var(--c-gray-200));
   --tg-search: rgb(var(--c-page));
-  --tg-rail: rgb(var(--c-page)); /* jildlar ustuni (Telegram Desktop'dagi chap panel) */
+  /* Jildlar ustuni (Telegram Desktop'dagi chap panel): fon, hover, faol jild. Ranglar qattiq (gray-* qorong'ida aylanadi) */
+  --tg-rail: rgb(var(--c-page));
+  --tg-rail-hover: color-mix(in srgb, #1a344d 6%, var(--tg-rail));
+  --tg-rail-active: color-mix(in srgb, #37a0ad 15%, var(--tg-rail));
+  --tg-rail-accent: #2e8a96;
+  --tg-rail-text: #4a5d73;
+  --tg-rail-icon: #8193a7;
   --tg-in: #ffffff;
   --tg-out: #37a0ad;
   --tg-out-text: #ffffff;
@@ -470,6 +476,11 @@
   color: var(--tg-text);
 }
 .dark .tg {
+  --tg-rail-hover: color-mix(in srgb, #ffffff 6%, var(--tg-rail));
+  --tg-rail-active: color-mix(in srgb, #37a0ad 22%, var(--tg-rail));
+  --tg-rail-accent: #5fd0d6;
+  --tg-rail-text: #aeb8c4;
+  --tg-rail-icon: #6f7e90;
   --tg-link: #4cc4cc; /* brand-400 */
   --tg-in: #374151;
   --tg-out: #2e8a96; /* brand-600 */
@@ -485,6 +496,25 @@
     #111827;
 }
 /* Fon ustidagi nozik naqsh (o'zimizniki: nuqtalar) */
+/* Jild tugmasi: belgi halqasi tugma foniga mos bo'lsin (--ring) */
+.tg-rail-item {
+  --ring: var(--tg-rail);
+  color: var(--tg-rail-icon);
+}
+.tg-rail-item:hover {
+  --ring: var(--tg-rail-hover);
+  background: var(--tg-rail-hover);
+}
+.tg-rail-item[aria-current='true'] {
+  --ring: var(--tg-rail-active);
+  background: var(--tg-rail-active);
+  color: var(--tg-rail-accent);
+}
+.tg-rail-item:focus-visible {
+  outline: 2px solid var(--tg-rail-accent);
+  outline-offset: -2px;
+}
+
 .tg-chat-bg {
   background: var(--tg-chat-bg);
 }

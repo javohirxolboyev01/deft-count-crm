@@ -31,6 +31,7 @@ import {
   translate,
   unreadTotal,
 } from './tgAccount';
+import { UPLOAD_MAX_BYTES, dropUpload, receiveUpload, sendUploaded } from './tgUpload';
 
 // «Telegram» bo'limi (V53): firma akkaunti. Ko'rish va yozish — rahbar va buxgalterlar (app.ts: requireStaff),
 // ulash/uzish — faqat rahbar. Operatorga yopiq (mijozlar bilan yozishma buxgalteriya ishi).
@@ -155,6 +156,55 @@ tgRouter.post('/dialogs/:peerId/forward', async (req, res) => {
 tgRouter.post('/dialogs/:peerId/translate', async (req, res) => {
   const { ids, to } = parse(z.object({ ids: msgIds(20), to: z.enum(['uz', 'ru', 'en']) }), req.body);
   res.json(await translate(peerId(req.params.peerId), ids, to));
+});
+
+// ---------------- Fayl yuborish (tgUpload.ts: serverda ham, bazada ham saqlanmaydi) ----------------
+
+// Ommaviy yuborishdan himoya: bir xodim 15 daqiqada ko'pi bilan 150 ta fayl
+const uploadLimiter = rateLimit({
+  windowMs: 15 * 60_000,
+  limit: 150,
+  keyGenerator: (req) => `u${me(req).id}`,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { code: 'RATE_LIMITED', message: 'Juda ko\'p fayl', details: null },
+});
+
+// Tana — faylning o'zi (application/octet-stream: express.json uni o'qimaydi), ma'lumot — query'da
+tgRouter.post('/upload', uploadLimiter, async (req, res) => {
+  const q = parse(
+    z.object({
+      kind: z.enum(['PHOTO', 'VIDEO', 'FILE']),
+      name: z.string().trim().min(1).max(200).transform((s) => s.replace(/[\\/\u0000-\u001f]/g, '_')),
+      mime: z.string().trim().max(100).regex(/^[\w.+-]+\/[\w.+-]+$/).default('application/octet-stream'),
+      w: z.coerce.number().int().min(0).max(10000).optional(),
+      h: z.coerce.number().int().min(0).max(10000).optional(),
+      duration: z.coerce.number().min(0).max(86400).optional(),
+    }),
+    req.query,
+  );
+  if (!String(req.headers['content-type'] ?? '').startsWith('application/octet-stream')) throw new AppError(415, 'VALIDATION', 'Fayl application/octet-stream bo\'lishi kerak');
+  // Sarlavhadagi hajm katta bo'lsa — fayl qabul qilinmaydi (oqim ichida ham tekshiriladi)
+  if (Number(req.headers['content-length'] ?? 0) > UPLOAD_MAX_BYTES) throw new AppError(413, 'TG_FILE_TOO_LARGE', 'Fayl juda katta', { maxBytes: UPLOAD_MAX_BYTES });
+  const video = q.kind === 'VIDEO' ? { w: q.w ?? 0, h: q.h ?? 0, duration: q.duration ?? 0 } : null;
+  res.status(201).json(await receiveUpload(req, { userId: me(req).id, kind: q.kind, name: q.name, mime: q.mime.toLowerCase(), video }));
+});
+
+tgRouter.delete('/upload/:id', (req, res) => {
+  dropUpload(parse(z.string().uuid(), req.params.id), me(req).id);
+  res.json({ ok: true });
+});
+
+tgRouter.post('/dialogs/:peerId/send-media', async (req, res) => {
+  const { uploads, caption, replyTo } = parse(
+    z.object({
+      uploads: z.array(z.string().uuid()).min(1).max(10),
+      caption: z.string().trim().max(1024).default(''),
+      replyTo: z.number().int().positive().optional(),
+    }),
+    req.body,
+  );
+  res.status(201).json(await sendUploaded(peerId(req.params.peerId), uploads, caption, replyTo, me(req)));
 });
 
 tgRouter.post('/dialogs/:peerId/read', async (req, res) => {

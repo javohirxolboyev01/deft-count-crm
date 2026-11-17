@@ -106,7 +106,7 @@ export function TgChatList({
     <div className="flex h-full">
       {/* Katta ekran: jildlar chapda alohida ustun (Telegram Desktop) */}
       {hasFolders && (
-        <nav className="tg-scroll hidden w-[84px] shrink-0 flex-col items-stretch gap-1 overflow-y-auto py-2 lg:flex" style={{ background: 'var(--tg-rail)', borderRight: '1px solid var(--tg-border)' }} aria-label={t('tg.folders')}>
+        <nav className="tg-scroll hidden w-[84px] shrink-0 flex-col items-stretch gap-0.5 overflow-y-auto py-1.5 lg:flex" style={{ background: 'var(--tg-rail)', borderRight: '1px solid var(--tg-border)' }} aria-label={t('tg.folders')}>
           {tabs.map((f) => {
             const on = !archive && f.id === curId;
             return (
@@ -114,19 +114,25 @@ export function TgChatList({
                 key={f.id ?? 'all'}
                 type="button"
                 onClick={() => pickFolder(f.id)}
-                title={f.title}
                 aria-current={on ? 'true' : undefined}
-                className={cn('flex cursor-pointer flex-col items-center gap-1 px-1 py-2 transition-colors hover:bg-[var(--tg-hover)]', on ? 'text-[var(--tg-primary)]' : 'text-[var(--tg-secondary)]')}
+                className="tg-rail-item relative flex cursor-pointer flex-col items-center gap-1 px-1 py-2.5 transition-colors"
               >
+                {/* Faol jild: chapda urg'u chizig'i (Telegram Desktop kabi) */}
+                {on && <span className="absolute inset-y-2.5 left-0 w-[3px] rounded-r-full" style={{ background: 'var(--tg-rail-accent)' }} />}
                 <span className="relative">
-                  <f.icon className="h-8 w-8" strokeWidth={on ? 2.2 : 1.8} />
+                  <f.icon className="h-8 w-8" strokeWidth={on ? 2 : 1.7} fill={on ? 'currentColor' : 'none'} fillOpacity={on ? 0.18 : 0} />
                   {f.badge.n > 0 && (
                     <span className="absolute -right-3 -top-2">
                       <Badge n={f.badge.n} muted={f.badge.muted} ring />
                     </span>
                   )}
                 </span>
-                <span className={cn('line-clamp-2 w-full break-words text-center text-[13px] leading-tight', on ? 'font-semibold' : 'font-medium text-[var(--tg-text)]')}>{f.title}</span>
+                <span
+                  className={cn('line-clamp-2 w-full break-words text-center text-[13px] leading-tight', on ? 'font-semibold' : 'font-medium')}
+                  style={on ? undefined : { color: 'var(--tg-rail-text)' }}
+                >
+                  {f.title}
+                </span>
               </button>
             );
           })}
@@ -309,7 +315,7 @@ function Badge({ n, muted, inverted, ring, small }: { n: number; muted?: boolean
         ...(inverted
           ? { background: '#fff', color: 'var(--tg-primary)' }
           : { background: muted ? 'var(--tg-badge-muted)' : 'var(--tg-badge)', color: '#fff' }),
-        ...(ring ? { boxShadow: '0 0 0 2px var(--tg-rail)' } : {}),
+        ...(ring ? { boxShadow: '0 0 0 2px var(--ring, var(--tg-rail))' } : {}),
       }}
     >
       {n > 9999 ? `${Math.floor(n / 1000)}K` : n}

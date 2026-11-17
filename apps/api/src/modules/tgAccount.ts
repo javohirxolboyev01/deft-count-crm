@@ -579,6 +579,8 @@ export interface MessageDto {
   } | null;
   /** CRM'dan yozgan xodim (Telegram ilovasidan yozilgan bo'lsa null) */
   sentBy: string | null;
+  /** Albom (Telegram'da bitta to'r bo'lib ko'rinadigan rasm/video/fayllar guruhi) */
+  groupedId: string | null;
 }
 
 function mediaDto(m: any): MessageDto['media'] {
@@ -692,6 +694,7 @@ function toMessage(m: any, isGroup: boolean, sentBy: string | null = null): Mess
     entities: service ? [] : entitiesOf(m),
     media: service ? null : mediaDto(m),
     sentBy,
+    groupedId: !service && m.groupedId ? m.groupedId.toString() : null,
   };
 }
 
@@ -735,6 +738,27 @@ export async function listMessages(peerId: string, before: number | undefined, l
   const data = { items, hasMore: msgs.length === limit };
   pageCache.set(key, { at: Date.now(), data });
   return data;
+}
+
+// ---------------- Fayl yuborish uchun (tgUpload.ts) ----------------
+
+export const tgClient = () => requireConnected();
+export const peerInput = (peerId: string) => inputPeer(peerId);
+
+/** CRM'dan yuborilgan xabar(lar): muallif belgisi, chatlar ro'yxati va xodimlarga real vaqt */
+export async function recordSent(peerId: string, msgs: any[], userId: number, userName: string) {
+  if (!msgs.length) return [];
+  await pool.query(
+    `INSERT INTO tg_sent_message (peer_id, message_id, user_id) SELECT $1, unnest($2::bigint[]), $3 ON CONFLICT DO NOTHING`,
+    [peerId, msgs.map((m) => m.id), userId],
+  );
+  const group = isGroupPeer(peerId);
+  const dtos = msgs.map((m) => toMessage(m, group, userName));
+  dropPageCache(peerId);
+  touchDialog(peerId, msgs.at(-1));
+  signalDialogs(peerId);
+  for (const d of dtos) broadcast('tg-message', { peerId, message: d });
+  return dtos;
 }
 
 export async function sendText(peerId: string, text: string, userId: number, userName: string, replyTo?: number) {

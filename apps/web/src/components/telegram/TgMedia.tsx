@@ -97,6 +97,7 @@ export function TgMediaView({
   author,
   overlay,
   radiusClass,
+  fill,
 }: {
   peerId: string;
   m: TgMessage;
@@ -104,14 +105,16 @@ export function TgMediaView({
   author: string;
   overlay?: ReactNode;
   radiusClass?: string;
+  /** Albom katagi: o'lcham katakdan olinadi */
+  fill?: boolean;
 }) {
   const media = m.media!;
   switch (media.kind) {
     case 'PHOTO':
-      return <Photo peerId={peerId} m={m} overlay={overlay} radiusClass={radiusClass} />;
+      return <Photo peerId={peerId} m={m} overlay={overlay} radiusClass={radiusClass} fill={fill} />;
     case 'VIDEO':
     case 'GIF':
-      return <VideoBox peerId={peerId} m={m} overlay={overlay} radiusClass={radiusClass} />;
+      return <VideoBox peerId={peerId} m={m} overlay={overlay} radiusClass={radiusClass} fill={fill} />;
     case 'VIDEO_NOTE':
       return <RoundVideo peerId={peerId} m={m} overlay={overlay} author={author} />;
     case 'STICKER':
@@ -139,9 +142,11 @@ function ErrorBox({ error, style }: { error: unknown; style?: React.CSSPropertie
   );
 }
 
-function Photo({ peerId, m, overlay, radiusClass }: { peerId: string; m: TgMessage; overlay?: ReactNode; radiusClass?: string }) {
+const FILL = { width: '100%', height: '100%' };
+
+function Photo({ peerId, m, overlay, radiusClass, fill }: { peerId: string; m: TgMessage; overlay?: ReactNode; radiusClass?: string; fill?: boolean }) {
   const { url, error } = useMedia(peerId, m.id, true);
-  const style = fit(m.media!.width, m.media!.height);
+  const style = fill ? FILL : fit(m.media!.width, m.media!.height);
   if (error) return <ErrorBox error={error} style={style} />;
   return (
     <div className={cn('relative max-w-full overflow-hidden', radiusClass)} style={style}>
@@ -173,12 +178,12 @@ function PlayCircle({ loading, small }: { loading?: boolean; small?: boolean }) 
 }
 
 /** Pufakchadagi video: Telegram kabi kichik rasm + ▶ + davomiylik; bosilsa ko'ruvchida o'ynaydi. GIF — o'zi ovozsiz aylanadi */
-function VideoBox({ peerId, m, overlay, radiusClass }: { peerId: string; m: TgMessage; overlay?: ReactNode; radiusClass?: string }) {
+function VideoBox({ peerId, m, overlay, radiusClass, fill }: { peerId: string; m: TgMessage; overlay?: ReactNode; radiusClass?: string; fill?: boolean }) {
   const media = m.media!;
   const gif = media.kind === 'GIF';
   const thumb = useMedia(peerId, m.id, media.hasThumb, true);
   const src = useStream(peerId, m.id, gif);
-  const style = fit(media.width, media.height);
+  const style = fill ? FILL : fit(media.width, media.height);
   return (
     <button
       type="button"
@@ -202,6 +207,52 @@ function VideoBox({ peerId, m, overlay, radiusClass }: { peerId: string; m: TgMe
       {gif && <span className="pointer-events-none absolute left-1.5 top-1.5 rounded-full bg-black/45 px-1.5 py-0.5 text-xs font-medium text-on-brand">GIF</span>}
       {overlay}
     </button>
+  );
+}
+
+// ---------------- Albom (Telegram kabi to'r) ----------------
+
+/** Katak eni/bo'yi nisbati: juda tor yoki juda keng rasm to'rni buzmasin */
+const ratioOf = (m: TgMessage) => {
+  const w = m.media?.width ?? 0;
+  const h = m.media?.height ?? 0;
+  return w && h ? Math.min(2.5, Math.max(0.6, w / h)) : 1;
+};
+
+/** Qatorlarga bo'lish (Telegram mozaikasiga yaqin): har qatorda 1–3 ta, qator balandligi kataklar nisbatidan */
+function albumRows(items: TgMessage[]): TgMessage[][] {
+  const n = items.length;
+  const avg = items.reduce((s, m) => s + ratioOf(m), 0) / n;
+  const sizes: Record<number, number[]> = { 2: avg > 1.2 ? [1, 1] : [2], 3: [1, 2], 4: [2, 2], 5: [2, 3], 6: [3, 3], 7: [2, 2, 3], 8: [2, 3, 3], 9: [3, 3, 3], 10: [2, 2, 3, 3] };
+  const plan = sizes[n] ?? [n];
+  const rows: TgMessage[][] = [];
+  let i = 0;
+  for (const k of plan) {
+    rows.push(items.slice(i, i + k));
+    i += k;
+  }
+  return rows;
+}
+
+/** Albom: rasm/video bitta to'r bo'lib; har katak bosilsa ko'ruvchi ochiladi (shu albom ichida ←/→) */
+export function AlbumGrid({ peerId, items, overlay, radiusClass }: { peerId: string; items: TgMessage[]; overlay?: ReactNode; radiusClass?: string }) {
+  return (
+    <div className={cn('relative flex w-[min(420px,calc(100vw-96px))] max-w-full flex-col gap-[2px] overflow-hidden', radiusClass)}>
+      {albumRows(items).map((row, ri) => {
+        const ratios = row.map(ratioOf);
+        const sum = ratios.reduce((a, b) => a + b, 0);
+        return (
+          <div key={ri} className="flex gap-[2px]" style={{ aspectRatio: `${sum} / 1` }}>
+            {row.map((m, j) => (
+              <div key={m.id} data-tile={m.id} data-mid={m.id} className="relative h-full min-w-0 overflow-hidden" style={{ flex: `${ratios[j]} 1 0` }}>
+                <TgMediaView peerId={peerId} m={m} author="" fill />
+              </div>
+            ))}
+          </div>
+        );
+      })}
+      {overlay}
+    </div>
   );
 }
 

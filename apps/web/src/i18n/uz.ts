@@ -38,6 +38,7 @@ const uz = {
     TG_LOGIN_EXPIRED: 'Ulash vaqti tugadi — qaytadan boshlang', TG_LOGIN_BUSY: 'Boshqa rahbar hozir ulash jarayonida',
     TG_FLOOD_WAIT: "Telegram biroz kutishni so'radi — birozdan keyin qayta urining", TG_WRITE_FORBIDDEN: "Bu chatga yozib bo'lmaydi",
     TG_EDIT_FORBIDDEN: "Bu xabarni tahrirlab bo'lmaydi (48 soatdan oshgan yoki boshqa odamniki)", TG_DELETE_FORBIDDEN: "Bu xabarni o'chirishga huquq yo'q", TG_FORWARD_FORBIDDEN: 'Bu chatdan uzatish taqiqlangan', TG_TRANSLATE_FAILED: "Tarjima qilib bo'lmadi",
+    TG_UPLOAD_EXPIRED: 'Fayl yuklanishi eskirgan — qaytadan tanlang', NETWORK: 'Tarmoq xatosi — internetni tekshiring', ABORTED: 'Bekor qilindi',
     TG_FILE_TOO_LARGE: 'Fayl juda katta — Telegram ilovasida oching', TG_ERROR: "Telegram bilan bog'lanishda xato",
     TRANSFER_PENDING: "Bu vazifa bo'yicha javob kutilayotgan so'rov bor", TRANSFER_KIND: "Faqat shoshilinch va qo'lda yaratilgan vazifani o'tkazish mumkin",
     TASK_NOT_DELETABLE: "Faqat ochiq shoshilinch va qo'lda yaratilgan vazifani o'chirish mumkin",
@@ -502,6 +503,8 @@ const uz = {
     deleteText_one: "Xabar Telegram'dan o'chiriladi. Bu amalni qaytarib bo'lmaydi.", deleteText_few: "Xabar Telegram'dan o'chiriladi. Bu amalni qaytarib bo'lmaydi.", deleteText_many: "Xabar Telegram'dan o'chiriladi. Bu amalni qaytarib bo'lmaydi.", deleteText_other: "Xabar Telegram'dan o'chiriladi. Bu amalni qaytarib bo'lmaydi.",
     lang: { uz: "O'zbekcha", ru: 'Ruscha', en: 'Inglizcha' },
     mediaOf: '{{kind}} {{n}} / {{total}}', zoomIn: 'Kattalashtirish', zoomOut: 'Kichraytirish', prevMedia: 'Oldingi', nextMedia: 'Keyingi', seek: "Vaqt chizig'i", mute: 'Ovoz', volume: 'Ovoz balandligi', speed: 'Tezlik', pip: 'Kichik oynada', fullscreen: "To'liq ekran", exitFullscreen: "To'liq ekrandan chiqish",
+    compress: 'Rasm/videoni siqib yuborish (tezroq)', groupItems: 'Albom qilib guruhlash', caption: "Izoh qo'shish", attach: 'Biriktirish', photoOrVideo: 'Rasm yoki video', document: 'Fayl', dropFiles: 'Fayl sifatida yuborish', dropFilesSub: 'Shu yerga tashlang — asl sifatda, siqilmasdan', dropMedia: 'Tezkor yuborish', dropMediaSub: "Shu yerga tashlang — rasm siqiladi, video o'ynaladigan bo'ladi", sending: 'Yuborilmoqda…', uploading: 'Yuklanmoqda',
+    sendFiles_one: '{{count}} ta faylni yuborish', sendFiles_few: '{{count}} ta faylni yuborish', sendFiles_many: '{{count}} ta faylni yuborish', sendFiles_other: '{{count}} ta faylni yuborish',
     kind: {
       PHOTO: 'Rasm', VIDEO: 'Video', VIDEO_NOTE: 'Video xabar', VOICE: 'Ovozli xabar', AUDIO: 'Audio', STICKER: 'Stiker', GIF: 'GIF',
       FILE: 'Fayl', CONTACT: 'Kontakt', LOCATION: 'Joylashuv', POLL: "So'rovnoma", OTHER: 'Xabar',

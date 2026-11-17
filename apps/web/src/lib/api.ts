@@ -109,9 +109,44 @@ async function blob(url: string, retry = true): Promise<Blob> {
   return r.blob();
 }
 
+/**
+ * Katta faylni yuklash, progress bilan (fetch yuklash progressini bermaydi — XMLHttpRequest).
+ * Tana — faylning o'zi (application/octet-stream), bekor qilish — AbortSignal orqali.
+ */
+function upload<T>(url: string, file: Blob, opts: { onProgress?: (f: number) => void; signal?: AbortSignal } = {}, retry = true): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `/api${url}`);
+    if (accessToken) xhr.setRequestHeader('Authorization', `Bearer ${accessToken}`);
+    xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+    xhr.upload.onprogress = (e) => e.lengthComputable && opts.onProgress?.(e.loaded / e.total);
+    const onAbort = () => xhr.abort();
+    opts.signal?.addEventListener('abort', onAbort);
+    xhr.onabort = () => reject(new ApiError(0, 'ABORTED', 'Bekor qilindi'));
+    xhr.onerror = () => reject(new ApiError(0, 'NETWORK', 'Tarmoq xatosi'));
+    xhr.onload = async () => {
+      opts.signal?.removeEventListener('abort', onAbort);
+      if (xhr.status === 401 && retry) {
+        if (await tryRefresh()) return upload<T>(url, file, opts, false).then(resolve, reject);
+        onAuthLost?.();
+      }
+      let data: any = {};
+      try {
+        data = JSON.parse(xhr.responseText || '{}');
+      } catch {
+        /* bo'sh javob */
+      }
+      if (xhr.status >= 200 && xhr.status < 300) resolve(data as T);
+      else reject(new ApiError(xhr.status, data.code ?? 'HTTP_' + xhr.status, data.message ?? xhr.statusText, data.details));
+    };
+    xhr.send(file);
+  });
+}
+
 export const api = {
   download,
   blob,
+  upload,
   get: <T>(url: string) => request<T>('GET', url),
   post: <T>(url: string, body?: Body) => request<T>('POST', url, body ?? {}),
   patch: <T>(url: string, body?: Body) => request<T>('PATCH', url, body),

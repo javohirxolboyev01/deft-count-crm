@@ -41,6 +41,7 @@ const ru: Dict = {
     TG_LOGIN_EXPIRED: 'Время подключения истекло — начните заново', TG_LOGIN_BUSY: 'Другой руководитель сейчас подключает аккаунт',
     TG_FLOOD_WAIT: 'Telegram попросил подождать — повторите чуть позже', TG_WRITE_FORBIDDEN: 'В этот чат нельзя писать',
     TG_EDIT_FORBIDDEN: 'Это сообщение нельзя изменить (прошло больше 48 часов или оно не ваше)', TG_DELETE_FORBIDDEN: 'Нет прав на удаление этого сообщения', TG_FORWARD_FORBIDDEN: 'Пересылка из этого чата запрещена', TG_TRANSLATE_FAILED: 'Не удалось перевести',
+    TG_UPLOAD_EXPIRED: 'Загрузка устарела — выберите файл заново', NETWORK: 'Ошибка сети — проверьте интернет', ABORTED: 'Отменено',
     TG_FILE_TOO_LARGE: 'Файл слишком большой — откройте в приложении Telegram', TG_ERROR: 'Ошибка связи с Telegram',
     TRANSFER_PENDING: 'По этой задаче уже есть запрос, ожидающий ответа', TRANSFER_KIND: 'Передать можно только срочную или созданную вручную задачу',
     TASK_NOT_DELETABLE: 'Удалить можно только открытую срочную или созданную вручную задачу',
@@ -506,6 +507,8 @@ const ru: Dict = {
     deleteText_one: 'Вы точно хотите удалить это сообщение?', deleteText_few: 'Вы точно хотите удалить эти сообщения?', deleteText_many: 'Вы точно хотите удалить эти сообщения?', deleteText_other: 'Вы точно хотите удалить эти сообщения?',
     lang: { uz: 'Узбекский', ru: 'Русский', en: 'Английский' },
     mediaOf: '{{kind}} {{n}} из {{total}}', zoomIn: 'Увеличить', zoomOut: 'Уменьшить', prevMedia: 'Предыдущее', nextMedia: 'Следующее', seek: 'Перемотка', mute: 'Звук', volume: 'Громкость', speed: 'Скорость', pip: 'Картинка в картинке', fullscreen: 'Во весь экран', exitFullscreen: 'Выйти из полноэкранного режима',
+    compress: 'Сжать фото и видео (быстрее)', groupItems: 'Группировать в альбом', caption: 'Добавить подпись…', attach: 'Прикрепить', photoOrVideo: 'Фото или видео', document: 'Файл', dropFiles: 'Отправить как файл', dropFilesSub: 'Перетащите сюда — без сжатия, в исходном качестве', dropMedia: 'Быстрая отправка', dropMediaSub: 'Перетащите сюда — фото будет сжато', sending: 'Отправка…', uploading: 'Загрузка',
+    sendFiles_one: 'Отправить {{count}} файл', sendFiles_few: 'Отправить {{count}} файла', sendFiles_many: 'Отправить {{count}} файлов', sendFiles_other: 'Отправить {{count}} файла',
     kind: {
       PHOTO: 'Фотография', VIDEO: 'Видео', VIDEO_NOTE: 'Видеосообщение', VOICE: 'Голосовое сообщение', AUDIO: 'Аудио', STICKER: 'Стикер', GIF: 'GIF',
       FILE: 'Файл', CONTACT: 'Контакт', LOCATION: 'Геопозиция', POLL: 'Опрос', OTHER: 'Сообщение',

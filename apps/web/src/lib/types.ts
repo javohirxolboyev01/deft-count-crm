@@ -738,4 +738,6 @@ export interface TgMessage {
   } | null;
   /** CRM'dan yozgan xodim (Telegram ilovasidan yozilgan bo'lsa null) */
   sentBy: string | null;
+  /** Albom: bir xil qiymatli ketma-ket xabarlar bitta to'r bo'lib chiziladi */
+  groupedId: string | null;
 }

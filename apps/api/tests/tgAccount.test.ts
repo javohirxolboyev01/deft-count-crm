@@ -110,6 +110,39 @@ describe('Telegram akkaunti', () => {
     expect((await request(app).get(`/api/tg-stream/${opTok}`)).status).toBe(403);
   });
 
+  it('fayl yuborish: tekshiruv, serverda iz qolmaydi, operatorga yopiq', async () => {
+    Object.assign(config.tgAccount, { apiId: 12345, apiHash: 'test-hash' });
+    const L2 = await token('leader');
+    const up = (query: string, type = 'application/octet-stream', body: Buffer = Buffer.from('salom')) =>
+      request(app).post(`/api/tg/upload${query}`).set('Authorization', `Bearer ${L2}`).set('Content-Type', type).send(body);
+    expect((await up('?kind=PHOTO&name=a.jpg', 'application/json', Buffer.from('{}'))).status).toBe(415);
+    expect((await up('?kind=XYZ&name=a.jpg')).status).toBe(400);
+    expect((await up('?kind=FILE')).status).toBe(400);
+    const big = await request(app)
+      .post('/api/tg/upload?kind=FILE&name=a.bin')
+      .set('Authorization', `Bearer ${L2}`)
+      .set('Content-Type', 'application/octet-stream')
+      .set('Content-Length', String(101 * 1024 * 1024))
+      .send(Buffer.from('x'))
+      .catch((e) => e.response);
+    expect(big?.status ?? 413).toBe(413);
+    // Ulanmagan: fayl qabul qilinmaydi
+    const r = await up('?kind=FILE&name=hisobot.pdf&mime=application/pdf');
+    expect(r.status).toBe(503);
+    expect(r.body.code).toBe('TG_NOT_CONNECTED');
+    const os = await import('node:os');
+    const fs = await import('node:fs');
+    const dir = `${os.tmpdir()}/crm-tg-upload`;
+    expect(fs.existsSync(dir) ? fs.readdirSync(dir) : []).toEqual([]);
+    // Yuklanmagan/boshqa xodimniki — eskirgan
+    const s = await A.post('/api/tg/dialogs/123/send-media', { uploads: ['3f6f2a52-1c1b-4d7e-9a7c-2b1d6c1e9f00'] });
+    expect(s.status).toBe(409);
+    expect(s.body.code).toBe('TG_UPLOAD_EXPIRED');
+    expect((await A.post('/api/tg/dialogs/123/send-media', { uploads: ['x'] })).status).toBe(400);
+    expect((await A.post('/api/tg/dialogs/123/send-media', { uploads: [] })).status).toBe(400);
+    expect((await O.post('/api/tg/dialogs/123/send-media', { uploads: ['3f6f2a52-1c1b-4d7e-9a7c-2b1d6c1e9f00'] })).status).toBe(403);
+  });
+
   it('chat id va xabar tekshiruvi', async () => {
     expect((await A.get('/api/tg/dialogs/abc/messages')).status).toBe(400);
     expect((await A.post('/api/tg/dialogs/123/messages', { text: '   ' })).status).toBe(400);
