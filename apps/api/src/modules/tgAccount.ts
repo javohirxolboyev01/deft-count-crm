@@ -778,14 +778,29 @@ export async function sendText(peerId: string, text: string, userId: number, use
   return dto;
 }
 
-/** Chat ochilganda: Telegram'da ham o'qilgan bo'ladi (Telegram Desktop kabi) */
-export async function markRead(peerId: string) {
+/**
+ * Xabar ekranda ko'ringan zahoti o'qilgan bo'ladi (Telegram kabi): `maxId` — ko'ringan eng oxirgi kiruvchi xabar.
+ * `maxId` berilmasa — butun chat o'qiladi.
+ */
+export async function markRead(peerId: string, maxId?: number) {
   const c = requireConnected();
   const d = dialogs.get(peerId);
-  if (d && d.dto.unread === 0) return;
+  if (d && (d.dto.unread === 0 || (maxId && maxId <= d.dto.readInboxMaxId))) return;
   const peer = await inputPeer(peerId);
-  await tgCall(() => c.markAsRead(peer));
-  if (d) d.dto.unread = 0;
+  // `clearMentions: true` — gramjs'da bu ReadMentions'ni o'tkazib yuboradi (aks holda maxId bilan tarix o'qilmay qolishi mumkin)
+  await tgCall(() => (maxId ? c.markAsRead(peer, undefined, { maxId, clearMentions: true }) : c.markAsRead(peer)));
+  if (d) {
+    if (!maxId || maxId >= (d.dto.lastMessage?.id ?? 0)) {
+      d.dto.unread = 0;
+      d.dto.readInboxMaxId = Math.max(d.dto.readInboxMaxId, maxId ?? d.dto.lastMessage?.id ?? 0);
+    } else {
+      // Qisman o'qildi: qolgan o'qilmaganlar soni Telegram'dan aniq olinadi
+      d.dto.readInboxMaxId = Math.max(d.dto.readInboxMaxId, maxId);
+      const r = await tgCall(() => c.invoke(new Api.messages.GetPeerDialogs({ peers: [new Api.InputDialogPeer({ peer })] }))).catch(() => null);
+      const dl: any = r?.dialogs?.[0];
+      if (dl) d.dto.unread = dl.unreadCount ?? d.dto.unread;
+    }
+  }
   signalDialogs(peerId);
 }
 

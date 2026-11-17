@@ -149,20 +149,54 @@ export function TgConversation({
   const pinnedIds = useMemo(() => new Set(pinned.map((m) => m.id)), [pinned]);
   const curPin = pinned.length ? pinned[Math.min(pinIdx, pinned.length - 1)] : null;
 
-  // Chat ochiq va sahifa ko'rinib turgan bo'lsa — Telegram'da ham o'qilgan qilinadi
+  // Xabar ekranda ko'ringan zahoti o'qilgan bo'ladi (Telegram kabi): ko'ringan eng oxirgi kiruvchi xabargacha.
+  // Sahifa yashirin (boshqa tab/oyna yig'ilgan) bo'lsa — o'qilmaydi.
   const unread = dialog?.unread ?? 0;
+  const readInbox = dialog?.readInboxMaxId ?? 0;
+  const sentRead = useRef(0);
+  const seenTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const seenState = useRef({ peerId, unread, readInbox });
+  seenState.current = { peerId, unread, readInbox };
+  const checkSeen = useCallback(() => {
+    if (seenTimer.current) return;
+    seenTimer.current = setTimeout(() => {
+      seenTimer.current = null;
+      const el = scrollRef.current;
+      const st = seenState.current;
+      if (!el || document.hidden || !st.unread) return;
+      const box = el.getBoundingClientRect();
+      let max = 0;
+      el.querySelectorAll<HTMLElement>('[data-in]').forEach((n) => {
+        const r = n.getBoundingClientRect();
+        // Xabarning yarmidan ko'pi (yoki pastki qismi) ko'rinsa — ko'rildi
+        if (r.bottom > box.top && r.top + Math.min(r.height / 2, 40) < box.bottom) max = Math.max(max, Number(n.dataset.in));
+      });
+      if (!max || max <= Math.max(sentRead.current, st.readInbox)) return;
+      sentRead.current = max;
+      void api.post(`/tg/dialogs/${st.peerId}/read`, { maxId: max }).catch(() => {
+        sentRead.current = 0;
+      });
+    }, 250);
+  }, []);
   useEffect(() => {
-    if (!unread || document.hidden) return;
-    const id = setTimeout(() => void api.post(`/tg/dialogs/${peerId}/read`).catch(() => undefined), 500);
-    return () => clearTimeout(id);
-  }, [peerId, unread]);
+    sentRead.current = 0;
+  }, [peerId]);
   useEffect(() => {
-    const onVis = () => {
-      if (!document.hidden && unread) void api.post(`/tg/dialogs/${peerId}/read`).catch(() => undefined);
+    checkSeen();
+  }, [checkSeen, messages, unread, peerId]);
+  useEffect(() => {
+    const on = () => checkSeen();
+    document.addEventListener('visibilitychange', on);
+    window.addEventListener('focus', on);
+    window.addEventListener('resize', on);
+    return () => {
+      document.removeEventListener('visibilitychange', on);
+      window.removeEventListener('focus', on);
+      window.removeEventListener('resize', on);
+      if (seenTimer.current) clearTimeout(seenTimer.current);
+      seenTimer.current = null;
     };
-    document.addEventListener('visibilitychange', onVis);
-    return () => document.removeEventListener('visibilitychange', onVis);
-  }, [peerId, unread]);
+  }, [checkSeen]);
 
   const scrollToBottom = (smooth = false) => {
     const el = scrollRef.current;
@@ -479,6 +513,7 @@ export function TgConversation({
             const el = e.currentTarget;
             if (el.scrollTop < 120) loadOlder();
             setAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 120);
+            checkSeen();
           }}
           className="tg-scroll relative h-full overflow-y-auto overscroll-contain"
         >
@@ -818,6 +853,7 @@ function Bubble({
   return (
     <div
       data-mid={m.id}
+      data-in={m.out ? undefined : maxId}
       className={cn(
         'relative flex items-end gap-2',
         m.out ? 'justify-end' : 'justify-start',

@@ -208,7 +208,8 @@ tgRouter.post('/dialogs/:peerId/send-media', async (req, res) => {
 });
 
 tgRouter.post('/dialogs/:peerId/read', async (req, res) => {
-  await markRead(peerId(req.params.peerId));
+  const { maxId } = parse(z.object({ maxId: z.number().int().positive().optional() }), req.body ?? {});
+  await markRead(peerId(req.params.peerId), maxId);
   res.json({ ok: true });
 });
 
