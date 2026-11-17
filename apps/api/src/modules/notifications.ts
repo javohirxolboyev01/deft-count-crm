@@ -6,6 +6,7 @@ import { type Db, one, pool, q } from '../db';
 import { emitToUser } from './events';
 import { renderNotification } from './messages';
 import { sendTelegram, telegramEnabled } from './telegram';
+import { sendStoredFiles } from './telegramStorage';
 
 export const NOTIFICATION_KINDS = [
   'TASK_DONE',
@@ -86,8 +87,20 @@ const DTO = `id, kind, payload, task_id AS "taskId", deliver_at AS "deliverAt", 
 let dispatching = false;
 const MAX_ATTEMPTS = 5;
 
+/** Shoshilinch vazifa fayllari (V54): bot xabaridan keyin rasm/ovoz/hujjat bo'lib */
+async function sendTaskFiles(chatId: number | string, taskId: number) {
+  const files = await q<any>(
+    pool,
+    `SELECT kind, mime, file_name AS "fileName", size_bytes AS "sizeBytes", tg_file_id AS "tgFileId",
+            duration_sec AS "durationSec", width, height
+     FROM task_attachment WHERE task_id = $1 ORDER BY id`,
+    [taskId],
+  );
+  if (files.length) await sendStoredFiles(chatId, files);
+}
+
 /** deliver_at <= now(), yetkazilmagan va bekor qilinmaganlarni yetkazadi. Bir vaqtda bitta ishga tushadi. */
-export async function dispatchDue(send: typeof sendTelegram = sendTelegram) {
+export async function dispatchDue(send: typeof sendTelegram = sendTelegram, sendFiles: typeof sendTaskFiles = sendTaskFiles) {
   if (dispatching) return 0;
   dispatching = true;
   let count = 0;
@@ -131,6 +144,13 @@ export async function dispatchDue(send: typeof sendTelegram = sendTelegram) {
         await send(n.telegram_chat_id, renderNotification(n.kind, n.payload, n.language));
         await pool.query('UPDATE notification SET delivered_at = now(), last_error = NULL WHERE id = $1', [n.id]);
         count++;
+        // Fayllar matndan keyin, fonda (yuklash uzoq — boshqa bildirishnomalar navbatda kutmasin);
+        // xato bo'lsa qayta urinilmaydi (matn takrorlanmasin), fayl CRM'da baribir bor
+        if (n.kind === 'URGENT_TASK' && n.payload?.files && n.payload?.taskId) {
+          void sendFiles(n.telegram_chat_id, n.payload.taskId).catch((e) =>
+            console.error(`Telegram vazifa fayllari yuborilmadi (notification ${n.id}):`, (e as Error).message),
+          );
+        }
       } catch (e) {
         const msg = (e as Error).message.slice(0, 500);
         console.error(`Telegram yuborilmadi (notification ${n.id}):`, msg);

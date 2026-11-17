@@ -1,17 +1,17 @@
 import { useQuery } from '@tanstack/react-query';
-import { Check, FileText, Film, Mic, Paperclip, RotateCw, Trash2, X } from 'lucide-react';
+import { Check, FileText, Film, Mic, Paperclip, Trash2, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import type { ChatAttachment } from '@/lib/types';
-import { AttachmentView, computeWaveform, primeChatFile, fmtDuration, fmtSize, readMediaMeta, uploadForm, useRecorder, type Recorded } from './ChatMedia';
+import { AttachmentView, computeWaveform, fmtDuration, fmtSize, primeChatFile, readMediaMeta, useRecorder, type Recorded } from './ChatMedia';
 
 /**
- * "Yangi vazifa" fayllari (V54): rasm, video, ovoz (yozib olish yoki audio fayl), hujjat.
- * Fayl tanlanishi bilan Telegram kanaliga yuklanadi (`POST /tasks/attachments`, chat ombori bilan bir xil);
- * vazifa yuborilganda faqat id'lar jo'natiladi. Fayl faqat yaratishda qo'shiladi (rahbar qarori).
+ * "Yangi vazifa" fayllari (V54/V55): rasm, video, ovoz (yozib olish yoki audio fayl), hujjat.
+ * Oyna ochiqligida fayl faqat brauzerda turadi — Telegram kanaliga hech narsa ketmaydi. "Yuborish" bosilganda
+ * vazifa bilan bitta so'rovda (`POST /tasks/urgent`, multipart) yuklanadi (rahbar qarori 2026-11-17).
  */
 
 export const TASK_FILES_MAX = 10;
@@ -20,6 +20,9 @@ const VIDEO_MIMES = ['video/mp4', 'video/webm', 'video/quicktime'];
 // Server bilan bir xil (chat.ts KIND_MIMES.VOICE)
 const AUDIO_MIMES = ['audio/webm', 'audio/ogg', 'audio/mp4', 'audio/mpeg', 'audio/x-m4a', 'audio/aac', 'audio/wav', 'audio/x-wav'];
 const AUDIO_EXT: Record<string, string> = { mp3: 'audio/mpeg', m4a: 'audio/mp4', ogg: 'audio/ogg', wav: 'audio/wav', aac: 'audio/aac' };
+// Buxgalter botida ovozli xabar bo'lib borishi uchun Telegram qabul qiladigan tur birinchi: M4A (AAC) yoki OGG/Opus.
+// Brauzer ularni yozolmasa — webm (botda fayl bo'lib boradi, CRM'da baribir eshitiladi)
+const TASK_VOICE_MIMES = ['audio/mp4;codecs=mp4a.40.2', 'audio/ogg;codecs=opus', 'audio/mp4', 'audio/webm;codecs=opus'];
 
 type Kind = 'IMAGE' | 'VIDEO' | 'VOICE' | 'FILE';
 
@@ -33,19 +36,43 @@ function kindOf(file: File): Kind {
   return 'FILE';
 }
 
+export interface FileMeta {
+  kind: Kind;
+  durationSec?: number;
+  width?: number;
+  height?: number;
+  waveform?: number[];
+}
+
 export interface PendingFile {
   key: number;
   file: File;
   kind: Kind;
   preview?: string;
-  progress: number;
-  status: 'uploading' | 'done' | 'error';
+  /** O'lcham/davomiylik/to'lqin hisoblanmoqda */
+  ready: boolean;
+  meta: FileMeta;
+  /** Ovozni oynada eshitish uchun (lokal fayl, serverga so'rov yo'q) */
   att?: ChatAttachment;
-  durationSec?: number;
-  abort: AbortController;
 }
 
 let seq = 0;
+
+async function readMeta(file: File, kind: Kind, recordedSec?: number): Promise<FileMeta> {
+  const meta: FileMeta = { kind };
+  if (kind === 'FILE') return meta;
+  const m = await readMediaMeta(file, kind === 'IMAGE' ? 'IMAGE' : 'VIDEO');
+  if (m.width) meta.width = m.width;
+  if (m.height) meta.height = m.height;
+  // MediaRecorder faylida davomiylik yo'q (Infinity) — yozishda o'lchangani
+  const sec = recordedSec ?? m.durationSec;
+  if (sec) meta.durationSec = sec;
+  if (kind === 'VOICE') {
+    const wave = await computeWaveform(file);
+    if (wave) meta.waveform = wave;
+  }
+  return meta;
+}
 
 export function useTaskAttachments() {
   const { t } = useTranslation();
@@ -60,40 +87,6 @@ export function useTaskAttachments() {
   const enabled = !!config.data?.attachments;
   const maxBytes = config.data?.maxFileBytes ?? 20 * 1024 * 1024;
 
-  const patch = (key: number, p: Partial<PendingFile>) => setItems((list) => list.map((x) => (x.key === key ? { ...x, ...p } : x)));
-
-  const upload = useCallback(async (item: PendingFile, recordedSec?: number) => {
-    patch(item.key, { status: 'uploading', progress: 0 });
-    try {
-      const form = new FormData();
-      form.set('kind', item.kind);
-      if (item.kind === 'IMAGE' || item.kind === 'VIDEO' || item.kind === 'VOICE') {
-        const meta = await readMediaMeta(item.file, item.kind === 'IMAGE' ? 'IMAGE' : 'VIDEO');
-        if (meta.width) form.set('width', String(meta.width));
-        if (meta.height) form.set('height', String(meta.height));
-        const sec = recordedSec ?? item.durationSec ?? meta.durationSec;
-        if (sec) form.set('durationSec', String(sec));
-      }
-      if (item.kind === 'VOICE') {
-        const wave = await computeWaveform(item.file);
-        if (wave) form.set('waveform', wave.join(','));
-      }
-      form.set('file', item.file, item.file.name);
-      const att = await uploadForm<ChatAttachment>('/tasks/attachments', form, (p) => patch(item.key, { progress: p }), item.abort.signal);
-      const url = `/tasks/files/${att.id}`;
-      // O'zi yuklagan faylni qayta Telegram'dan olmaslik uchun (ovozni oynada eshitish)
-      primeChatFile(att.id, item.file, url);
-      patch(item.key, { status: 'done', progress: 1, att: { ...att, url } });
-    } catch (e: any) {
-      if (e?.code === 'ABORTED') return;
-      patch(item.key, { status: 'error' });
-      const code = e?.code ?? '';
-      const key = ['FILE_TOO_LARGE', 'TOO_LONG', 'FILE_STORAGE_UNAVAILABLE', 'FILE_STORAGE_DISABLED'].includes(code) ? code
-        : code === 'UNSUPPORTED_FILE_TYPE' ? 'UNSUPPORTED' : 'GENERIC';
-      toast.error(t(key === 'UNSUPPORTED' ? 'urgent.files.unsupported' : `chat.fileErrors.${key}`, { max: fmtSize(maxBytes) }));
-    }
-  }, [t, maxBytes]);
-
   const add = useCallback((files: File[], recorded?: Recorded) => {
     const free = TASK_FILES_MAX - itemsRef.current.length;
     if (files.length > free) toast.error(t('urgent.files.tooMany', { max: TASK_FILES_MAX }));
@@ -103,56 +96,63 @@ export function useTaskAttachments() {
         continue;
       }
       const kind = recorded ? 'VOICE' : kindOf(file);
+      const key = ++seq;
       const item: PendingFile = {
-        key: ++seq,
+        key,
         file,
         kind,
         preview: kind === 'IMAGE' ? URL.createObjectURL(file) : undefined,
-        progress: 0,
-        status: 'uploading',
-        durationSec: recorded?.durationSec,
-        abort: new AbortController(),
+        ready: false,
+        meta: { kind },
       };
       setItems((list) => [...list, item]);
-      void upload(item, recorded?.durationSec);
+      void readMeta(file, kind, recorded?.durationSec).then((meta) => {
+        let att: ChatAttachment | undefined;
+        if (kind === 'VOICE') {
+          const url = `local:task-file-${key}`;
+          primeChatFile(key, file, url);
+          att = {
+            id: key, kind: 'VOICE', mime: file.type.split(';')[0] || 'audio/mpeg', fileName: file.name, sizeBytes: file.size,
+            durationSec: meta.durationSec ?? null, width: null, height: null, waveform: meta.waveform ?? null, url,
+          };
+        }
+        setItems((list) => list.map((x) => (x.key === key ? { ...x, ready: true, meta, att } : x)));
+      });
     }
-  }, [t, maxBytes, upload]);
+  }, [t, maxBytes]);
 
   const remove = (key: number) => {
     const it = itemsRef.current.find((x) => x.key === key);
-    it?.abort.abort();
     if (it?.preview) URL.revokeObjectURL(it.preview);
     setItems((list) => list.filter((x) => x.key !== key));
   };
 
-  const retry = (key: number) => {
-    const it = itemsRef.current.find((x) => x.key === key);
-    if (it) void upload(it);
-  };
-
   const reset = useCallback(() => {
-    for (const it of itemsRef.current) {
-      it.abort.abort();
-      if (it.preview) URL.revokeObjectURL(it.preview);
-    }
+    for (const it of itemsRef.current) if (it.preview) URL.revokeObjectURL(it.preview);
     setItems([]);
   }, []);
 
   useEffect(() => reset, [reset]);
 
-  const recorder = useRecorder((r) => add([r.file], r));
+  const recorder = useRecorder((r) => add([r.file], r), TASK_VOICE_MIMES);
+
+  /** Vazifa so'roviga: fayllar va ularning metasi (tartib bir xil) */
+  const appendTo = (form: FormData) => {
+    form.set('filesMeta', JSON.stringify(itemsRef.current.map((x) => x.meta)));
+    for (const x of itemsRef.current) form.append('files', x.file, x.file.name);
+  };
 
   return {
     items,
     enabled,
+    maxBytes,
     add,
     remove,
-    retry,
     reset,
     recorder,
-    ids: items.flatMap((x) => (x.att ? [x.att.id] : [])),
-    /** Yuklanmoqda, xato yoki yozib olinmoqda — vazifani hali yuborib bo'lmaydi */
-    busy: items.some((x) => x.status !== 'done') || !!recorder.rec,
+    appendTo,
+    /** Fayl tayyorlanmoqda yoki ovoz yozilmoqda — vazifani hali yuborib bo'lmaydi */
+    busy: items.some((x) => !x.ready) || !!recorder.rec,
   };
 }
 
@@ -241,7 +241,7 @@ export function TaskAttachmentsField({ state }: { state: TaskAttachmentsState })
       {items.length > 0 && (
         <ul className="custom-scrollbar max-h-56 space-y-1.5 overflow-y-auto pr-1">
           {items.map((it) => (
-            <li key={it.key} className="relative flex items-center gap-3 overflow-hidden rounded-lg border px-2 py-1.5">
+            <li key={it.key} className="flex items-center gap-3 rounded-lg border px-2 py-1.5">
               {it.kind === 'VOICE' && it.att ? (
                 <div className="min-w-0 grow text-sm">
                   <AttachmentView att={it.att} mine={false} />
@@ -261,25 +261,12 @@ export function TaskAttachmentsField({ state }: { state: TaskAttachmentsState })
                   </span>
                   <span className="min-w-0 grow">
                     <span className="block truncate text-sm font-medium text-foreground" title={it.file.name}>{it.file.name}</span>
-                    <span className={cn('block truncate text-xs', it.status === 'error' ? 'text-red-600' : 'text-gray-500')}>
+                    <span className="block truncate text-xs text-gray-500">
                       {t(`chat.kind.${it.kind}`)} · {fmtSize(it.file.size)}
-                      {it.durationSec ? ` · ${fmtDuration(it.durationSec)}` : ''}
-                      {it.status === 'uploading' && ` · ${t('urgent.files.uploading', { p: Math.round(it.progress * 100) })}`}
-                      {it.status === 'error' && ` · ${t('chat.fileLoadError')}`}
+                      {it.meta.durationSec ? ` · ${fmtDuration(it.meta.durationSec)}` : ''}
                     </span>
                   </span>
                 </>
-              )}
-              {it.status === 'error' && (
-                <button
-                  type="button"
-                  onClick={() => state.retry(it.key)}
-                  title={t('common.retry')}
-                  aria-label={t('common.retry')}
-                  className="flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-full text-brand hover:bg-gray-100"
-                >
-                  <RotateCw className="h-4 w-4" />
-                </button>
               )}
               <button
                 type="button"
@@ -290,11 +277,6 @@ export function TaskAttachmentsField({ state }: { state: TaskAttachmentsState })
               >
                 <X className="h-4 w-4" />
               </button>
-              {it.status === 'uploading' && (
-                <span className="absolute inset-x-0 bottom-0 h-0.5 bg-gray-100">
-                  <span className="block h-full bg-brand-500 transition-[width]" style={{ width: `${Math.max(3, it.progress * 100)}%` }} />
-                </span>
-              )}
             </li>
           ))}
         </ul>

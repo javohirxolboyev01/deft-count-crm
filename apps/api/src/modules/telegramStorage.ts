@@ -173,3 +173,89 @@ export async function downloadFromTelegram(fileId: string): Promise<Buffer> {
 export function rememberUploaded(fileId: string, buf: Buffer) {
   remember(fileId, buf);
 }
+
+// ---------------- Kanaldagi faylni xodimga yuborish (vazifa fayllari, V54) ----------------
+
+export interface OutgoingFile {
+  kind: 'IMAGE' | 'VIDEO' | 'VOICE' | 'FILE';
+  mime: string;
+  fileName: string | null;
+  sizeBytes: number;
+  tgFileId: string;
+  durationSec?: number | null;
+  width?: number | null;
+  height?: number | null;
+}
+
+// Bot API: sendPhoto ≤ 10 MB (kattasi hujjat bo'lib boradi)
+const PHOTO_MAX_BYTES = 10 * 1024 * 1024;
+
+async function callMultipart(method: string, form: FormData) {
+  const r = await fetch(api(method), { method: 'POST', body: form, signal: AbortSignal.timeout(120_000) });
+  const data: any = await r.json().catch(() => ({}));
+  if (!data?.ok) throw new Error(`Telegram ${method}: ${data?.description ?? r.status}`);
+}
+
+/** Kanaldagi hujjatni (file_id) qayta yuklamasdan yuborish */
+async function sendDocumentById(chatId: number | string, f: OutgoingFile) {
+  const form = new FormData();
+  form.set('chat_id', String(chatId));
+  form.set('document', f.tgFileId);
+  await callMultipart('sendDocument', form);
+}
+
+/**
+ * Fayllarni xodimning bot chatiga turiga qarab yuborish: rasm/video — bitta albom (yoki bitta rasm/video),
+ * ovoz — ovozli xabar, hujjat — fayl. Kanalda fayl hujjat bo'lib turadi (asl sifat), shuning uchun rasm/ovoz
+ * Telegram'dan olinib qayta yuklanadi. Telegram turini qabul qilmasa (masalan, webm ovoz) — hujjat bo'lib boradi.
+ */
+export async function sendStoredFiles(chatId: number | string, files: OutgoingFile[]) {
+  const media = files.filter((f) => (f.kind === 'IMAGE' && f.sizeBytes <= PHOTO_MAX_BYTES) || f.kind === 'VIDEO');
+  const rest = files.filter((f) => !media.includes(f));
+
+  if (media.length) {
+    try {
+      const form = new FormData();
+      form.set('chat_id', String(chatId));
+      if (media.length === 1) {
+        const f = media[0];
+        const field = f.kind === 'IMAGE' ? 'photo' : 'video';
+        form.set(field, new Blob([await downloadFromTelegram(f.tgFileId)], { type: f.mime }), f.fileName ?? field);
+        if (f.kind === 'VIDEO') {
+          form.set('supports_streaming', 'true');
+          if (f.durationSec) form.set('duration', String(f.durationSec));
+          if (f.width) form.set('width', String(f.width));
+          if (f.height) form.set('height', String(f.height));
+        }
+        await callMultipart(f.kind === 'IMAGE' ? 'sendPhoto' : 'sendVideo', form);
+      } else {
+        const items = [];
+        for (const [i, f] of media.entries()) {
+          form.set(`f${i}`, new Blob([await downloadFromTelegram(f.tgFileId)], { type: f.mime }), f.fileName ?? `f${i}`);
+          items.push({ type: f.kind === 'IMAGE' ? 'photo' : 'video', media: `attach://f${i}` });
+        }
+        form.set('media', JSON.stringify(items));
+        await callMultipart('sendMediaGroup', form);
+      }
+    } catch (e) {
+      console.warn('Telegram albom yuborilmadi, hujjat bo\'lib yuboriladi:', (e as Error).message);
+      for (const f of media) await sendDocumentById(chatId, f);
+    }
+  }
+
+  for (const f of rest) {
+    if (f.kind === 'VOICE') {
+      try {
+        const form = new FormData();
+        form.set('chat_id', String(chatId));
+        form.set('voice', new Blob([await downloadFromTelegram(f.tgFileId)], { type: f.mime }), f.fileName ?? 'voice');
+        if (f.durationSec) form.set('duration', String(f.durationSec));
+        await callMultipart('sendVoice', form);
+        continue;
+      } catch (e) {
+        console.warn('Telegram ovozli xabar yuborilmadi, hujjat bo\'lib yuboriladi:', (e as Error).message);
+      }
+    }
+    await sendDocumentById(chatId, f);
+  }
+}

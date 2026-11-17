@@ -5,11 +5,19 @@ import { audit, diff } from '../common/audit';
 import { AppError, forbidden, notFound, parse } from '../common/errors';
 import { DateTime } from 'luxon';
 import { TZ, currentPeriod, nowTz, periodFromMonth, todayAt, workPeriod } from '../common/time';
-import { one, pool, q, tx } from '../db';
+import { type Db, one, pool, q, tx } from '../db';
 import { getDueTime } from './generator';
 import { enqueue } from './notifications';
-import { checkUpload, optInt, uploadOne, waveformField } from './chat';
-import { downloadFromTelegram, rememberUploaded, storageEnabled, uploadToTelegram } from './telegramStorage';
+import multer from 'multer';
+import { checkUpload } from './chat';
+import {
+  CHAT_FILE_MAX_BYTES,
+  downloadFromTelegram,
+  rememberUploaded,
+  storageEnabled,
+  type StoredFile,
+  uploadToTelegram,
+} from './telegramStorage';
 import { WORKS_SCOPE } from './taskScope';
 import { hasPendingTransferTo, transfersForTask, transfersForTasks } from './taskTransfer';
 import {
@@ -125,57 +133,50 @@ tasksRouter.get('/urgent/suggest-assignee', requireLeader, async (_req, res) => 
   res.json(rows);
 });
 
-// ---------- Vazifa fayllari (V54) ----------
-// Ombor — ichki chat bilan bir xil Telegram yopiq kanali. Fayl "Yangi vazifa" oynasi ochiqligida yuklanadi
-// (task_id NULL), vazifa yuborilganda `attachmentIds` bilan bog'lanadi. Keyin qo'shib bo'lmaydi (rahbar qarori).
+// ---------- Vazifa fayllari (V54, V55) ----------
+// Ombor — ichki chat bilan bir xil Telegram yopiq kanali. Fayllar vazifa bilan bitta so'rovda keladi (multipart) va
+// faqat "Yuborish" bosilganda kanalga yuklanadi (rahbar qarori 2026-11-17). Keyin qo'shib bo'lmaydi.
 const TASK_FILES_MAX = 10;
 const ATTACHMENT_DTO = `a.id, a.kind, a.mime, a.file_name AS "fileName", a.size_bytes AS "sizeBytes",
   a.duration_sec AS "durationSec", a.width, a.height, a.waveform`;
 
-tasksRouter.post('/attachments', requireLeader, async (req, res) => {
-  const u = me(req);
-  if (!storageEnabled()) throw new AppError(503, 'FILE_STORAGE_DISABLED', 'Fayl ombori sozlanmagan');
-  await uploadOne(req, res);
-  const file = req.file;
-  if (!file?.size) throw new AppError(400, 'FILE_REQUIRED', 'Fayl tanlanmagan');
-  const meta = parse(
-    z.object({ kind: z.enum(['IMAGE', 'VIDEO', 'VOICE', 'FILE']), durationSec: optInt, width: optInt, height: optInt, waveform: waveformField }),
-    req.body,
-  );
-  const { mime, fileName } = checkUpload(file, meta.kind, meta.durationSec);
-  // Kanaldagi izoh: faqat texnik belgi (vazifa matni Telegram kanaliga yozilmaydi)
-  const stored = await uploadToTelegram(file.buffer, fileName, mime, `crm-task ${meta.kind} u${u.id}`);
-  rememberUploaded(stored.fileId, file.buffer);
-  // Oyna yopilib bog'lanmay qolganlari (kanalda arxiv bo'lib qoladi)
-  await pool.query(`DELETE FROM task_attachment WHERE task_id IS NULL AND created_at < now() - interval '1 day'`);
-  const row = await one(
-    pool,
-    `INSERT INTO task_attachment AS a (kind, mime, file_name, size_bytes, duration_sec, width, height, waveform,
-                                       tg_file_id, tg_file_unique_id, tg_chat_id, tg_message_id, created_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING ${ATTACHMENT_DTO}`,
-    [meta.kind, mime, fileName, file.size, meta.durationSec ?? null, meta.width ?? null, meta.height ?? null,
-      meta.kind === 'VOICE' && meta.waveform ? meta.waveform : null,
-      stored.fileId, stored.fileUniqueId, stored.chatId, stored.messageId, u.id],
-  );
-  res.status(201).json(row);
-});
+const filesUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: CHAT_FILE_MAX_BYTES, files: TASK_FILES_MAX } });
+/** JSON yoki multipart (fayllar `files`, har biriga meta — `filesMeta` JSON massivi, tartib bir xil) */
+const readTaskFiles = (req: any, res: any) =>
+  new Promise<void>((resolve, reject) => {
+    if (!req.is('multipart/form-data')) return resolve();
+    filesUpload.array('files', TASK_FILES_MAX)(req, res, (err: any) => {
+      if (err?.code === 'LIMIT_FILE_SIZE') reject(new AppError(413, 'FILE_TOO_LARGE', 'Fayl juda katta', { maxBytes: CHAT_FILE_MAX_BYTES }));
+      else if (err?.code === 'LIMIT_FILE_COUNT' || err?.code === 'LIMIT_UNEXPECTED_FILE') {
+        reject(new AppError(400, 'TOO_MANY_FILES', 'Fayllar juda ko\'p', { max: TASK_FILES_MAX }));
+      } else if (err) reject(new AppError(400, 'BAD_UPLOAD', err.message));
+      else resolve();
+    });
+  });
+
+const fileMetaSchema = z.array(
+  z.object({
+    kind: z.enum(['IMAGE', 'VIDEO', 'VOICE', 'FILE']),
+    durationSec: z.number().int().positive().max(100_000).optional(),
+    width: z.number().int().positive().max(100_000).optional(),
+    height: z.number().int().positive().max(100_000).optional(),
+    waveform: z.array(z.number().int().min(0).max(31)).max(100).optional(),
+  }),
+);
 
 /** Fayl mazmuni: vazifani ko'ra oladiganlarga (rahbar, mas'ul, mijoz buxgalteri, o'tkazish qabul qiluvchisi) */
 tasksRouter.get('/files/:id', async (req, res) => {
   const u = me(req);
-  const a = await one<{ kind: string; mime: string; file_name: string | null; tg_file_id: string; task_id: number | null;
-    created_by: number; assignee_id: number | null; accountant_id: number | null }>(
+  const a = await one<{ kind: string; mime: string; file_name: string | null; tg_file_id: string; task_id: number;
+    assignee_id: number | null; accountant_id: number | null }>(
     pool,
-    `SELECT a.kind, a.mime, a.file_name, a.tg_file_id, a.task_id, a.created_by, t.assignee_id, c.accountant_id
-     FROM task_attachment a LEFT JOIN task t ON t.id = a.task_id LEFT JOIN client c ON c.id = t.client_id
+    `SELECT a.kind, a.mime, a.file_name, a.tg_file_id, a.task_id, t.assignee_id, c.accountant_id
+     FROM task_attachment a JOIN task t ON t.id = a.task_id JOIN client c ON c.id = t.client_id
      WHERE a.id = $1`,
     [parse(id, req.params.id)],
   );
   if (!a) throw notFound('Fayl');
-  // Hali bog'lanmagan fayl — faqat yuklagan rahbarga (oynadagi ko'rinish)
-  if (a.task_id === null) {
-    if (a.created_by !== u.id) throw notFound('Fayl');
-  } else if (!(await hasPendingTransferTo(pool, a.task_id, u.id))) {
+  if (!(await hasPendingTransferTo(pool, a.task_id, u.id))) {
     try {
       assertTaskAccess(u, a);
     } catch {
@@ -195,6 +196,8 @@ tasksRouter.get('/files/:id', async (req, res) => {
 
 tasksRouter.post('/urgent', requireLeader, async (req, res) => {
   const u = me(req);
+  await readTaskFiles(req, res);
+  const files: Express.Multer.File[] = Array.isArray(req.files) ? req.files : [];
   const body = parse(
     z
       .object({
@@ -204,18 +207,48 @@ tasksRouter.post('/urgent', requireLeader, async (req, res) => {
         assigneeId: id,
         dueAt: z.coerce.date().optional(),
         note: z.string().max(2000).optional(),
-        attachmentIds: z.array(id).max(TASK_FILES_MAX).default([]),
+        filesMeta: z.string().optional(),
       })
       .refine((b) => b.text || b.templateId, { message: 'text yoki templateId kerak' }),
     req.body,
   );
-  const task = await tx(async (db) => {
+  const checkTargets = async (db: Db) => {
     const client = await one(db, 'SELECT id, name FROM client WHERE id = $1 AND deleted_at IS NULL', [body.clientId]);
     if (!client) throw notFound('Mijoz');
     const assignee = await one(db, `SELECT id FROM app_user WHERE id = $1 AND active AND role = 'ACCOUNTANT'`, [
       body.assigneeId,
     ]);
     if (!assignee) throw new AppError(400, 'INVALID_ASSIGNEE', 'Buxgalter topilmadi');
+    return client;
+  };
+
+  // Fayllar: avval hammasi tekshiriladi, keyin (mijoz/buxgalter to'g'ri bo'lsa) kanalga yuklanadi, oxirida vazifa
+  const stored: { meta: z.infer<typeof fileMetaSchema>[number]; mime: string; fileName: string; size: number; tg: StoredFile }[] = [];
+  if (files.length) {
+    if (!storageEnabled()) throw new AppError(503, 'FILE_STORAGE_DISABLED', 'Fayl ombori sozlanmagan');
+    let metas: z.infer<typeof fileMetaSchema>;
+    try {
+      metas = parse(fileMetaSchema, JSON.parse(body.filesMeta ?? '[]'));
+    } catch (e) {
+      if (e instanceof AppError) throw e;
+      throw new AppError(400, 'VALIDATION_ERROR', 'filesMeta noto\'g\'ri');
+    }
+    if (metas.length !== files.length) throw new AppError(400, 'VALIDATION_ERROR', 'filesMeta fayllar soniga mos emas');
+    const checked = files.map((f, i) => {
+      if (!f.size) throw new AppError(400, 'FILE_REQUIRED', 'Bo\'sh fayl');
+      return { f, meta: metas[i], ...checkUpload(f, metas[i].kind, metas[i].durationSec) };
+    });
+    await checkTargets(pool);
+    for (const c of checked) {
+      // Kanaldagi izoh: faqat texnik belgi (vazifa matni Telegram kanaliga yozilmaydi)
+      const tg = await uploadToTelegram(c.f.buffer, c.fileName, c.mime, `crm-task ${c.meta.kind} u${u.id}`);
+      rememberUploaded(tg.fileId, c.f.buffer);
+      stored.push({ meta: c.meta, mime: c.mime, fileName: c.fileName, size: c.f.size, tg });
+    }
+  }
+
+  const task = await tx(async (db) => {
+    const client = await checkTargets(db);
     let title = body.text;
     if (!title && body.templateId) {
       const s = await one<{ value: any[] }>(db, `SELECT value FROM setting WHERE key = 'urgent_templates'`);
@@ -230,15 +263,15 @@ tasksRouter.post('/urgent', requireLeader, async (req, res) => {
        VALUES ($1, 'URGENT', $2, $3, $4, $5, $6, $7) RETURNING id`,
       [body.clientId, currentPeriod(), title, body.note ?? null, body.assigneeId, dueAt, u.id],
     );
-    const ids = [...new Set(body.attachmentIds)];
-    if (ids.length) {
-      // Faqat shu rahbar yuklagan va hali hech qaysi vazifaga bog'lanmagan fayllar
-      const linked = await q(
-        db,
-        'UPDATE task_attachment SET task_id = $1 WHERE id = ANY($2::bigint[]) AND task_id IS NULL AND created_by = $3 RETURNING id',
-        [t!.id, ids, u.id],
+    for (const f of stored) {
+      await db.query(
+        `INSERT INTO task_attachment (task_id, kind, mime, file_name, size_bytes, duration_sec, width, height, waveform,
+                                      tg_file_id, tg_file_unique_id, tg_chat_id, tg_message_id, created_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+        [t!.id, f.meta.kind, f.mime, f.fileName, f.size, f.meta.durationSec ?? null, f.meta.width ?? null, f.meta.height ?? null,
+          f.meta.kind === 'VOICE' && f.meta.waveform?.length ? f.meta.waveform : null,
+          f.tg.fileId, f.tg.fileUniqueId, f.tg.chatId, f.tg.messageId, u.id],
       );
-      if (linked.length !== ids.length) throw new AppError(400, 'ATTACHMENT_NOT_FOUND', 'Fayl topilmadi, qayta yuklang');
     }
     await audit(db, {
       actorId: u.id,
@@ -246,7 +279,7 @@ tasksRouter.post('/urgent', requireLeader, async (req, res) => {
       entityId: t!.id,
       clientId: body.clientId,
       action: 'CREATE_URGENT',
-      after: { title, assigneeId: body.assigneeId, dueAt, ...(ids.length ? { attachmentIds: ids } : {}) },
+      after: { title, assigneeId: body.assigneeId, dueAt, ...(stored.length ? { files: stored.length } : {}) },
     });
     await enqueue(db, {
       userId: body.assigneeId,
@@ -254,7 +287,7 @@ tasksRouter.post('/urgent', requireLeader, async (req, res) => {
       taskId: t!.id,
       payload: {
         taskId: t!.id, title, clientId: client.id, clientName: client.name, dueAt: dueAt.toISOString(), createdByName: u.fullName,
-        ...(ids.length ? { files: ids.length } : {}),
+        ...(stored.length ? { files: stored.length } : {}),
       },
     });
     return getTaskDto(db, t!.id);

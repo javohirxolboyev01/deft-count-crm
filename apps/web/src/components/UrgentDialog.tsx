@@ -7,6 +7,7 @@ import { api, qs } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { errorText } from '@/lib/errors';
 import { localInputToIso, todayAtLocalInput } from '@/lib/time';
+import { fmtSize, uploadForm } from './ChatMedia';
 import type { AccountantOption, Client, Paged, UrgentTemplate } from '@/lib/types';
 import { invalidateTasks } from '@/hooks/tasks';
 import { Button } from './ui/button';
@@ -29,9 +30,10 @@ export function UrgentDialog({ open, onClose }: { open: boolean; onClose: () => 
   const [templateId, setTemplateId] = useState('');
   const [assigneeId, setAssigneeId] = useState<number | ''>('');
   const [due, setDue] = useState('');
-  // Fayllar (V54): tanlanishi bilan Telegram kanaliga yuklanadi, yuborishda faqat id'lar
+  // Fayllar (V54/V55): oynada faqat brauzerda; "Yuborish" bosilganda vazifa bilan birga Telegram kanaliga yuklanadi
   const files = useTaskAttachments();
   const [dragOver, setDragOver] = useState(false);
+  const [sendProgress, setSendProgress] = useState<number | null>(null);
 
   const general = useQuery({ queryKey: ['settings', 'general'], queryFn: () => api.get<{ taskDueTime: string }>('/settings/general'), enabled: open });
   const templates = useQuery({ queryKey: ['settings', 'templates'], queryFn: () => api.get<UrgentTemplate[]>('/settings/urgent-templates'), enabled: open });
@@ -63,24 +65,37 @@ export function UrgentDialog({ open, onClose }: { open: boolean; onClose: () => 
   }, [open, suggest.data, assigneeId]);
 
   const create = useMutation({
-    mutationFn: () =>
-      api.post('/tasks/urgent', {
+    mutationFn: () => {
+      const body = {
         clientId: client!.id,
         text: text.trim() || undefined,
         templateId: !text.trim() && templateId ? templateId : undefined,
         assigneeId,
         dueAt: due ? localInputToIso(due) : undefined,
-        attachmentIds: files.ids.length ? files.ids : undefined,
-      }),
+      };
+      if (!files.items.length) return api.post('/tasks/urgent', body);
+      // Fayl bor — multipart: maydonlar + fayllar, yuklanish foizi tugmada
+      const form = new FormData();
+      for (const [k, v] of Object.entries(body)) if (v !== undefined) form.set(k, String(v));
+      files.appendTo(form);
+      setSendProgress(0);
+      return uploadForm('/tasks/urgent', form, setSendProgress);
+    },
+    onSettled: () => setSendProgress(null),
     onSuccess: () => {
       invalidateTasks(qc);
       void qc.invalidateQueries({ queryKey: ['urgent-suggest'] });
       toast.success(t('urgent.created'));
-      // Fayllar endi vazifaniki: reset faqat ro'yxatni tozalaydi
       files.reset();
       onClose();
     },
-    onError: (e) => toast.error(errorText(e, t)),
+    onError: (e: any) => {
+      const code = e?.code ?? '';
+      if (['FILE_TOO_LARGE', 'TOO_LONG', 'FILE_STORAGE_UNAVAILABLE', 'FILE_STORAGE_DISABLED'].includes(code)) {
+        toast.error(t(`chat.fileErrors.${code}`, { max: fmtSize(files.maxBytes) }));
+      } else if (code === 'UNSUPPORTED_FILE_TYPE') toast.error(t('urgent.files.unsupported'));
+      else toast.error(errorText(e, t));
+    },
   });
 
   const canSubmit = !!client && !!assigneeId && (!!text.trim() || !!templateId) && !files.busy && !create.isPending;
@@ -102,7 +117,9 @@ export function UrgentDialog({ open, onClose }: { open: boolean; onClose: () => 
       }
       footer={
         <div className="flex w-full flex-col-reverse items-stretch gap-3 border-t pt-4 sm:flex-row sm:items-center sm:justify-between">
-          <p className="hidden text-xs text-gray-500 sm:block">{files.busy && files.items.length ? t('urgent.files.wait') : t('urgent.kbdHint')}</p>
+          <p className="hidden text-xs text-gray-500 sm:block">
+            {sendProgress !== null ? t('urgent.files.sending', { p: Math.round(sendProgress * 100) }) : t('urgent.kbdHint')}
+          </p>
           <div className="flex justify-end gap-3">
             <Button variant="outline" onClick={onClose}>{t('common.cancel')}</Button>
             <Button disabled={!canSubmit} loading={create.isPending} onClick={submit}>

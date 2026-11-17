@@ -946,9 +946,11 @@ function Lightbox({ url, fileName, sender, onClose }: { url: string; fileName: s
 
 export type RecKind = 'VOICE' | 'VIDEO_NOTE';
 
-function recorderMime(kind: RecKind) {
+function recorderMime(kind: RecKind, voiceMimes?: string[]) {
   const list =
-    kind === 'VOICE'
+    kind === 'VOICE' && voiceMimes
+      ? voiceMimes
+      : kind === 'VOICE'
       ? ['audio/webm;codecs=opus', 'audio/ogg;codecs=opus', 'audio/mp4']
       : // Telegram dumaloq videosi faqat MP4 (H.264) — imkon bo'lsa shu (Chrome 126+, Safari); bo'lmasa webm (kanalda hujjat bo'ladi)
         ['video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/mp4;codecs=avc1,opus', 'video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp8,opus', 'video/webm'];
@@ -1002,7 +1004,8 @@ function squareStream(camera: MediaStream) {
  * MediaRecorder o'ramasi. stop(true) — yozuv tugaydi va onDone chaqiriladi, stop(false) — bekor.
  * Dumaloq video 60 soniyada o'zi to'xtab yuboriladi (Telegram kabi).
  */
-export function useRecorder(onDone: (r: Recorded) => void) {
+/** `voiceMimes` — ovoz uchun boshqa tur tartibi (vazifa fayllari: Telegram ovozli xabari m4a/ogg qabul qiladi) */
+export function useRecorder(onDone: (r: Recorded) => void, voiceMimes?: string[]) {
   const [rec, setRec] = useState<{ kind: RecKind; stream: MediaStream; startedAt: number } | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const mr = useRef<MediaRecorder | null>(null);
@@ -1023,7 +1026,7 @@ export function useRecorder(onDone: (r: Recorded) => void) {
         : { audio: true, video: { width: { ideal: 640 }, height: { ideal: 640 }, facingMode: 'user' } },
     );
     const square = kind === 'VIDEO_NOTE' ? squareStream(stream) : null;
-    const mime = recorderMime(kind);
+    const mime = recorderMime(kind, voiceMimes);
     const recorder = new MediaRecorder(square?.stream ?? stream, {
       ...(mime ? { mimeType: mime } : {}),
       audioBitsPerSecond: 32_000,
@@ -1050,6 +1053,7 @@ export function useRecorder(onDone: (r: Recorded) => void) {
     keep.current = false;
     recorder.start(1000);
     setRec({ kind, stream, startedAt });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
