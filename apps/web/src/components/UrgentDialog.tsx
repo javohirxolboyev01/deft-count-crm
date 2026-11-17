@@ -14,6 +14,7 @@ import { Dialog, isTouch } from './ui/dialog';
 import { DatePicker, TimePicker } from './ui/date-picker';
 import { Field, Input, Textarea } from './ui/input';
 import { Select } from './ui/select';
+import { TaskAttachmentsField, useTaskAttachments } from './TaskAttachments';
 
 /**
  * "+ Shoshilinch" (6.9): 10 soniyada berish uchun minimal bosish.
@@ -28,6 +29,9 @@ export function UrgentDialog({ open, onClose }: { open: boolean; onClose: () => 
   const [templateId, setTemplateId] = useState('');
   const [assigneeId, setAssigneeId] = useState<number | ''>('');
   const [due, setDue] = useState('');
+  // Fayllar (V54): tanlanishi bilan Telegram kanaliga yuklanadi, yuborishda faqat id'lar
+  const files = useTaskAttachments();
+  const [dragOver, setDragOver] = useState(false);
 
   const general = useQuery({ queryKey: ['settings', 'general'], queryFn: () => api.get<{ taskDueTime: string }>('/settings/general'), enabled: open });
   const templates = useQuery({ queryKey: ['settings', 'templates'], queryFn: () => api.get<UrgentTemplate[]>('/settings/urgent-templates'), enabled: open });
@@ -45,6 +49,11 @@ export function UrgentDialog({ open, onClose }: { open: boolean; onClose: () => 
     setText('');
     setTemplateId('');
     setAssigneeId('');
+    setDragOver(false);
+    // Oyna yopilganda yuklanayotgani to'xtaydi, yozib olish bekor bo'ladi
+    files.reset();
+    files.recorder.stop(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
   useEffect(() => {
     if (open && general.data) setDue(todayAtLocalInput(general.data.taskDueTime));
@@ -61,17 +70,20 @@ export function UrgentDialog({ open, onClose }: { open: boolean; onClose: () => 
         templateId: !text.trim() && templateId ? templateId : undefined,
         assigneeId,
         dueAt: due ? localInputToIso(due) : undefined,
+        attachmentIds: files.ids.length ? files.ids : undefined,
       }),
     onSuccess: () => {
       invalidateTasks(qc);
       void qc.invalidateQueries({ queryKey: ['urgent-suggest'] });
       toast.success(t('urgent.created'));
+      // Fayllar endi vazifaniki: reset faqat ro'yxatni tozalaydi
+      files.reset();
       onClose();
     },
     onError: (e) => toast.error(errorText(e, t)),
   });
 
-  const canSubmit = !!client && !!assigneeId && (!!text.trim() || !!templateId) && !create.isPending;
+  const canSubmit = !!client && !!assigneeId && (!!text.trim() || !!templateId) && !files.busy && !create.isPending;
   const submit = () => canSubmit && create.mutate();
   const list = useMemo(() => clients.data?.items ?? [], [clients.data]);
 
@@ -90,7 +102,7 @@ export function UrgentDialog({ open, onClose }: { open: boolean; onClose: () => 
       }
       footer={
         <div className="flex w-full flex-col-reverse items-stretch gap-3 border-t pt-4 sm:flex-row sm:items-center sm:justify-between">
-          <p className="hidden text-xs text-gray-500 sm:block">{t('urgent.kbdHint')}</p>
+          <p className="hidden text-xs text-gray-500 sm:block">{files.busy && files.items.length ? t('urgent.files.wait') : t('urgent.kbdHint')}</p>
           <div className="flex justify-end gap-3">
             <Button variant="outline" onClick={onClose}>{t('common.cancel')}</Button>
             <Button disabled={!canSubmit} loading={create.isPending} onClick={submit}>
@@ -101,7 +113,28 @@ export function UrgentDialog({ open, onClose }: { open: boolean; onClose: () => 
         </div>
       }
     >
-      <div className="grid gap-6 md:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]" onKeyDown={(e) => e.key === 'Enter' && (e.ctrlKey || e.metaKey) && submit()}>
+      <div
+        className={cn('relative grid gap-6 md:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]', dragOver && 'rounded-lg ring-2 ring-brand-400 ring-offset-4')}
+        onKeyDown={(e) => e.key === 'Enter' && (e.ctrlKey || e.metaKey) && submit()}
+        // Sudrab tashlash va Ctrl+V — fayl qo'shiladi (ombor sozlangan bo'lsa)
+        onDragOver={(e) => {
+          if (!files.enabled || !e.dataTransfer.types.includes('Files')) return;
+          e.preventDefault();
+          setDragOver(true);
+        }}
+        onDragLeave={(e) => !e.currentTarget.contains(e.relatedTarget as Node) && setDragOver(false)}
+        onDrop={(e) => {
+          if (!files.enabled || !e.dataTransfer.files.length) return;
+          e.preventDefault();
+          setDragOver(false);
+          files.add(Array.from(e.dataTransfer.files));
+        }}
+        onPaste={(e) => {
+          if (!files.enabled || !e.clipboardData.files.length) return;
+          e.preventDefault();
+          files.add(Array.from(e.clipboardData.files));
+        }}
+      >
         {/* Chap ustun: nima va kimga (mijoz) */}
         <div className="min-w-0 space-y-4">
           <Field label={t('urgent.client')} group>
@@ -178,6 +211,11 @@ export function UrgentDialog({ open, onClose }: { open: boolean; onClose: () => 
           <Field label={t('urgent.text')} hint={t('urgent.textHint')}>
             <Textarea value={text} onChange={(e) => setText(e.target.value)} rows={3} />
           </Field>
+          {files.enabled && (
+            <Field label={t('urgent.files.label')} hint={t('urgent.files.hint')} group>
+              <TaskAttachmentsField state={files} />
+            </Field>
+          )}
         </div>
 
         {/* O'ng ustun: kim bajaradi va qachongacha */}

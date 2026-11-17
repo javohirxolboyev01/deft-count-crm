@@ -161,6 +161,8 @@ export interface TaskDetail extends Task {
   checklist: { id: number; text: string; done: boolean; sortOrder: number }[];
   timeEntries: { id: number; userId: number; userName: string; startedAt: string; endedAt: string | null }[];
   pendingTransfer: TaskTransfer | null;
+  /** Yangi vazifa bilan yuborilgan fayllar (V54) */
+  attachments: ChatAttachment[];
   transfers: TaskTransfer[];
 }
 
@@ -345,6 +347,8 @@ export interface ChatAttachment {
   height: number | null;
   /** Ovozli xabar to'lqini (0..31), V45; eski xabarlarda null */
   waveform: number[] | null;
+  /** Fayl manzili (API yo'li); bo'lmasa chat fayli `/chat/files/:id`. Vazifa fayli (V54) — `/tasks/files/:id` */
+  url?: string;
 }
 
 export interface ChatMessage {

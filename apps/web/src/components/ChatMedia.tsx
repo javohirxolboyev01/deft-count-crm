@@ -37,42 +37,45 @@ export const fmtSize = (bytes: number) =>
 
 // ---------------- Fayl keshi ----------------
 
-const fileCache = new Map<number, Promise<string>>();
+// Kalit — API yo'li: chat fayli `/chat/files/:id`, vazifa fayli (V54) `att.url` = `/tasks/files/:id`
+const fileCache = new Map<string, Promise<string>>();
 
-function chatFileUrl(id: number) {
-  let p = fileCache.get(id);
+const fileSrc = (att: ChatAttachment) => att.url ?? `/chat/files/${att.id}`;
+
+function chatFileUrl(path: string) {
+  let p = fileCache.get(path);
   if (!p) {
     // Telegram'ga ulanish beqaror bo'lishi mumkin: xato bo'lsa bir marta o'zi qayta so'raydi
-    const get = () => api.blob(`/chat/files/${id}`);
+    const get = () => api.blob(path);
     p = get()
       .catch((e) => (e?.status === 404 ? Promise.reject(e) : new Promise((r) => setTimeout(r, 1500)).then(get)))
       .then((b) => URL.createObjectURL(b));
-    p.catch(() => fileCache.delete(id));
-    fileCache.set(id, p);
+    p.catch(() => fileCache.delete(path));
+    fileCache.set(path, p);
   }
   return p;
 }
 
 /** O'zi yuborgan faylni qayta yuklab olmaslik uchun: keshga lokal nusxa */
-export function primeChatFile(id: number, file: Blob) {
-  if (!fileCache.has(id)) fileCache.set(id, Promise.resolve(URL.createObjectURL(file)));
+export function primeChatFile(id: number, file: Blob, path = `/chat/files/${id}`) {
+  if (!fileCache.has(path)) fileCache.set(path, Promise.resolve(URL.createObjectURL(file)));
 }
 
-function useChatFile(id: number, enabled = true) {
+function useChatFile(path: string, enabled = true) {
   const [state, setState] = useState<{ url?: string; error?: boolean }>({});
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     if (!enabled) return;
     let alive = true;
     setState({});
-    chatFileUrl(id).then(
+    chatFileUrl(path).then(
       (url) => alive && setState({ url }),
       () => alive && setState({ error: true }),
     );
     return () => {
       alive = false;
     };
-  }, [id, enabled, attempt]);
+  }, [path, enabled, attempt]);
   return { ...state, retry: () => setAttempt((a) => a + 1) };
 }
 
@@ -80,10 +83,18 @@ function useChatFile(id: number, enabled = true) {
 
 /** XHR — fetch yuklash foizini bermaydi. 401 bo'lsa token yangilanib bir marta qayta yuboriladi */
 export function uploadChatFile(userId: number, form: FormData, onProgress: (p: number) => void): Promise<ChatMessage> {
-  const send = (retry: boolean): Promise<ChatMessage> =>
+  return uploadForm<ChatMessage>(`/chat/with/${userId}/attachment`, form, onProgress);
+}
+
+/** Multipart yuklash progress bilan (chat, vazifa fayllari). `signal` — bekor qilish */
+export function uploadForm<T>(path: string, form: FormData, onProgress: (p: number) => void, signal?: AbortSignal): Promise<T> {
+  const send = (retry: boolean): Promise<T> =>
     new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
-      xhr.open('POST', `/api/chat/with/${userId}/attachment`);
+      if (signal?.aborted) return reject(new ApiError(0, 'ABORTED', 'Aborted'));
+      signal?.addEventListener('abort', () => xhr.abort(), { once: true });
+      xhr.onabort = () => reject(new ApiError(0, 'ABORTED', 'Aborted'));
+      xhr.open('POST', `/api${path}`);
       xhr.withCredentials = true;
       const tok = getAccessToken();
       if (tok) xhr.setRequestHeader('Authorization', `Bearer ${tok}`);
@@ -99,7 +110,7 @@ export function uploadChatFile(userId: number, form: FormData, onProgress: (p: n
           send(false).then(resolve, reject);
           return;
         }
-        if (xhr.status >= 200 && xhr.status < 300) resolve(data as ChatMessage);
+        if (xhr.status >= 200 && xhr.status < 300) resolve(data as T);
         else reject(new ApiError(xhr.status, data.code ?? `HTTP_${xhr.status}`, data.message ?? xhr.statusText, data.details));
       };
       xhr.onerror = () => reject(new ApiError(0, 'NETWORK', 'Network error'));
@@ -325,7 +336,7 @@ function FileView({ att, mine }: { att: ChatAttachment; mine: boolean }) {
     setBusy(true);
     setFailed(false);
     try {
-      const href = await chatFileUrl(att.id);
+      const href = await chatFileUrl(fileSrc(att));
       Object.assign(document.createElement('a'), { href, download: name }).click();
     } catch {
       setFailed(true);
@@ -357,7 +368,7 @@ function FileView({ att, mine }: { att: ChatAttachment; mine: boolean }) {
 }
 
 function ImageView({ att, overlay, sender }: { att: ChatAttachment; overlay?: ReactNode; sender?: MediaSender }) {
-  const { url, error, retry } = useChatFile(att.id);
+  const { url, error, retry } = useChatFile(fileSrc(att));
   const [zoom, setZoom] = useState(false);
   return (
     <div className="relative overflow-hidden rounded-xl bg-black/10" style={boxSize(att)}>
@@ -388,7 +399,7 @@ function ImageView({ att, overlay, sender }: { att: ChatAttachment; overlay?: Re
 function VideoView({ att, overlay }: { att: ChatAttachment; overlay?: ReactNode }) {
   // Video katta bo'lishi mumkin: faqat bosilganda yuklanadi
   const [want, setWant] = useState(false);
-  const { url, error, retry } = useChatFile(att.id, want);
+  const { url, error, retry } = useChatFile(fileSrc(att), want);
   return (
     <div className="relative overflow-hidden rounded-xl bg-[#1a344d]" style={boxSize(att)}>
       {url ? (
@@ -543,7 +554,7 @@ const NOTE_BIG = 288;
  */
 function VideoNoteView({ att, overlay, sender }: { att: ChatAttachment; overlay?: ReactNode; sender?: MediaSender }) {
   const { t } = useTranslation();
-  const { url, error, retry } = useChatFile(att.id);
+  const { url, error, retry } = useChatFile(fileSrc(att));
   const [el, setEl] = useState<HTMLVideoElement | null>(null);
   const [mode, setModeState] = useState<'preview' | 'playing' | 'paused'>('preview');
   // play/pause hodisalari kechikib kelishi mumkin: joriy rejim ref'da (eski qiymat bilan qaytib qolmasin)
@@ -680,7 +691,7 @@ const fmtClock = (sec: number) => {
 function VoiceView({ att, mine, sender, footer }: { att: ChatAttachment; mine: boolean; sender?: MediaSender; footer?: ReactNode }) {
   const { t } = useTranslation();
   const [want, setWant] = useState(false);
-  const { url, error, retry } = useChatFile(att.id, want);
+  const { url, error, retry } = useChatFile(fileSrc(att), want);
   const [el, setEl] = useState<HTMLAudioElement | null>(null);
   const [playing, setPlaying] = useState(false);
   const [pos, setPos] = useState(0);

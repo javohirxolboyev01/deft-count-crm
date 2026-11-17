@@ -8,6 +8,8 @@ import { TZ, currentPeriod, nowTz, periodFromMonth, todayAt, workPeriod } from '
 import { one, pool, q, tx } from '../db';
 import { getDueTime } from './generator';
 import { enqueue } from './notifications';
+import { checkUpload, optInt, uploadOne, waveformField } from './chat';
+import { downloadFromTelegram, rememberUploaded, storageEnabled, uploadToTelegram } from './telegramStorage';
 import { WORKS_SCOPE } from './taskScope';
 import { hasPendingTransferTo, transfersForTask, transfersForTasks } from './taskTransfer';
 import {
@@ -123,6 +125,74 @@ tasksRouter.get('/urgent/suggest-assignee', requireLeader, async (_req, res) => 
   res.json(rows);
 });
 
+// ---------- Vazifa fayllari (V54) ----------
+// Ombor — ichki chat bilan bir xil Telegram yopiq kanali. Fayl "Yangi vazifa" oynasi ochiqligida yuklanadi
+// (task_id NULL), vazifa yuborilganda `attachmentIds` bilan bog'lanadi. Keyin qo'shib bo'lmaydi (rahbar qarori).
+const TASK_FILES_MAX = 10;
+const ATTACHMENT_DTO = `a.id, a.kind, a.mime, a.file_name AS "fileName", a.size_bytes AS "sizeBytes",
+  a.duration_sec AS "durationSec", a.width, a.height, a.waveform`;
+
+tasksRouter.post('/attachments', requireLeader, async (req, res) => {
+  const u = me(req);
+  if (!storageEnabled()) throw new AppError(503, 'FILE_STORAGE_DISABLED', 'Fayl ombori sozlanmagan');
+  await uploadOne(req, res);
+  const file = req.file;
+  if (!file?.size) throw new AppError(400, 'FILE_REQUIRED', 'Fayl tanlanmagan');
+  const meta = parse(
+    z.object({ kind: z.enum(['IMAGE', 'VIDEO', 'VOICE', 'FILE']), durationSec: optInt, width: optInt, height: optInt, waveform: waveformField }),
+    req.body,
+  );
+  const { mime, fileName } = checkUpload(file, meta.kind, meta.durationSec);
+  // Kanaldagi izoh: faqat texnik belgi (vazifa matni Telegram kanaliga yozilmaydi)
+  const stored = await uploadToTelegram(file.buffer, fileName, mime, `crm-task ${meta.kind} u${u.id}`);
+  rememberUploaded(stored.fileId, file.buffer);
+  // Oyna yopilib bog'lanmay qolganlari (kanalda arxiv bo'lib qoladi)
+  await pool.query(`DELETE FROM task_attachment WHERE task_id IS NULL AND created_at < now() - interval '1 day'`);
+  const row = await one(
+    pool,
+    `INSERT INTO task_attachment AS a (kind, mime, file_name, size_bytes, duration_sec, width, height, waveform,
+                                       tg_file_id, tg_file_unique_id, tg_chat_id, tg_message_id, created_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING ${ATTACHMENT_DTO}`,
+    [meta.kind, mime, fileName, file.size, meta.durationSec ?? null, meta.width ?? null, meta.height ?? null,
+      meta.kind === 'VOICE' && meta.waveform ? meta.waveform : null,
+      stored.fileId, stored.fileUniqueId, stored.chatId, stored.messageId, u.id],
+  );
+  res.status(201).json(row);
+});
+
+/** Fayl mazmuni: vazifani ko'ra oladiganlarga (rahbar, mas'ul, mijoz buxgalteri, o'tkazish qabul qiluvchisi) */
+tasksRouter.get('/files/:id', async (req, res) => {
+  const u = me(req);
+  const a = await one<{ kind: string; mime: string; file_name: string | null; tg_file_id: string; task_id: number | null;
+    created_by: number; assignee_id: number | null; accountant_id: number | null }>(
+    pool,
+    `SELECT a.kind, a.mime, a.file_name, a.tg_file_id, a.task_id, a.created_by, t.assignee_id, c.accountant_id
+     FROM task_attachment a LEFT JOIN task t ON t.id = a.task_id LEFT JOIN client c ON c.id = t.client_id
+     WHERE a.id = $1`,
+    [parse(id, req.params.id)],
+  );
+  if (!a) throw notFound('Fayl');
+  // Hali bog'lanmagan fayl — faqat yuklagan rahbarga (oynadagi ko'rinish)
+  if (a.task_id === null) {
+    if (a.created_by !== u.id) throw notFound('Fayl');
+  } else if (!(await hasPendingTransferTo(pool, a.task_id, u.id))) {
+    try {
+      assertTaskAccess(u, a);
+    } catch {
+      throw notFound('Fayl');
+    }
+  }
+  const buf = await downloadFromTelegram(a.tg_file_id);
+  const isFile = a.kind === 'FILE';
+  // Hujjat brauzerda bajarilmasin (HTML/SVG ichidagi skript): faqat yuklab olish, sandbox
+  res.setHeader('Content-Type', isFile ? 'application/octet-stream' : a.mime);
+  if (isFile) res.setHeader('Content-Security-Policy', 'sandbox');
+  res.setHeader('Content-Length', String(buf.length));
+  res.setHeader('Cache-Control', 'private, max-age=31536000, immutable');
+  res.setHeader('Content-Disposition', `${isFile ? 'attachment' : 'inline'}; filename*=UTF-8''${encodeURIComponent(a.file_name ?? 'file')}`);
+  res.end(buf);
+});
+
 tasksRouter.post('/urgent', requireLeader, async (req, res) => {
   const u = me(req);
   const body = parse(
@@ -134,6 +204,7 @@ tasksRouter.post('/urgent', requireLeader, async (req, res) => {
         assigneeId: id,
         dueAt: z.coerce.date().optional(),
         note: z.string().max(2000).optional(),
+        attachmentIds: z.array(id).max(TASK_FILES_MAX).default([]),
       })
       .refine((b) => b.text || b.templateId, { message: 'text yoki templateId kerak' }),
     req.body,
@@ -159,19 +230,32 @@ tasksRouter.post('/urgent', requireLeader, async (req, res) => {
        VALUES ($1, 'URGENT', $2, $3, $4, $5, $6, $7) RETURNING id`,
       [body.clientId, currentPeriod(), title, body.note ?? null, body.assigneeId, dueAt, u.id],
     );
+    const ids = [...new Set(body.attachmentIds)];
+    if (ids.length) {
+      // Faqat shu rahbar yuklagan va hali hech qaysi vazifaga bog'lanmagan fayllar
+      const linked = await q(
+        db,
+        'UPDATE task_attachment SET task_id = $1 WHERE id = ANY($2::bigint[]) AND task_id IS NULL AND created_by = $3 RETURNING id',
+        [t!.id, ids, u.id],
+      );
+      if (linked.length !== ids.length) throw new AppError(400, 'ATTACHMENT_NOT_FOUND', 'Fayl topilmadi, qayta yuklang');
+    }
     await audit(db, {
       actorId: u.id,
       entity: 'task',
       entityId: t!.id,
       clientId: body.clientId,
       action: 'CREATE_URGENT',
-      after: { title, assigneeId: body.assigneeId, dueAt },
+      after: { title, assigneeId: body.assigneeId, dueAt, ...(ids.length ? { attachmentIds: ids } : {}) },
     });
     await enqueue(db, {
       userId: body.assigneeId,
       kind: 'URGENT_TASK',
       taskId: t!.id,
-      payload: { taskId: t!.id, title, clientId: client.id, clientName: client.name, dueAt: dueAt.toISOString(), createdByName: u.fullName },
+      payload: {
+        taskId: t!.id, title, clientId: client.id, clientName: client.name, dueAt: dueAt.toISOString(), createdByName: u.fullName,
+        ...(ids.length ? { files: ids.length } : {}),
+      },
     });
     return getTaskDto(db, t!.id);
   });
@@ -286,7 +370,8 @@ tasksRouter.get('/:id', async (req, res) => {
      FROM time_entry te JOIN app_user u ON u.id = te.user_id WHERE te.task_id = $1 ORDER BY te.started_at DESC LIMIT 50`,
     [taskId],
   );
-  res.json({ ...task, checklist, timeEntries, ...(await transfersForTask(pool, taskId)) });
+  const attachments = await q(pool, `SELECT ${ATTACHMENT_DTO} FROM task_attachment a WHERE a.task_id = $1 ORDER BY a.id`, [taskId]);
+  res.json({ ...task, checklist, timeEntries, attachments, ...(await transfersForTask(pool, taskId)) });
 });
 
 tasksRouter.patch('/:id', async (req, res) => {

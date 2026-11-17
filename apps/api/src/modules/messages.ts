@@ -66,6 +66,7 @@ export function renderNotification(kind: string, p: any, lang: Lang): string {
           client,
           { icon: '⏰', label: L('Muddat', 'Срок'), value: fmt(p.dueAt), strong: true },
           { icon: '👤', label: L('Kim berdi', 'Поставил'), value: p.createdByName },
+          ...(p.files ? [{ icon: '📎', label: L('Fayllar', 'Файлы'), value: L(`${p.files} ta — CRM'da`, `${p.files} шт. — в CRM`) }] : []),
         ],
         footer: L("CRM'da vazifani oching va «Jarayonda» ni bosing.", 'Откройте задачу в CRM и нажмите «В работе».'),
       });

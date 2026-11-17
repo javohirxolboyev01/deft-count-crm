@@ -124,22 +124,43 @@ chatRouter.post('/with/:userId', async (req, res) => {
 
 // Ruxsat etilgan turlar (SVG/HTML yo'q — brauzerda skript bajarilmasin). MediaRecorder: Chrome — webm, Safari — mp4
 // FILE (hujjat) — istalgan tur: brauzerda ochilmaydi, faqat yuklab olinadi
-const KIND_MIMES: Record<string, string[] | null> = {
+export const KIND_MIMES: Record<string, string[] | null> = {
   FILE: null,
   IMAGE: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
   VIDEO: ['video/mp4', 'video/webm', 'video/quicktime'],
   VIDEO_NOTE: ['video/mp4', 'video/webm'],
-  VOICE: ['audio/webm', 'audio/ogg', 'audio/mp4', 'audio/mpeg', 'audio/x-m4a', 'audio/aac'],
+  VOICE: ['audio/webm', 'audio/ogg', 'audio/mp4', 'audio/mpeg', 'audio/x-m4a', 'audio/aac', 'audio/wav', 'audio/x-wav'],
 };
 const EXT_MIME: Record<string, string> = {
   jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', gif: 'image/gif',
   mp4: 'video/mp4', webm: 'video/webm', mov: 'video/quicktime', ogg: 'audio/ogg', m4a: 'audio/mp4', mp3: 'audio/mpeg',
+  wav: 'audio/wav', aac: 'audio/aac',
 };
 // Dumaloq video xabar Telegram'dagidek ko'pi bilan 60 soniya
 const MAX_DURATION: Record<string, number> = { VIDEO_NOTE: 60, VOICE: 30 * 60 };
 
+/**
+ * Yuklangan fayl turi va nomini tekshirish (chat va vazifa fayllari uchun bitta qoida).
+ * Brauzer turni buzib yuborsa (masalan, `codecs=a,b` dagi vergul tufayli text/plain) — kengaytmadan.
+ */
+export function checkUpload(file: Express.Multer.File, kind: string, durationSec?: number) {
+  let mime = file.mimetype.split(';')[0].trim().toLowerCase() || 'application/octet-stream';
+  const byExt = EXT_MIME[file.originalname.split('.').pop()?.toLowerCase() ?? ''];
+  if (kind !== 'FILE' && byExt && (mime === 'text/plain' || mime === 'application/octet-stream')) mime = byExt;
+  const allowed = KIND_MIMES[kind];
+  if (allowed && !allowed.includes(mime)) {
+    throw new AppError(415, 'UNSUPPORTED_FILE_TYPE', 'Bu turdagi fayl qabul qilinmaydi', { mime, kind });
+  }
+  if (durationSec && MAX_DURATION[kind] && durationSec > MAX_DURATION[kind]) {
+    throw new AppError(400, 'TOO_LONG', 'Yozuv juda uzun', { maxSec: MAX_DURATION[kind] });
+  }
+  // multer nomni latin1 deb o'qiydi: kirill/o'zbekcha nomlar buzilmasin
+  const fileName = Buffer.from(file.originalname || 'file', 'latin1').toString('utf8').slice(0, 200);
+  return { mime, fileName };
+}
+
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: CHAT_FILE_MAX_BYTES, files: 1 } });
-const uploadOne = (req: any, res: any) =>
+export const uploadOne = (req: any, res: any) =>
   new Promise<void>((resolve, reject) =>
     upload.single('file')(req, res, (err: any) => {
       if (err?.code === 'LIMIT_FILE_SIZE') {
@@ -149,7 +170,15 @@ const uploadOne = (req: any, res: any) =>
     }),
   );
 
-const optInt = z.preprocess((v) => (v === '' ? undefined : v), z.coerce.number().int().positive().max(100_000).optional());
+export const optInt = z.preprocess((v) => (v === '' ? undefined : v), z.coerce.number().int().positive().max(100_000).optional());
+
+// Ovozli xabar to'lqini: "3,10,31,..." (0..31, ≤ 100 ta)
+export const waveformField = z
+  .string()
+  .regex(/^\d{1,2}(,\d{1,2}){0,99}$/)
+  .transform((v) => v.split(',').map(Number))
+  .refine((a) => a.every((n) => n <= 31))
+  .optional();
 
 /** Fayl (rasm / video / ovozli / dumaloq video) + ixtiyoriy izoh. Fayl avval Telegram kanaliga, keyin bazaga */
 chatRouter.post('/with/:userId/attachment', async (req, res) => {
@@ -166,30 +195,12 @@ chatRouter.post('/with/:userId/attachment', async (req, res) => {
       durationSec: optInt,
       width: optInt,
       height: optInt,
-      // Ovozli xabar to'lqini: "3,10,31,..." (0..31, ≤ 100 ta)
-      waveform: z
-        .string()
-        .regex(/^\d{1,2}(,\d{1,2}){0,99}$/)
-        .transform((v) => v.split(',').map(Number))
-        .refine((a) => a.every((n) => n <= 31))
-        .optional(),
+      waveform: waveformField,
     }),
     req.body,
   );
-  let mime = file.mimetype.split(';')[0].trim().toLowerCase() || 'application/octet-stream';
-  // Brauzer turni buzib yuborsa (masalan, `codecs=a,b` dagi vergul tufayli text/plain) — kengaytmadan
-  const byExt = EXT_MIME[file.originalname.split('.').pop()?.toLowerCase() ?? ''];
-  if (meta.kind !== 'FILE' && byExt && (mime === 'text/plain' || mime === 'application/octet-stream')) mime = byExt;
-  const allowed = KIND_MIMES[meta.kind];
-  if (allowed && !allowed.includes(mime)) {
-    throw new AppError(415, 'UNSUPPORTED_FILE_TYPE', 'Bu turdagi fayl qabul qilinmaydi', { mime, kind: meta.kind });
-  }
-  if (meta.durationSec && MAX_DURATION[meta.kind] && meta.durationSec > MAX_DURATION[meta.kind]) {
-    throw new AppError(400, 'TOO_LONG', 'Yozuv juda uzun', { maxSec: MAX_DURATION[meta.kind] });
-  }
+  const { mime, fileName } = checkUpload(file, meta.kind, meta.durationSec);
   await assertRecipient(other, u.id);
-  // multer nomni latin1 deb o'qiydi: kirill/o'zbekcha nomlar buzilmasin
-  const fileName = Buffer.from(file.originalname || 'file', 'latin1').toString('utf8').slice(0, 200);
   // Kanaldagi izoh: faqat texnik belgi (ism va matn Telegram'ga yuborilmaydi)
   const stored = await uploadToTelegram(
     file.buffer,

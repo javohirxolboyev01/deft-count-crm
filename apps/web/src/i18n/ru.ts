@@ -44,6 +44,7 @@ const ru: Dict = {
     TG_UPLOAD_EXPIRED: 'Загрузка устарела — выберите файл заново', NETWORK: 'Ошибка сети — проверьте интернет', ABORTED: 'Отменено',
     TG_FILE_TOO_LARGE: 'Файл слишком большой — откройте в приложении Telegram', TG_ERROR: 'Ошибка связи с Telegram',
     TRANSFER_PENDING: 'По этой задаче уже есть запрос, ожидающий ответа', TRANSFER_KIND: 'Передать можно только срочную или созданную вручную задачу',
+    ATTACHMENT_NOT_FOUND: 'Файл не найден — загрузите заново',
     TASK_NOT_DELETABLE: 'Удалить можно только открытую срочную или созданную вручную задачу',
     TRANSFER_CLOSED: 'Задача выполнена или отменена — передать нельзя', TRANSFER_SAME: 'Задача уже у этого сотрудника', TRANSFER_RESOLVED: 'Запрос уже обработан',
     VALIDATION_ERROR: 'Данные заполнены неверно', NOT_FOUND: 'Не найдено', FORBIDDEN: 'Нет доступа к этому действию',
@@ -156,7 +157,7 @@ const ru: Dict = {
     },
   },
   task: {
-    title: 'Задача', client: 'Клиент', kind: 'Тип', due: 'Срок', assignee: 'Ответственный', createdBy: 'Поставил', chain: 'Цепочка', status: 'Статус', spent: 'Затрачено времени',
+    title: 'Задача', files: 'Файлы ({{count}})', client: 'Клиент', kind: 'Тип', due: 'Срок', assignee: 'Ответственный', createdBy: 'Поставил', chain: 'Цепочка', status: 'Статус', spent: 'Затрачено времени',
     doneAt: 'Выполнено', late: 'с опозданием', noDue: 'Без срока', overdue: 'просрочено', dueSoon: 'осталось меньше 24 часов',
     unassigned: 'Не назначено', timerOn: 'таймер включён', checklist: 'Чек-лист', addItem: 'Новый пункт…', note: 'Комментарий',
     notePlaceholder: 'Напишите комментарий…', freeTextHint: 'Запишите сюда прочие работы за этот месяц.', timeEntries: 'Учёт времени',
@@ -320,6 +321,11 @@ const ru: Dict = {
     template: 'Готовый шаблон', templatePlaceholder: 'Выберите шаблон', text: 'Текст задачи', textHint: 'При выборе шаблона текст заполнится сам',
     assignee: 'Бухгалтер', leastBusy: 'меньше всего занят', load: 'открытых: {{count}}', due: 'Срок', submit: 'Отправить',
     created: 'Срочная задача отправлена', kbdHint: 'Ctrl+Enter — отправить, Esc — закрыть',
+    files: {
+      label: 'Файлы', hint: 'Фото, аудио, документ — до 20 МБ. Можно перетащить или вставить Ctrl+V',
+      add: 'Добавить файл', record: 'Записать голос', stopRecording: 'Закончить запись', uploading: 'загрузка {{p}}%',
+      tooMany: 'Не более {{max}} файлов', unsupported: 'Этот тип файла не принимается', wait: 'Дождитесь загрузки файлов…',
+    },
   },
   sheets: {
     importBtn: 'Загрузить Excel',

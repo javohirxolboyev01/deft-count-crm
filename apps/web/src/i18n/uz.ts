@@ -41,6 +41,7 @@ const uz = {
     TG_UPLOAD_EXPIRED: 'Fayl yuklanishi eskirgan — qaytadan tanlang', NETWORK: 'Tarmoq xatosi — internetni tekshiring', ABORTED: 'Bekor qilindi',
     TG_FILE_TOO_LARGE: 'Fayl juda katta — Telegram ilovasida oching', TG_ERROR: "Telegram bilan bog'lanishda xato",
     TRANSFER_PENDING: "Bu vazifa bo'yicha javob kutilayotgan so'rov bor", TRANSFER_KIND: "Faqat shoshilinch va qo'lda yaratilgan vazifani o'tkazish mumkin",
+    ATTACHMENT_NOT_FOUND: 'Fayl topilmadi — qaytadan yuklang',
     TASK_NOT_DELETABLE: "Faqat ochiq shoshilinch va qo'lda yaratilgan vazifani o'chirish mumkin",
     TRANSFER_CLOSED: "Vazifa bajarilgan yoki bekor qilingan — o'tkazib bo'lmaydi", TRANSFER_SAME: 'Vazifa allaqachon shu xodimda', TRANSFER_RESOLVED: "So'rov allaqachon hal qilingan",
     VALIDATION_ERROR: "Ma'lumot noto'g'ri to'ldirilgan", NOT_FOUND: 'Topilmadi', FORBIDDEN: "Bu amal uchun ruxsat yo'q",
@@ -153,7 +154,7 @@ const uz = {
     },
   },
   task: {
-    title: 'Vazifa', client: 'Mijoz', kind: 'Turi', due: 'Muddat', assignee: "Mas'ul", createdBy: 'Kim berdi', chain: 'Zanjir', status: 'Holat', spent: 'Sarflangan vaqt',
+    title: 'Vazifa', files: 'Fayllar ({{count}})', client: 'Mijoz', kind: 'Turi', due: 'Muddat', assignee: "Mas'ul", createdBy: 'Kim berdi', chain: 'Zanjir', status: 'Holat', spent: 'Sarflangan vaqt',
     doneAt: 'Bajarilgan vaqt', late: 'kechikib', noDue: "Muddatsiz", overdue: "muddati o'tgan", dueSoon: '24 soatdan kam qoldi',
     unassigned: 'Biriktirilmagan', timerOn: 'taymer yoqilgan', checklist: "Checklist", addItem: "Yangi band…", note: 'Izoh',
     notePlaceholder: 'Izoh yozing…', freeTextHint: 'Bu oy qilingan boshqa ishlarni shu yerga yozing.', timeEntries: 'Vaqt yozuvlari',
@@ -317,6 +318,11 @@ const uz = {
     template: 'Tayyor shablon', templatePlaceholder: 'Shablonni tanlang', text: 'Vazifa matni', textHint: 'Shablon tanlansa, matn o\'zi to\'ldiriladi',
     assignee: 'Buxgalter', leastBusy: 'eng kam band', load: '{{count}} ta ochiq', due: 'Muddat', submit: 'Yuborish',
     created: 'Shoshilinch vazifa yuborildi', kbdHint: 'Ctrl+Enter — yuborish, Esc — yopish',
+    files: {
+      label: 'Fayllar', hint: "Rasm, audio, hujjat — 20 MB gacha. Sudrab tashlash yoki Ctrl+V ham bo'ladi",
+      add: "Fayl qo'shish", record: 'Ovoz yozish', stopRecording: 'Yozishni tugatish', uploading: 'yuklanmoqda {{p}}%',
+      tooMany: "Ko'pi bilan {{max}} ta fayl", unsupported: 'Bu turdagi fayl qabul qilinmaydi', wait: 'Fayllar yuklanishini kuting…',
+    },
   },
   sheets: {
     importBtn: 'Excel yuklash',

@@ -11,6 +11,7 @@ import { fmtDateTime, fmtDuration } from '@/lib/time';
 import type { TaskDetail, TaskStatus } from '@/lib/types';
 import { invalidateTasks, taskTitle, taskTone, useChangeStatus } from '@/hooks/tasks';
 import { TaskStatusBadge } from './StatusBadge';
+import { TaskAttachmentList } from './TaskAttachments';
 import { TransferSection } from './TaskTransfer';
 import { Button } from './ui/button';
 import { ConfirmDialog, Drawer } from './ui/dialog';
@@ -142,6 +143,13 @@ export function TaskPanel({ taskId, onClose }: { taskId: number | null; onClose:
                 </Button>
               )}
             </div>}
+
+            {task.attachments?.length > 0 && (
+              <section>
+                <h3 className="mb-1.5 text-sm font-semibold text-foreground">{t('task.files', { count: task.attachments.length })}</h3>
+                <TaskAttachmentList attachments={task.attachments} />
+              </section>
+            )}
 
             <TransferSection task={task} />
 
