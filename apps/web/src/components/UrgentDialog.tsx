@@ -98,7 +98,9 @@ export function UrgentDialog({ open, onClose }: { open: boolean; onClose: () => 
     },
   });
 
-  const canSubmit = !!client && !!assigneeId && (!!text.trim() || !!templateId) && !files.busy && !create.isPending;
+  // Matn ixtiyoriy, agar ovozli xabar qo'shilgan bo'lsa (rahbar qarori)
+  const hasVoice = files.items.some((x) => x.kind === 'VOICE');
+  const canSubmit = !!client && !!assigneeId && (!!text.trim() || !!templateId || hasVoice) && !files.busy && !create.isPending;
   const submit = () => canSubmit && create.mutate();
   const list = useMemo(() => clients.data?.items ?? [], [clients.data]);
 
@@ -225,7 +227,7 @@ export function UrgentDialog({ open, onClose }: { open: boolean; onClose: () => 
               options={templates.data?.map((tpl) => ({ value: tpl.id, label: tpl.text })) ?? []}
             />
           </Field>
-          <Field label={t('urgent.text')} hint={t('urgent.textHint')}>
+          <Field label={hasVoice ? t('urgent.textOptional') : t('urgent.text')} hint={t('urgent.textHint')}>
             <Textarea value={text} onChange={(e) => setText(e.target.value)} rows={3} />
           </Field>
           {files.enabled && (

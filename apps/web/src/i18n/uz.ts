@@ -41,7 +41,7 @@ const uz = {
     TG_UPLOAD_EXPIRED: 'Fayl yuklanishi eskirgan — qaytadan tanlang', NETWORK: 'Tarmoq xatosi — internetni tekshiring', ABORTED: 'Bekor qilindi',
     TG_FILE_TOO_LARGE: 'Fayl juda katta — Telegram ilovasida oching', TG_ERROR: "Telegram bilan bog'lanishda xato",
     TRANSFER_PENDING: "Bu vazifa bo'yicha javob kutilayotgan so'rov bor", TRANSFER_KIND: "Faqat shoshilinch va qo'lda yaratilgan vazifani o'tkazish mumkin",
-    TOO_MANY_FILES: "Fayllar juda ko'p", TASK_NOT_DELETABLE: "Faqat ochiq shoshilinch va qo'lda yaratilgan vazifani o'chirish mumkin",
+    TEXT_REQUIRED: 'Vazifa matni yoki ovozli xabar kerak', TOO_MANY_FILES: "Fayllar juda ko'p", TASK_NOT_DELETABLE: "Faqat ochiq shoshilinch va qo'lda yaratilgan vazifani o'chirish mumkin",
     TRANSFER_CLOSED: "Vazifa bajarilgan yoki bekor qilingan — o'tkazib bo'lmaydi", TRANSFER_SAME: 'Vazifa allaqachon shu xodimda', TRANSFER_RESOLVED: "So'rov allaqachon hal qilingan",
     VALIDATION_ERROR: "Ma'lumot noto'g'ri to'ldirilgan", NOT_FOUND: 'Topilmadi', FORBIDDEN: "Bu amal uchun ruxsat yo'q",
     UNAUTHORIZED: 'Qayta kiring', TOKEN_INVALID: 'Sessiya tugadi, qayta kiring', INVALID_CREDENTIALS: "Login yoki parol noto'g'ri",
@@ -314,7 +314,7 @@ const uz = {
   },
   urgent: {
     button: 'Yangi vazifa', title: 'Yangi vazifa', client: 'Mijoz', searchClient: 'Mijoz nomi yoki STIR… (Enter — birinchisi)',
-    template: 'Tayyor shablon', templatePlaceholder: 'Shablonni tanlang', text: 'Vazifa matni', textHint: 'Shablon tanlansa, matn o\'zi to\'ldiriladi',
+    template: 'Tayyor shablon', templatePlaceholder: 'Shablonni tanlang', text: 'Vazifa matni', textOptional: 'Vazifa matni (ixtiyoriy)', textHint: "Shablon tanlansa, matn o'zi to'ldiriladi. Ovozli xabar bo'lsa, matn shart emas",
     assignee: 'Buxgalter', leastBusy: 'eng kam band', load: '{{count}} ta ochiq', due: 'Muddat', submit: 'Yuborish',
     created: 'Shoshilinch vazifa yuborildi', kbdHint: 'Ctrl+Enter — yuborish, Esc — yopish',
     files: {

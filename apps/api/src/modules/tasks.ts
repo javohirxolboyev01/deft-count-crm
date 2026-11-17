@@ -137,6 +137,7 @@ tasksRouter.get('/urgent/suggest-assignee', requireLeader, async (_req, res) => 
 // Ombor — ichki chat bilan bir xil Telegram yopiq kanali. Fayllar vazifa bilan bitta so'rovda keladi (multipart) va
 // faqat "Yuborish" bosilganda kanalga yuklanadi (rahbar qarori 2026-11-17). Keyin qo'shib bo'lmaydi.
 const TASK_FILES_MAX = 10;
+const VOICE_TASK_TITLE = '🎤 Ovozli xabar';
 const ATTACHMENT_DTO = `a.id, a.kind, a.mime, a.file_name AS "fileName", a.size_bytes AS "sizeBytes",
   a.duration_sec AS "durationSec", a.width, a.height, a.waveform`;
 
@@ -208,10 +209,13 @@ tasksRouter.post('/urgent', requireLeader, async (req, res) => {
         dueAt: z.coerce.date().optional(),
         note: z.string().max(2000).optional(),
         filesMeta: z.string().optional(),
-      })
-      .refine((b) => b.text || b.templateId, { message: 'text yoki templateId kerak' }),
+      }),
     req.body,
   );
+  // Matn ixtiyoriy, agar ovozli xabar bo'lsa (rahbar qarori 2026-11-17); aks holda matn yoki shablon kerak
+  const noText = !body.text && !body.templateId;
+  const textRequired = () => new AppError(400, 'TEXT_REQUIRED', 'Vazifa matni yoki ovozli xabar kerak');
+  if (noText && !files.length) throw textRequired();
   const checkTargets = async (db: Db) => {
     const client = await one(db, 'SELECT id, name FROM client WHERE id = $1 AND deleted_at IS NULL', [body.clientId]);
     if (!client) throw notFound('Mijoz');
@@ -238,6 +242,7 @@ tasksRouter.post('/urgent', requireLeader, async (req, res) => {
       if (!f.size) throw new AppError(400, 'FILE_REQUIRED', 'Bo\'sh fayl');
       return { f, meta: metas[i], ...checkUpload(f, metas[i].kind, metas[i].durationSec) };
     });
+    if (noText && !checked.some((c) => c.meta.kind === 'VOICE')) throw textRequired();
     await checkTargets(pool);
     for (const c of checked) {
       // Kanaldagi izoh: faqat texnik belgi (vazifa matni Telegram kanaliga yozilmaydi)
@@ -255,6 +260,8 @@ tasksRouter.post('/urgent', requireLeader, async (req, res) => {
       title = s?.value?.find((t: any) => t.id === body.templateId)?.text;
       if (!title) throw new AppError(400, 'TEMPLATE_NOT_FOUND', 'Shablon topilmadi');
     }
+    // Faqat ovozli xabar bilan berilgan vazifa: ro'yxat, bildirishnoma va botda shu sarlavha
+    if (!title) title = VOICE_TASK_TITLE;
     // Muddat odatda shu kuni 18:00 (Asia/Tashkent)
     const dueAt = body.dueAt ?? todayAt(await getDueTime(db));
     const t = await one<{ id: number }>(

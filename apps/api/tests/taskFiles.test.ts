@@ -111,6 +111,23 @@ describe('yangi vazifa fayllari (V54/V55, Telegram ombori)', () => {
     expect((await createUrgent(tA1, { clientId, text: 'x', assigneeId: team.acc1 }, [])).status).toBe(403);
   });
 
+  it('ovozli xabar bo\'lsa matn ixtiyoriy; faqat rasm bo\'lsa matn kerak', async () => {
+    const v = await createUrgent(tL, { clientId, assigneeId: team.acc1 }, [
+      { buf: MP3, name: 'voice.m4a', type: 'audio/mp4', meta: { kind: 'VOICE', durationSec: 3 } },
+    ]);
+    expect(v.status).toBe(201);
+    expect(v.body.title).toBe('🎤 Ovozli xabar');
+
+    const before = tg.files.size;
+    const img = await createUrgent(tL, { clientId, assigneeId: team.acc1 }, [
+      { buf: PNG, name: 'a.png', type: 'image/png', meta: { kind: 'IMAGE' } },
+    ]);
+    expect(img.status).toBe(400);
+    expect(img.body.code).toBe('TEXT_REQUIRED');
+    expect(tg.files.size).toBe(before);
+    expect((await L.post('/api/tasks/urgent', { clientId, assigneeId: team.acc1 })).body.code).toBe('TEXT_REQUIRED');
+  });
+
   it('faylsiz vazifa (JSON) avvalgidek ishlaydi', async () => {
     const t = await L.post('/api/tasks/urgent', { clientId, text: 'Oddiy', assigneeId: team.acc1 });
     expect(t.status).toBe(201);
