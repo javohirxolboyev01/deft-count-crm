@@ -642,3 +642,78 @@ export interface ServerStatus {
   billingUrl: string;
   errors: ('server' | 'usage' | 'billing')[];
 }
+
+// ---------------- Firma Telegram akkaunti (V53) ----------------
+
+export type TgMediaKind = 'PHOTO' | 'VIDEO' | 'VIDEO_NOTE' | 'VOICE' | 'AUDIO' | 'STICKER' | 'GIF' | 'FILE' | 'CONTACT' | 'LOCATION' | 'POLL' | 'OTHER';
+
+export interface TgStatus {
+  configured: boolean;
+  connected: boolean;
+  account: { phone: string | null; name: string | null } | null;
+  /** Rahbar ulash jarayonida: qaysi qadam kutilmoqda */
+  login: { step: 'CODE' | 'PASSWORD'; phone: string; hint: string | null } | null;
+}
+
+export interface TgDialog {
+  peerId: string;
+  title: string;
+  kind: 'USER' | 'BOT' | 'GROUP';
+  phone: string | null;
+  username: string | null;
+  unread: number;
+  pinned: boolean;
+  archived: boolean;
+  /** Unix soniya */
+  date: number;
+  readOutboxMaxId: number;
+  readInboxMaxId: number;
+  muted: boolean;
+  /** Profil rasmi versiyasi (bo'lmasa null) */
+  photoId: string | null;
+  status: TgUserStatus | null;
+  members: number | null;
+  lastMessage: { id: number; out: boolean; text: string; mediaKind: TgMediaKind | null; date: number; service: boolean } | null;
+}
+
+export interface TgUserStatus {
+  kind: 'ONLINE' | 'OFFLINE' | 'RECENTLY' | 'LAST_WEEK' | 'LAST_MONTH' | 'LONG_AGO';
+  /** Unix soniya: OFFLINE — oxirgi marta, ONLINE — tugash vaqti */
+  at: number | null;
+}
+
+export interface TgTextEntity {
+  type: 'bold' | 'italic' | 'underline' | 'strike' | 'code' | 'pre' | 'url' | 'textUrl' | 'email' | 'phone' | 'mention' | 'hashtag' | 'spoiler' | 'quote';
+  offset: number;
+  length: number;
+  url?: string;
+}
+
+export interface TgMessage {
+  id: number;
+  /** Unix soniya */
+  date: number;
+  out: boolean;
+  text: string;
+  service: boolean;
+  senderName: string | null;
+  senderId: string | null;
+  replyToId: number | null;
+  edited: boolean;
+  forwardedFrom: string | null;
+  entities: TgTextEntity[];
+  media: {
+    kind: TgMediaKind;
+    mime: string | null;
+    fileName: string | null;
+    size: number | null;
+    durationSec: number | null;
+    width: number | null;
+    height: number | null;
+    label: string | null;
+    waveform: number[] | null;
+    hasThumb: boolean;
+  } | null;
+  /** CRM'dan yozgan xodim (Telegram ilovasidan yozilgan bo'lsa null) */
+  sentBy: string | null;
+}

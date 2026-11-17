@@ -5,6 +5,7 @@ import { migrate } from './migrate';
 import { adoptRecognizedTaxTypes } from './modules/clients';
 import { closeAllStreams } from './modules/events';
 import { startTelegramPolling, stopTelegramPolling } from './modules/telegram';
+import { startTgAccount, stopTgAccount } from './modules/tgAccount';
 import { bootstrapLeader } from './modules/users';
 import { startScheduler, stopScheduler } from './scheduler';
 
@@ -21,11 +22,14 @@ async function main() {
   });
   if (config.schedulerEnabled) startScheduler();
   void startTelegramPolling();
+  // Firma Telegram akkaunti (V53): saqlangan sessiya bo'lsa ulanadi
+  startTgAccount();
 
   const shutdown = () => {
     console.log('To\'xtatilmoqda...');
     stopScheduler();
     stopTelegramPolling();
+    void stopTgAccount();
     closeAllStreams();
     server.close(() => pool.end().then(() => process.exit(0)));
     setTimeout(() => process.exit(0), 5000).unref();

@@ -14,6 +14,7 @@ import {
   Phone,
   PhoneCall,
   Plus,
+  Send,
   Server,
   Settings,
   Sheet,
@@ -30,7 +31,8 @@ import { cn } from '@/lib/cn';
 import { showDesktopNotification } from '@/lib/desktopNotify';
 import { useServerEvents } from '@/lib/events';
 import { useTheme } from '@/lib/theme';
-import type { AppNotification, Lang } from '@/lib/types';
+import { tgKeys } from '@/lib/tgCache';
+import type { AppNotification, Lang, TgStatus } from '@/lib/types';
 import { ChatWidget } from './ChatWidget';
 import { DesktopNotifPrompt } from './DesktopNotifPrompt';
 import { Logo } from './Logo';
@@ -97,6 +99,17 @@ export function Layout() {
     refetchInterval: 60_000,
   });
   const unreadCount = unread.data?.count ?? 0;
+
+  // Firma Telegram akkaunti (V53): menyuda o'qilmagan xabarlar soni (ro'yxat serverda xotirada — yengil so'rov)
+  const isStaff = user?.role === 'LEADER' || user?.role === 'ACCOUNTANT';
+  const tgStatus = useQuery({ queryKey: tgKeys.status, queryFn: () => api.get<TgStatus>('/tg/status'), enabled: isStaff, staleTime: 60_000 });
+  const tgUnreadQ = useQuery({
+    queryKey: tgKeys.unread,
+    queryFn: () => api.get<{ count: number }>('/tg/unread'),
+    enabled: isStaff && !!tgStatus.data?.connected,
+    refetchInterval: 60_000,
+  });
+  const tgUnread = tgUnreadQ.data?.count ?? 0;
 
   const setLang = useMutation({
     mutationFn: (language: Lang) => api.patch('/me', { language }),
@@ -165,12 +178,13 @@ export function Layout() {
     { to: '/monthly', label: t('nav.monthly'), icon: Sheet, staff: true },
     { to: '/client-issues', label: t('nav.issues'), icon: AlertTriangle, leader: true },
     ...(isLeader || isOperator ? [{ to: '/leads', label: t('nav.leads'), icon: PhoneCall }] : []),
+    { to: '/telegram', label: t('nav.telegram'), icon: Send, staff: true, badge: tgUnread },
     { to: '/calls', label: t('nav.calls'), icon: Phone },
     { to: '/audit', label: t('nav.audit'), icon: History, leader: true },
     { to: '/users', label: t('nav.users'), icon: Users, leader: true },
     { to: '/server', label: t('nav.server'), icon: Server, leader: true },
     { to: '/settings', label: t('nav.settings'), icon: Settings, leader: true },
-  ].filter((n) => (!n.leader || isLeader) && (!n.staff || !isOperator));
+  ].filter((n) => (!n.leader || isLeader) && (!n.staff || !isOperator)) as { to: string; label: string; icon: typeof Send; badge?: number }[];
 
   const toggleSidebar = () =>
     setExpanded((v) => {
@@ -228,10 +242,16 @@ export function Layout() {
                   <NavLink to={n.to} onClick={() => setMobileOpen(false)} title={wide ? undefined : n.label} className={({ isActive }) => itemCls(isActive)}>
                     {({ isActive }) => (
                       <>
-                        <span className={iconCls(isActive)}>
+                        <span className={cn(iconCls(isActive), 'relative')}>
                           <n.icon />
+                          {!wide && !!n.badge && <span className="absolute -right-1.5 -top-1.5 h-2.5 w-2.5 rounded-full border-2 border-white bg-red-500 dark:border-page" />}
                         </span>
-                        {wide && <span className="line-clamp-1">{n.label}</span>}
+                        {wide && <span className="line-clamp-1 grow">{n.label}</span>}
+                        {wide && !!n.badge && (
+                          <span className="ml-auto min-w-[20px] rounded-full bg-red-500 px-1.5 text-center text-[11px] font-semibold leading-5 text-on-brand">
+                            {n.badge > 999 ? '999+' : n.badge}
+                          </span>
+                        )}
                       </>
                     )}
                   </NavLink>

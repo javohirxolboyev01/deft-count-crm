@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
+    "big-integer": "^1.6.52",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
@@ -25,6 +26,7 @@
     "multer": "^2.0.1",
     "node-cron": "^3.0.3",
     "pg": "^8.13.1",
+    "telegram": "^2.26.22",
     "zod": "^3.24.1"
   },
   "devDependencies": {

@@ -1,7 +1,8 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef } from 'react';
 import { getAccessToken, refreshAccess } from './api';
-import type { AppNotification, ChatMessageEvent } from './types';
+import { clearTgTyping, patchTgDialogs, removeTgMessages, setTgReadOutbox, setTgTyping, tgKeys, upsertTgMessage } from './tgCache';
+import type { AppNotification, ChatMessageEvent, TgDialog, TgMessage } from './types';
 
 /**
  * Backend SSE (/api/events) ga ulanish. Yangi bildirishnoma kelsa: ro'yxatlar yangilanadi va callback chaqiriladi.
@@ -11,18 +12,22 @@ export function useServerEvents(
   enabled: boolean,
   onNotification: (n: AppNotification) => void,
   onChatMessage?: (m: ChatMessageEvent) => void,
+  onTgMessage?: (peerId: string, m: TgMessage) => void,
 ) {
   const qc = useQueryClient();
   const cb = useRef(onNotification);
   cb.current = onNotification;
   const chatCb = useRef(onChatMessage);
   chatCb.current = onChatMessage;
+  const onTgMessageRef = useRef(onTgMessage);
+  onTgMessageRef.current = onTgMessage;
 
   useEffect(() => {
     if (!enabled) return;
     let es: EventSource | null = null;
     let closed = false;
     let retry: ReturnType<typeof setTimeout>;
+    let connectedOnce = false;
 
     const connect = () => {
       const token = getAccessToken();
@@ -50,6 +55,47 @@ export function useServerEvents(
       });
       es.addEventListener('chat-read', () => {
         void qc.invalidateQueries({ queryKey: ['chat'] });
+      });
+      // Firma Telegram akkaunti (V53): faqat rahbar va buxgalterlarga keladi
+      es.addEventListener('tg-message', (e) => {
+        const { peerId, message } = JSON.parse((e as MessageEvent).data) as { peerId: string; message: TgMessage };
+        upsertTgMessage(qc, peerId, message);
+        if (!message.out) clearTgTyping(peerId);
+        onTgMessageRef.current?.(peerId, message);
+      });
+      es.addEventListener('tg-edit', (e) => {
+        const { peerId, message } = JSON.parse((e as MessageEvent).data) as { peerId: string; message: TgMessage };
+        upsertTgMessage(qc, peerId, message, false);
+      });
+      es.addEventListener('tg-delete', (e) => {
+        const { peerId, ids } = JSON.parse((e as MessageEvent).data) as { peerId: string | null; ids: number[] };
+        removeTgMessages(qc, peerId, ids);
+      });
+      es.addEventListener('tg-read', (e) => {
+        const { peerId, outboxMaxId } = JSON.parse((e as MessageEvent).data) as { peerId: string; outboxMaxId: number };
+        setTgReadOutbox(qc, peerId, outboxMaxId);
+      });
+      es.addEventListener('tg-typing', (e) => {
+        const { peerId, typing } = JSON.parse((e as MessageEvent).data) as { peerId: string; typing: boolean };
+        setTgTyping(peerId, typing);
+      });
+      es.addEventListener('tg-dialogs', (e) => {
+        const { unread } = JSON.parse((e as MessageEvent).data) as { unread?: number };
+        void qc.invalidateQueries({ queryKey: tgKeys.dialogs });
+        if (typeof unread === 'number') qc.setQueryData(tgKeys.unread, { count: unread });
+      });
+      es.addEventListener('tg-dialogs-patch', (e) => {
+        const { items, unread } = JSON.parse((e as MessageEvent).data) as { items: TgDialog[]; unread: number };
+        patchTgDialogs(qc, items);
+        qc.setQueryData(tgKeys.unread, { count: unread });
+      });
+      // Qayta ulanish (internet uzilib qolgan): shu orada kelgan Telegram xabarlari o'tkazib yuborilmasin
+      es.addEventListener('ready', () => {
+        if (connectedOnce) void qc.invalidateQueries({ queryKey: ['tg'] });
+        connectedOnce = true;
+      });
+      es.addEventListener('tg-status', () => {
+        void qc.invalidateQueries({ queryKey: ['tg'] });
       });
       es.onerror = () => {
         es?.close();

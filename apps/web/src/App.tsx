@@ -23,6 +23,7 @@ const CallsIndex = lazy(() => import('./pages/Calls').then((m) => ({ default: m.
 const CallsStaff = lazy(() => import('./pages/Calls').then((m) => ({ default: m.CallsStaff })));
 const CallsJournal = lazy(() => import('./pages/Calls').then((m) => ({ default: m.CallsJournal })));
 const Server = lazy(() => import('./pages/Server'));
+const Telegram = lazy(() => import('./pages/Telegram'));
 
 /** UI darajasidagi himoya (qulaylik uchun). Haqiqiy ruxsat tekshiruvi serverda. */
 function Protected({ roles, children }: { roles?: Role[]; children: React.ReactNode }) {
@@ -80,6 +81,8 @@ export default function App() {
             <Route path="staff" element={<Protected roles={L}><CallsStaff /></Protected>} />
             <Route path="journal" element={<CallsJournal />} />
           </Route>
+          {/* Firma Telegram akkaunti (V53): rahbar va buxgalterlar (server: requireStaff) */}
+          <Route path="telegram" element={<Protected roles={S}><Telegram /></Protected>} />
           {/* Server holati va to'lovi (Railway): faqat rahbar */}
           <Route path="server" element={<Protected roles={L}><Server /></Protected>} />
           <Route path="settings" element={<Protected roles={L}><Settings /></Protected>} />

@@ -34,6 +34,11 @@ export function emitToUser(userId: number, event: string, data: unknown) {
   for (const res of set) res.write(msg);
 }
 
+export function emitToUsers(userIds: Iterable<number>, event: string, data: unknown) {
+  const msg = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+  for (const id of userIds) for (const res of connections.get(id) ?? []) res.write(msg);
+}
+
 export function closeAllStreams() {
   for (const set of connections.values()) for (const res of set) res.end();
   connections.clear();

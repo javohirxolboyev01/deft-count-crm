@@ -22,6 +22,7 @@ Bu fayl loyiha ildizida `CLAUDE.md` nomi bilan turadi. Har bosqichda shu konteks
 - Backend: Node.js 20+ / Express 5 / TypeScript, PostgreSQL 16, `pg` (toza SQL), Flyway uslubidagi SQL migratsiyalar (`apps/api/migrations/V<n>__<nom>.sql`, checksum bilan), JWT (access + aylanuvchi refresh cookie), zod validatsiya, `node-cron` rejalashtirish.
 - ORM ishlatilmaydi: partial unique index, trigger, view va SQL funksiyalar (X qoidasi) to'g'ridan-to'g'ri SQL'da.
 - Bildirishnoma: Telegram bot (faqat xodimlarga, long polling) + ilova ichidagi bildirishnoma (SSE).
+- Firma Telegram akkaunti (V53): GramJS (`telegram`, MTProto — oddiy Telegram mijozi kabi), serverda bitta ulanish (6.16).
 - Import: `.xlsx` (exceljs). Google Sheets API ishlatilmaydi.
 - IP telefoniya (V46): ofisdagi Asterisk (LTS, web panelsiz, CDR `cdr_csv` faylga). `apps/pbx-agent` — Python stdlib skripti Asterisk serverida (systemd), `Master.csv` yangi qatorlarini HTTPS bilan `POST /api/calls/ingest` ga yuboradi (`PBX_INGEST_TOKEN`). Asterisk konfiguratsiyasi o'zgarmaydi, serverda port ochilmaydi.
 - Testlar: vitest + supertest (haqiqiy PostgreSQL test bazasi), Playwright smoke (alohida e2e bazasi).
@@ -62,6 +63,9 @@ Bu fayl loyiha ildizida `CLAUDE.md` nomi bilan turadi. Har bosqichda shu konteks
 - `call_log` (V46): source_key (CDR qatori sha1, takrordan himoya), direction (IN | OUT | INTERNAL | UNKNOWN), external_number (oxirgi 9 raqam), ext/user_id, peer_ext/peer_user_id, started_at, billsec, disposition, raw. `app_user.phone_ext` — xodimning ichki raqami (unique)
 - `call_recording` (V48): source_path (agent ombordagi yo'l, unique), uniqueid (fayl nomidan → `call_log.uniqueid`), file_name, mime, size_bytes, tg_file_id, tg_chat_id, tg_message_id
 - `chat_attachment` (V43): message_id (unique — bitta xabarda bitta fayl), kind (IMAGE | VIDEO | VOICE | VIDEO_NOTE | FILE — V44), waveform (V45, ovozli xabar to'lqini 0..31), mime, file_name, size_bytes, duration_sec, width, height, tg_file_id, tg_file_unique_id, tg_chat_id, tg_message_id
+
+- `tg_account` (V53, bitta qator): session_enc (GramJS sessiyasi, AES-256-GCM, `CREDENTIALS_KEY`), phone, tg_user_id, display_name, connected_by, connected_at
+- `tg_sent_message` (V53): peer_id (Telegram marked id), message_id, user_id — CRM'dan yozilgan xabar muallifi. Xabarlar va fayllar bazada **saqlanmaydi**
 
 ## 6. Biznes qoidalari
 
@@ -197,6 +201,16 @@ Chatda fayl (V43, V44, rahbar qarori): 📎 menyusi Telegram kabi — «Rasm yok
 ### 6.14 Server va to'lov (Railway, rahbar qarori)
 Faqat rahbar: "Server" sahifasi (`GET /api/server/status`, `requireLeader`). Railway GraphQL API'dan (faqat o'qish, `RAILWAY_TOKEN` + project/service/environment ID, 1 daqiqa kesh): server holati oddiy tilda (Ishlayapti / Ishlamayapti / Uxlab turibdi / Yangilanmoqda), yuklama (CPU, RAM), keyingi to'lov sanasi va qolgan kun, bu davr xarajati, tarif, karta (oxirgi 4 raqam). Deploy tarixi va restart tugmasi yo'q (rahbar qarori). Sana va summa API'dan, qo'lda kiritilmaydi. To'lov Railway'da (karta ulanadi, har oy o'zi yechiladi) — "Railway'da to'lash" havolasi. Eslatma `SERVER_PAYMENT` — barcha faol rahbarlarga 3 va 1 kun oldin va to'lov kuni (09:00 dan keyin), to'lov o'tmasa (PAST_DUE/UNPAID) har kuni; ilova + Telegram. Server yiqilsa xabar yuborilmaydi (rahbar qarori). Token bo'lmasa sahifada "Railway ulanmagan". Sinov (trial) davrida to'lov yo'q: sana — sinov tugashi, aniq soat bilan (`billingPeriod.start` + 30 kun, `nextPaymentAt`; `trialDaysRemaining` bilan 1 kundan ortiq farq qilsa — faqat kun), kredit qoldig'i va qisqa ogohlantirish "Server tarifi 16.11.2026, soat 13:19 da tugaydi. Undan oldin to'lov qiling, aks holda server to'xtaydi." (sahifa, ilova va Telegram — bir xil matn); eslatma ham sinov tugashiga (3, 1, 0 kun). 3 kun qolganda (yoki to'lov o'tmasa) rahbarga har sahifaning eng yuqorisida banner (38px) — `ServerBillingBanner`: 1–3 kun amber, 1 kundan kam / tugagan / to'lov o'tmagan qizil, ustidan oq yaltirash (`.shimmer-effect`), matnlar har 3 soniyada almashadi, o'ngda orqaga sanoq (kun · soat : daqiqa : soniya; 0 kunda faqat soat), × — shu kun oxirigacha yopiladi (ertasi kuni yana chiqadi); sanoq brauzerda, server holati faqat ochilganda va har 30 daqiqada so'raladi. `TODO(tasdiqlash)`: sinovda `billingPeriod.start` = sinov boshi deb olingan. `currentUsage` dollarda (haqiqiy javobda tasdiqlandi). `TODO(tasdiqlash)`: `nextInvoiceCurrentTotal` sentda deb olingan (obuna bo'lgach tekshiriladi).
 
+### 6.16 «Telegram» bo'limi — firma akkaunti CRM ichida (V53, rahbar qarori 2026-11-17, "A" varianti)
+Firmada bitta Telegram akkaunt bor, mijozlar bilan hamma shu akkauntdan yozishadi. CRM shu akkauntga bitta "qurilma" (Telegram «Qurilmalar»da «Buxgalteriya CRM») sifatida ulanadi.
+- Ulash/uzish — faqat rahbar (`/telegram`): firma raqami → Telegram yuborgan kod → (bo'lsa) 2FA paroli. `POST /api/tg/login/start|code|password`, `POST /api/tg/logout` (Telegram'dan ham chiqadi). Kod/parol saqlanmaydi, sessiya shifrlangan. Telefondan qurilma o'chirilsa — ishga tushishda sessiya o'chiriladi, rahbar qayta ulaydi (`TG_SESSION_REVOKED` audit).
+- Ko'rish va yozish — rahbar va **hamma buxgalterlar hamma chatni** (rahbar qarori); operatorga yopiq (`requireStaff`).
+- Ombor — Telegram'ning o'zi (rahbar talabi: server to'lmasin): chatlar ro'yxati server xotirasida (ulanganda ≤ 500 ta, keyin Telegram hodisalaridan yangilanadi, 10 daqiqada bir to'liq), xabarlar har safar Telegram'dan (so'nggi sahifa 15 s kesh), fayllar so'ralganda Telegram'dan oqib o'tadi (≤ 50 MB, brauzer keshlaydi). Faqat o'qiladigan kanallar ko'rsatilmaydi; shaxsiy chatlar, guruhlar, arxiv bor.
+- Har CRM'dan yozilgan xabarda xodim ismi (`tg_sent_message`); Telegram ilovasidan yozilgani ismsiz. Chat ochilganda Telegram'da ham o'qilgan bo'ladi. Real vaqt SSE: `tg-message`, `tg-edit`, `tg-delete`, `tg-read`, `tg-dialogs`, `tg-status` (faqat rahbar/buxgalterlarga). Menyuda o'qilmaganlar soni (arxivdan tashqari).
+- Akkauntni himoya: ommaviy yuborish yo'q, ulash urinishlari cheklangan (15 daqiqada 10), Telegram FLOOD_WAIT `TG_FLOOD_WAIT` bo'lib qaytadi.
+- Ko'rinish (rahbar talabi, 2026-11-17): Telegram Web bilan bir xil — kirish ekrani (mamlakat + raqam → kod, 5 xona yozilishi bilan o'zi yuboriladi → 2FA), ikki ustun, Telegram ranglari/shrifti (`.tg` CSS o'zgaruvchilari, `index.css`), yorug'/qorong'i. Profil rasmlari (`GET /api/tg/photo/:peerId`, server xotirasida ≤ 400 ta kichik avatar), «online / oxirgi marta», «yozmoqda…» (`tg-typing`, saqlanmaydi), matn formatlash (entity'lar), javob (reply), ovozli xabar to'lqini, video/fayl kichik rasmi (`?thumb=1`). «Telegram» sahifasida ichki chat tugmasi yashiriladi. Ulanish WebSocket (443) orqali — ba'zi provayderlar oddiy TCP'ni to'sadi (`TG_USE_WSS`).
+- 1-bosqich (hozir): ulash, chatlar, matn yozish, rasm/video/ovoz/fayllarni ko'rish. Keyingi bosqichlar (rahbar bilan kelishilgan): CRM'dan fayl/rasm yuborish, chatni mijoz kartasiga bog'lash (telefon bo'yicha), javob/tahrirlash/o'chirish, xabar qidiruvi.
+
 ## 7. Excel import (jadval fayllari)
 
 Haqiqiy jadval ustunlari:
@@ -233,7 +247,7 @@ Audio yozuvlar (V48, rahbar qarori — xodimlarni nazorat qilish uchun): Asteris
 - Fayl yuklash (istisno: ichki chatdagi rasm/video/ovozli xabar/hujjat, V43–V44 — 6.12; qo'ng'iroq audio yozuvlari, V48 — 6.13)
 - 1C va soliq.uz bilan avtomatik bog'lanish
 - To'lov qabul qilish
-- Mijozga SMS/Telegram xabar
+- Mijozga avtomatik SMS/Telegram xabar (istisno: xodim «Telegram» bo'limida firma akkauntidan qo'lda yozadi — 6.16)
 
 ## 9. Zaxira va xavfsizlik
 

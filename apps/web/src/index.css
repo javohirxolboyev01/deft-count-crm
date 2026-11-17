@@ -433,3 +433,92 @@
     display: none;
   }
 }
+
+/* «Telegram» bo'limi (V53): Telegram tuzilishi, ranglar — loyihaning o'zidan (teal brend, to'q ko'k matn, Inter,
+   ichki chatdagi pufakchalar: o'zimizniki — brand-500 oq matn bilan, suhbatdoshniki — oq). Neytrallar --c-* orqali:
+   qorong'i rejimda o'zi aylanadi. Faqat .tg ichida amal qiladi */
+.tg {
+  --tg-primary: #37a0ad; /* brand-500 */
+  --tg-primary-rgb: 55, 160, 173;
+  --tg-link: #2e8a96; /* brand-600 */
+  --tg-bg: rgb(var(--c-white));
+  --tg-text: rgb(var(--c-ink));
+  --tg-secondary: rgb(var(--c-gray-500));
+  --tg-hover: rgb(var(--c-gray-100));
+  --tg-border: rgb(var(--c-gray-200));
+  --tg-search: rgb(var(--c-page));
+  --tg-in: #ffffff;
+  --tg-out: #37a0ad;
+  --tg-out-text: #ffffff;
+  --tg-out-accent: #ffffff;
+  --tg-out-meta: rgba(255, 255, 255, 0.82);
+  --tg-out-quote: rgba(255, 255, 255, 0.18);
+  --tg-in-meta: rgb(var(--c-gray-500));
+  --tg-badge: #37a0ad;
+  --tg-badge-muted: rgb(var(--c-gray-400));
+  --tg-online: rgb(var(--c-green-500));
+  --tg-pill: rgba(26, 52, 77, 0.38); /* ink */
+  --tg-shadow: 0 1px 2px rgba(26, 52, 77, 0.12);
+  --tg-menu: rgba(255, 255, 255, 0.92);
+  --tg-danger: rgb(var(--c-red-600));
+  --tg-chat-bg:
+    radial-gradient(circle at 10% 15%, rgba(102, 222, 228, 0.22) 0, rgba(102, 222, 228, 0) 45%),
+    radial-gradient(circle at 90% 85%, rgba(55, 160, 173, 0.16) 0, rgba(55, 160, 173, 0) 50%),
+    radial-gradient(circle at 85% 10%, rgba(232, 240, 251, 0.9) 0, rgba(232, 240, 251, 0) 50%),
+    #eaf6f8;
+  color: var(--tg-text);
+}
+.dark .tg {
+  --tg-link: #4cc4cc; /* brand-400 */
+  --tg-in: #374151;
+  --tg-out: #2e8a96; /* brand-600 */
+  --tg-out-quote: rgba(255, 255, 255, 0.14);
+  --tg-in-meta: rgb(var(--c-gray-500));
+  --tg-badge: #2e8a96;
+  --tg-pill: rgba(55, 65, 81, 0.85);
+  --tg-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --tg-menu: rgba(31, 41, 55, 0.95);
+  --tg-chat-bg:
+    radial-gradient(circle at 12% 18%, rgba(55, 160, 173, 0.14) 0, rgba(55, 160, 173, 0) 50%),
+    radial-gradient(circle at 88% 85%, rgba(76, 196, 204, 0.08) 0, rgba(76, 196, 204, 0) 55%),
+    #111827;
+}
+/* Fon ustidagi nozik naqsh (o'zimizniki: nuqtalar) */
+.tg-chat-bg {
+  background: var(--tg-chat-bg);
+}
+.tg-chat-bg::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: radial-gradient(rgba(26, 52, 77, 0.06) 1px, transparent 1.2px);
+  background-size: 22px 22px;
+}
+.dark .tg-chat-bg::before {
+  background-image: radial-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1.2px);
+}
+.tg-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 0, 0, 0.18) transparent;
+}
+.dark .tg-scroll {
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
+.tg-spoiler {
+  border-radius: 4px;
+  background: currentColor;
+  cursor: pointer;
+  filter: blur(0.5px);
+}
+@keyframes tg-highlight {
+  from { background: rgba(var(--tg-primary-rgb), 0.25); }
+  to { background: transparent; }
+}
+.tg-highlight {
+  animation: tg-highlight 1.6s ease-out;
+}
+@keyframes tg-typing-dot {
+  0%, 60%, 100% { opacity: 0.3; }
+  30% { opacity: 1; }
+}

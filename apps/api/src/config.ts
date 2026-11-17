@@ -38,6 +38,13 @@ export const config = {
     // Alohida kanal tavsiya etiladi: yozuvlarni faqat rahbarlar ko'radigan kanal.
     callsChatId: process.env.TELEGRAM_CALLS_CHAT_ID || process.env.TELEGRAM_STORAGE_CHAT_ID || '',
   },
+  // Firma Telegram akkaunti CRM ichida (V53, MTProto/GramJS). my.telegram.org → API development tools.
+  // Bo'sh bo'lsa «Telegram» bo'limi "sozlanmagan" deydi. Bot tokeni (yuqorida) bilan aloqasi yo'q.
+  tgAccount: {
+    apiId: Number(process.env.TG_API_ID ?? 0),
+    apiHash: process.env.TG_API_HASH ?? '',
+    useWss: bool(process.env.TG_USE_WSS, true),
+  },
   // IP telefoniya (Asterisk CDR): ofisdagi pbx-agent shu token bilan POST /api/calls/ingest qiladi. Bo'sh bo'lsa o'chiq
   pbx: {
     ingestToken: process.env.PBX_INGEST_TOKEN ?? '',

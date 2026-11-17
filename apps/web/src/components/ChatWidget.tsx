@@ -4,6 +4,7 @@ import { DateTime } from 'luxon';
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
+import { useLocation } from 'react-router-dom';
 import { toast } from 'sonner';
 import { ApiError, api, qs } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
@@ -155,6 +156,7 @@ export function ChatWidget({ pulse }: { pulse: number }) {
   const { user } = useAuth();
   const [open, setOpen] = useState(false);
   const [activeId, setActiveId] = useState<number | null>(null);
+  const { pathname } = useLocation();
 
   const unread = useQuery({
     queryKey: ['chat', 'unread'],
@@ -176,7 +178,8 @@ export function ChatWidget({ pulse }: { pulse: number }) {
     return () => window.removeEventListener('keydown', onKey);
   }, [open, activeId]);
 
-  if (!user) return null;
+  // «Telegram» sahifasida o'zining yozish maydoni bor: ichki chat tugmasi uning ustiga tushmasin
+  if (!user || (pathname.startsWith('/telegram') && !open)) return null;
 
   return (
     <>
