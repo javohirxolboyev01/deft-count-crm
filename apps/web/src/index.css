@@ -515,13 +515,20 @@
   outline-offset: -2px;
 }
 
+/* Fon butun chat ustunida bitta qatlam. O'lchami konteynerga emas, ekranning katta balandligiga (lvh) bog'langan:
+   mobil brauzer paneli yig'ilganda / klaviatura chiqqanda / yozish maydoni o'sganda fon cho'zilmaydi va siljimaydi */
 .tg-chat-bg {
+  isolation: isolate;
   background: var(--tg-chat-bg);
+  background-size: 100% 100vh;
+  background-size: 100% 100lvh;
+  background-repeat: no-repeat;
 }
 .tg-chat-bg::before {
   content: '';
   position: absolute;
   inset: 0;
+  z-index: -1;
   pointer-events: none;
   background-image: radial-gradient(rgba(26, 52, 77, 0.06) 1px, transparent 1.2px);
   background-size: 22px 22px;

@@ -442,7 +442,7 @@ export function TgConversation({
 
   return (
     <div
-      className="relative flex h-full min-w-0 flex-col"
+      className="tg-chat-bg relative flex h-full min-w-0 flex-col"
       onDragEnter={(e) => {
         // Faqat fayl sudralganda (matn/havola emas) va yozish mumkin bo'lsa
         if (canWrite && !editing && e.dataTransfer.types.includes('Files')) setDragging(true);
@@ -506,7 +506,7 @@ export function TgConversation({
       )}
 
       {/* Xabarlar */}
-      <div className="tg-chat-bg relative min-h-0 grow">
+      <div className="relative min-h-0 grow">
         <div
           ref={scrollRef}
           onScroll={(e) => {
@@ -627,7 +627,7 @@ export function TgConversation({
           }}
         />
       ) : (
-        <div className="tg-chat-bg relative shrink-0">
+        <div className="relative shrink-0">
           <div className="relative mx-auto flex max-w-[728px] justify-center px-2 pb-2 sm:px-4 sm:pb-4">
             <div className="w-full rounded-[15px] py-4 text-center text-[15px] font-medium text-[var(--tg-secondary)] shadow-[var(--tg-shadow)]" style={{ background: 'var(--tg-bg)' }}>
               {t(dialog?.kind === 'CHANNEL' ? 'tg.channelReadOnly' : 'tg.cannotWrite')}
@@ -1160,7 +1160,7 @@ function Composer({
 
   const can = !!text.trim();
   return (
-    <div className="tg-chat-bg relative shrink-0">
+    <div className="relative shrink-0">
       <div className="relative mx-auto flex max-w-[728px] items-end gap-2 px-2 pb-2 sm:px-4 sm:pb-4">
         <div ref={boxRef} className="relative min-w-0 grow shadow-[var(--tg-shadow)]" style={{ background: 'var(--tg-bg)', borderRadius: '15px 15px 0 15px' }}>
           <Tail out />
