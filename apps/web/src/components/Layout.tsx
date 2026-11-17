@@ -21,7 +21,7 @@ import {
   Users,
   X,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -91,6 +91,19 @@ export function Layout() {
   const [chatPulse, setChatPulse] = useState(0);
   // Mobil menyu ochiq bo'lsa yozuvlar har doim ko'rinadi (WinPro sidebar mantiqi)
   const wide = expanded || mobileOpen;
+
+  // Mobil menyu ochiq: orqadagi sahifa scroll bo'lmasin (iOS'da tepada kontent ko'rinib qolmasin)
+  useEffect(() => {
+    if (!mobileOpen) return;
+    const el = document.documentElement;
+    const prev = el.style.overflow;
+    el.style.overflow = 'hidden';
+    document.body.style.overflow = 'hidden';
+    return () => {
+      el.style.overflow = prev;
+      document.body.style.overflow = '';
+    };
+  }, [mobileOpen]);
 
   const unread = useQuery({
     queryKey: ['notifications', 'unread'],
@@ -299,7 +312,8 @@ export function Layout() {
 
       <div className={cn('flex min-w-0 grow flex-col transition-all duration-300', expanded ? 'xl:pl-[256px]' : 'xl:pl-[70px]')}>
         {/* Header: mobil menyu tugmasi va logo (xl'dan kichik), chapda shoshilinch, o'ngda til, bildirishnomalar */}
-        <header className="sticky top-[var(--banner-h)] z-[51] flex h-14 w-full items-center gap-2 border-b border-gray-200 bg-white px-2 dark:bg-page sm:px-4">
+        {/* before: header ustidagi bo'shliq (iOS brauzer paneli ostida, overscroll) ham header rangida — kontent ko'rinmasin */}
+        <header className="sticky top-[var(--banner-h)] z-[51] flex h-14 w-full items-center gap-2 border-b border-gray-200 bg-white px-2 before:pointer-events-none before:absolute before:inset-x-0 before:bottom-full before:h-screen before:bg-white before:content-[''] dark:bg-page dark:before:bg-page sm:px-4">
           <button type="button" onClick={() => setMobileOpen((v) => !v)} aria-label={t('nav.menu')} className="flex h-10 w-10 cursor-pointer items-center justify-center rounded-lg text-gray-500 xl:hidden">
             {mobileOpen ? <X className="h-6 w-6" /> : <AlignJustify className="h-6 w-6" />}
           </button>

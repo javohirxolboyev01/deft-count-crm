@@ -9,12 +9,12 @@ import {
   Home,
   LogOut,
   Megaphone,
-  Menu,
   MessageCircle,
   MessagesSquare,
   Moon,
   Pin,
   Search,
+  Settings,
   Star,
   Sun,
   User,
@@ -152,7 +152,7 @@ export function TgChatList({
           <>
             <div className="relative">
               <IconButton label={t('tg.menu')} onClick={() => setMenu((v) => !v)} active={menu}>
-                <Menu className="h-6 w-6" />
+                <Settings className="h-6 w-6" />
               </IconButton>
               {menu && (
                 <MainMenu
@@ -188,26 +188,35 @@ export function TgChatList({
         )}
       </div>
 
-      {/* Kichik/o'rta ekran: jildlar yorliq ko'rinishida (Telegram Web) */}
+      {/* Kichik/o'rta ekran: jildlar — Telegram iOS kabi dumaloq «pill» yorliqlar */}
       {hasFolders && !archive && !searching && (
-        <div className="tg-scroll flex shrink-0 gap-1 overflow-x-auto px-2 lg:hidden" style={{ boxShadow: 'inset 0 -1px 0 var(--tg-border)' }} role="tablist" aria-label={t('tg.folders')}>
-          {tabs.map((f) => {
-            const on = f.id === curId;
-            return (
-              <button
-                key={f.id ?? 'all'}
-                type="button"
-                role="tab"
-                aria-selected={on}
-                onClick={() => pickFolder(f.id)}
-                className={cn('relative flex shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-t-lg px-3 pb-2.5 pt-2 text-[15px] font-medium transition-colors hover:bg-[var(--tg-hover)]', on ? 'text-[var(--tg-primary)]' : 'text-[var(--tg-secondary)]')}
-              >
-                {f.title}
-                {f.badge.n > 0 && <Badge n={f.badge.n} muted={!on || f.badge.muted} small />}
-                {on && <span className="absolute inset-x-2 bottom-0 h-[3px] rounded-t-full bg-[var(--tg-primary)]" />}
-              </button>
-            );
-          })}
+        <div className="shrink-0 px-3 pb-2 lg:hidden">
+          <div
+            className="no-scrollbar flex gap-0.5 overflow-x-auto rounded-full p-1"
+            style={{ background: 'var(--tg-search)', boxShadow: 'inset 0 0 0 1px var(--tg-border)' }}
+            role="tablist"
+            aria-label={t('tg.folders')}
+          >
+            {tabs.map((f) => {
+              const on = f.id === curId;
+              return (
+                <button
+                  key={f.id ?? 'all'}
+                  type="button"
+                  role="tab"
+                  aria-selected={on}
+                  onClick={() => pickFolder(f.id)}
+                  className={cn(
+                    'flex h-9 shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-full px-4 text-[15px] transition-colors',
+                    on ? 'bg-[var(--tg-hover)] font-semibold text-[var(--tg-text)] shadow-sm' : 'font-medium text-[var(--tg-text)] hover:bg-[var(--tg-hover)]/60',
+                  )}
+                >
+                  {f.title}
+                  {f.badge.n > 0 && <Badge n={f.badge.n} muted small />}
+                </button>
+              );
+            })}
+          </div>
         </div>
       )}
 
